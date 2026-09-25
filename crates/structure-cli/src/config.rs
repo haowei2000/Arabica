@@ -4,6 +4,11 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeMap;
+
+use agent_client_protocol::schema::v1::{
+    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
+};
 use serde::{Deserialize, Serialize};
 use structure_provider::{ApiProviderConfig, ApiType};
 
@@ -14,6 +19,72 @@ use crate::host::{HostConfigArgs, resolve_provider_config, workspace_id_for};
 struct UserConfig {
     #[serde(default)]
     provider: UserProvider,
+    #[serde(default)]
+    mcp: Vec<UserMcpServer>,
+}
+
+/// One MCP server declared in the user config file as an `[[mcp]]` table.
+/// Exactly one of `command` (stdio transport) or `url` (HTTP transport)
+/// selects the transport. `env` and `headers` may carry credentials, so a
+/// config containing them must be owner-only, like an API key.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserMcpServer {
+    name: String,
+    command: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    env: Option<BTreeMap<String, String>>,
+    url: Option<String>,
+    headers: Option<BTreeMap<String, String>>,
+}
+
+impl UserMcpServer {
+    fn has_credentials(&self) -> bool {
+        self.env.as_ref().is_some_and(|map| !map.is_empty())
+            || self.headers.as_ref().is_some_and(|map| !map.is_empty())
+    }
+
+    /// Convert to the shared `McpServer` type every surface connects
+    /// through. Errors name the server, never a credential value.
+    fn to_mcp_server(&self) -> Result<McpServer, String> {
+        match (&self.command, &self.url) {
+            (Some(command), None) => {
+                let env = self
+                    .env
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(name, value)| EnvVariable::new(name, value))
+                    .collect::<Vec<_>>();
+                Ok(McpServer::Stdio(
+                    McpServerStdio::new(self.name.clone(), command.clone())
+                        .args(self.args.clone())
+                        .env(env),
+                ))
+            }
+            (None, Some(url)) => {
+                let headers = self
+                    .headers
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(name, value)| HttpHeader::new(name, value))
+                    .collect::<Vec<_>>();
+                Ok(McpServer::Http(
+                    McpServerHttp::new(self.name.clone(), url.clone()).headers(headers),
+                ))
+            }
+            (Some(_), Some(_)) => Err(format!(
+                "MCP server '{}' declares both command and url; pick one transport",
+                self.name
+            )),
+            (None, None) => Err(format!(
+                "MCP server '{}' declares neither command nor url",
+                self.name
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -61,14 +132,20 @@ fn read_toml<T: for<'de> Deserialize<'de> + Default>(
 fn read_user_config(home: &Path) -> Result<UserConfig, Box<dyn std::error::Error>> {
     let path = user_config_path(home);
     let config: UserConfig = read_toml(&path)?;
-    if let Some(key) = &config.provider.api_key {
-        if key.trim().is_empty() {
-            return Err(format!("{} contains an empty API key", path.display()).into());
-        }
+    if let Some(key) = &config.provider.api_key
+        && key.trim().is_empty()
+    {
+        return Err(format!("{} contains an empty API key", path.display()).into());
+    }
+    // MCP `env` and `headers` can carry secrets just like an API key, so
+    // they earn the same file-safety requirements.
+    let has_credentials =
+        config.provider.api_key.is_some() || config.mcp.iter().any(UserMcpServer::has_credentials);
+    if has_credentials {
         let metadata = fs::symlink_metadata(&path)?;
         if !metadata.file_type().is_file() {
             return Err(format!(
-                "{} must be a regular file when it contains an API key",
+                "{} must be a regular file when it contains credentials",
                 path.display()
             )
             .into());
@@ -78,7 +155,7 @@ fn read_user_config(home: &Path) -> Result<UserConfig, Box<dyn std::error::Error
             use std::os::unix::fs::PermissionsExt;
             if metadata.permissions().mode() & 0o077 != 0 {
                 return Err(format!(
-                    "{} contains an API key and must be readable only by its owner (chmod 600)",
+                    "{} contains credentials and must be readable only by its owner (chmod 600)",
                     path.display()
                 )
                 .into());
@@ -90,6 +167,18 @@ fn read_user_config(home: &Path) -> Result<UserConfig, Box<dyn std::error::Error
 
 pub fn user_config_key(home: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
     Ok(read_user_config(home)?.provider.api_key)
+}
+
+/// The MCP servers declared in the user config file, as the shared
+/// `McpServer` type every surface connects through. A server that declares
+/// no transport, or both, is a configuration error.
+pub fn user_config_mcp(home: &Path) -> Result<Vec<McpServer>, Box<dyn std::error::Error>> {
+    let config = read_user_config(home)?;
+    config
+        .mcp
+        .iter()
+        .map(|server| server.to_mcp_server().map_err(Into::into))
+        .collect()
 }
 
 /// Resolve CLI settings. Explicit flags win, then saved workspace choices,
@@ -334,6 +423,98 @@ mod tests {
         })
         .unwrap();
         assert_eq!(env.api_key, "env-secret");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn user_config_mcp_parses_stdio_and_http_servers() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            user_config_path(&root),
+            "[[mcp]]\nname = 'alpha'\ncommand = '/usr/bin/env'\nargs = ['python', '-m', 'fixture']\n\n[mcp.env]\nTOKEN = 'alpha-secret'\n\n[[mcp]]\nname = 'remote'\nurl = 'https://mcp.example.test/mcp'\n\n[mcp.headers]\nAuthorization = 'Bearer http-secret'\n",
+        )
+        .unwrap();
+        // The env and headers above are credentials, so the file must be
+        // owner-only for the read to be allowed at all.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(user_config_path(&root), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        let servers = user_config_mcp(&root).unwrap();
+        assert_eq!(servers.len(), 2);
+        let stdio = match &servers[0] {
+            McpServer::Stdio(config) => config,
+            other => panic!("expected stdio server, got {other:?}"),
+        };
+        assert_eq!(stdio.name, "alpha");
+        assert_eq!(stdio.args, vec!["python", "-m", "fixture"]);
+        assert_eq!(stdio.env[0].name, "TOKEN");
+        let http = match &servers[1] {
+            McpServer::Http(config) => config,
+            other => panic!("expected http server, got {other:?}"),
+        };
+        assert_eq!(http.url, "https://mcp.example.test/mcp");
+        assert_eq!(http.headers[0].name, "Authorization");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn user_config_mcp_rejects_missing_and_double_transports() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(user_config_path(&root), "[[mcp]]\nname = 'broken'\n").unwrap();
+        let error = user_config_mcp(&root).unwrap_err().to_string();
+        assert!(error.contains("neither command nor url"), "{error}");
+        fs::write(
+            user_config_path(&root),
+            "[[mcp]]\nname = 'broken'\ncommand = '/bin/true'\nurl = 'https://mcp.example.test'\n",
+        )
+        .unwrap();
+        let error = user_config_mcp(&root).unwrap_err().to_string();
+        assert!(error.contains("both command and url"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mcp_credentials_require_an_owner_only_config_file() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            user_config_path(&root),
+            "[[mcp]]\nname = 'remote'\nurl = 'https://mcp.example.test'\n\n[mcp.headers]\nAuthorization = 'Bearer secret'\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(user_config_path(&root), fs::Permissions::from_mode(0o644))
+                .unwrap();
+            let error = user_config_mcp(&root).unwrap_err().to_string();
+            assert!(error.contains("chmod 600"), "{error}");
+            // The diagnostic names the header, never its value.
+            assert!(!error.contains("secret"), "{error}");
+            fs::set_permissions(user_config_path(&root), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        assert_eq!(user_config_mcp(&root).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn user_config_mcp_is_empty_when_absent_and_unknown_fields_are_rejected() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(user_config_mcp(&root).unwrap().len(), 0);
+        fs::write(
+            user_config_path(&root),
+            "[[mcp]]\nname = 'x'\ncommand = '/bin/true'\ntypo = true\n",
+        )
+        .unwrap();
+        let error = user_config_mcp(&root).unwrap_err().to_string();
+        assert!(error.contains("invalid TOML"), "{error}");
         fs::remove_dir_all(root).unwrap();
     }
 

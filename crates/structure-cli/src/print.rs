@@ -28,7 +28,7 @@ use structure_session::{
 };
 
 use crate::host::{
-    HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime, workspace_id_for,
+    HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_mcp, workspace_id_for,
 };
 
 /// stdout's shape in `-p` mode.
@@ -203,6 +203,21 @@ pub async fn run(provider_config: ApiProviderConfig, options: PrintOptions) -> i
         }
     };
     let workspace_id = workspace_id_for(&runner_root);
+    // MCP servers come from the user config file; a broken one is reported
+    // and skipped rather than failing the task, but a malformed config is
+    // a configuration error.
+    let mcp = match crate::mcp::connect_configured(&runner_root, &structure_home).await {
+        Ok((mcp, diagnostics)) => {
+            for diagnostic in diagnostics {
+                eprintln!("structure: {diagnostic}");
+            }
+            mcp
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            return EXIT_CONFIG_ERROR;
+        }
+    };
 
     // Finding what to resume is a configuration question -- "does the
     // session the user named exist" -- not a run failure, so it is answered
@@ -226,6 +241,7 @@ pub async fn run(provider_config: ApiProviderConfig, options: PrintOptions) -> i
         structure_home,
         workspace_id,
         resumed,
+        mcp,
     )
     .await
     {
@@ -277,9 +293,12 @@ async fn run_task(
     structure_home: PathBuf,
     workspace_id: WorkspaceId,
     resumed: Option<StoredSession>,
+    mcp: crate::mcp::McpTools,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
-    let runtime: HostRuntime = build_host_runtime(model, runner_root, policy, &structure_home);
+    let runtime: HostRuntime =
+        build_host_runtime_with_mcp(model, runner_root, policy, &structure_home, mcp);
     let mut manager = SessionManager::with_ids(runtime, Box::new(crate::host::UuidIds));
+    let instructions_sha256 = crate::instructions::sha256(manager.runtime().system_instructions());
 
     let (session_id, store) = match resumed {
         Some(stored) => {
@@ -332,7 +351,7 @@ async fn run_task(
                     workspace_id: &workspace_id,
                     cwd: runner_root,
                     profile: None,
-                    instructions_sha256: None,
+                    instructions_sha256: Some(&instructions_sha256),
                 },
             )?;
             // dispatch's own return value already has this Event; nothing

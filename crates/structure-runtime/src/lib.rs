@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
+use std::thread::JoinHandle;
 
 pub use control::{
     PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
@@ -352,6 +353,11 @@ pub struct CoreRuntime<M, R> {
     long_memory: HashMap<WorkspaceId, LongMemoryManager>,
     short_memory_policy: ShortMemoryPolicy,
     compaction_strategy: RuntimeCompactionStrategy,
+    async_file_backed_gc: bool,
+    background_file_backed_gc:
+        HashMap<WorkspaceId, JoinHandle<Result<BackgroundFileBackedGcOutcome, RuntimeError>>>,
+    ready_file_backed_archives: HashMap<WorkspaceId, HashSet<String>>,
+    background_file_backed_gc_error: Option<String>,
     pointer_gc_checkpoint_batches: usize,
     pointer_gc_effort: usize,
     pointer_gc_continuation_probability_bps: u32,
@@ -379,6 +385,10 @@ impl<M, R> CoreRuntime<M, R> {
             long_memory: HashMap::new(),
             short_memory_policy: ShortMemoryPolicy::default(),
             compaction_strategy: RuntimeCompactionStrategy::Disabled,
+            async_file_backed_gc: false,
+            background_file_backed_gc: HashMap::new(),
+            ready_file_backed_archives: HashMap::new(),
+            background_file_backed_gc_error: None,
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
@@ -410,6 +420,10 @@ impl<M, R> CoreRuntime<M, R> {
             long_memory: HashMap::new(),
             short_memory_policy,
             compaction_strategy: RuntimeCompactionStrategy::Disabled,
+            async_file_backed_gc: false,
+            background_file_backed_gc: HashMap::new(),
+            ready_file_backed_archives: HashMap::new(),
+            background_file_backed_gc_error: None,
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
@@ -447,6 +461,10 @@ impl<M, R> CoreRuntime<M, R> {
             } else {
                 RuntimeCompactionStrategy::Disabled
             },
+            async_file_backed_gc: false,
+            background_file_backed_gc: HashMap::new(),
+            ready_file_backed_archives: HashMap::new(),
+            background_file_backed_gc_error: None,
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
@@ -478,6 +496,84 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_compaction_strategy(&mut self, strategy: RuntimeCompactionStrategy) {
         self.compaction_strategy = strategy;
+    }
+
+    /// Prepare new file-backed archives on a worker while model calls proceed.
+    /// A request may use an archive only after it has been fully persisted.
+    /// Memory and SQLite stores keep their existing synchronous behavior.
+    pub fn set_async_file_backed_gc(&mut self, enabled: bool) {
+        self.async_file_backed_gc = enabled;
+    }
+
+    pub fn async_file_backed_gc_pending(&self) -> bool {
+        self.background_file_backed_gc
+            .values()
+            .any(|task| !task.is_finished())
+    }
+
+    pub fn async_file_backed_gc_completed(&self) -> bool {
+        self.background_file_backed_gc
+            .values()
+            .any(JoinHandle::is_finished)
+    }
+
+    pub fn async_file_backed_gc_error(&self) -> Option<&str> {
+        self.background_file_backed_gc_error.as_deref()
+    }
+
+    fn async_file_backed_gc_active(&self) -> bool {
+        self.async_file_backed_gc
+            && self.compaction_strategy == RuntimeCompactionStrategy::FileBackedGc
+            && matches!(self.archive_store, RuntimeArchiveStore::File { .. })
+    }
+
+    fn collect_completed_file_backed_gc(
+        &mut self,
+        current_workspace: &WorkspaceId,
+        current_run_id: &RunId,
+        economics: &mut PointerGcRunEconomics,
+    ) {
+        let mut finished = self
+            .background_file_backed_gc
+            .iter()
+            .filter(|(_, task)| task.is_finished())
+            .map(|(workspace, _)| workspace.clone())
+            .collect::<Vec<_>>();
+        finished.sort();
+        for workspace in finished {
+            let task = self
+                .background_file_backed_gc
+                .remove(&workspace)
+                .expect("completed archive task exists");
+            match task.join() {
+                Ok(Ok(outcome)) => {
+                    self.ready_file_backed_archives
+                        .entry(workspace.clone())
+                        .or_default()
+                        .extend(outcome.committed_archive_ids);
+                    if let Some(observation) = outcome.observation {
+                        if observation.admitted
+                            && workspace == *current_workspace
+                            && observation.run_id == *current_run_id
+                        {
+                            economics.observe_admission(&observation);
+                        }
+                        if let Some(sink) = &mut self.pointer_gc_observation_sink {
+                            sink.record(&observation);
+                        }
+                        self.pointer_gc_admission_observations.push(observation);
+                    }
+                    self.background_file_backed_gc_error = None;
+                }
+                Ok(Err(error)) => {
+                    self.background_file_backed_gc_error = Some(error.to_string());
+                }
+                Err(_) => {
+                    self.background_file_backed_gc_error =
+                        Some("background archive worker panicked".to_owned());
+                }
+            }
+        }
     }
 
     pub fn history_projection(&self) -> HistoryProjection {
@@ -936,11 +1032,39 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 let mut no_progress_window_tool_errors = 0usize;
                 let mut last_no_progress_advisory_had_errors = None;
                 let mut terminal_controller_state = TerminalControllerState::Working;
+                let async_fbgc = self.async_file_backed_gc_active();
                 for model_step in 0..self.max_model_steps_per_run {
                     if control.is_cancelled() {
                         return self.finish_cancelled(run_id, event_log).await;
                     }
+                    if !self.background_file_backed_gc.is_empty() {
+                        self.collect_completed_file_backed_gc(
+                            &workspace_id,
+                            run_id,
+                            &mut pointer_gc_economics,
+                        );
+                    }
                     let history = event_log.snapshot();
+                    let ready_archives = async_fbgc.then(|| {
+                        self.ready_file_backed_archives
+                            .get(&workspace_id)
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+                    let projection_policy = PointerGcProjectionPolicy {
+                        strategy: self.compaction_strategy,
+                        allow_new_archive_writes: !async_fbgc,
+                        ready_archives: ready_archives.as_ref(),
+                        admission_policy: self.pointer_gc_admission_policy,
+                        checkpoint_batches: self.pointer_gc_checkpoint_batches,
+                        effort: self.pointer_gc_effort,
+                        model_step,
+                        max_model_steps: self.max_model_steps_per_run,
+                        continuation_probability_bps: self.pointer_gc_continuation_probability_bps,
+                        cached_input_cost_bps: self.pointer_gc_cached_input_cost_bps,
+                        minimum_reuse_steps: self.pointer_gc_min_reuse_steps,
+                        economics: pointer_gc_economics,
+                    };
                     let projection = {
                         let memory = self.long_memory.get_mut(&workspace_id).ok_or_else(|| {
                             RuntimeError::new(
@@ -955,24 +1079,14 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             run_id,
                             &protected_event_ids,
                             &self.short_memory_policy,
-                            PointerGcProjectionPolicy {
-                                strategy: self.compaction_strategy,
-                                admission_policy: self.pointer_gc_admission_policy,
-                                checkpoint_batches: self.pointer_gc_checkpoint_batches,
-                                effort: self.pointer_gc_effort,
-                                model_step,
-                                max_model_steps: self.max_model_steps_per_run,
-                                continuation_probability_bps: self
-                                    .pointer_gc_continuation_probability_bps,
-                                cached_input_cost_bps: self.pointer_gc_cached_input_cost_bps,
-                                minimum_reuse_steps: self.pointer_gc_min_reuse_steps,
-                                economics: pointer_gc_economics,
-                            },
+                            projection_policy,
                             self.history_projection,
                             memory,
                         )?
                     };
-                    if let Some(observation) = projection.pointer_gc_admission.clone() {
+                    if !async_fbgc
+                        && let Some(observation) = projection.pointer_gc_admission.clone()
+                    {
                         if observation.admitted {
                             pointer_gc_economics.observe_admission(&observation);
                         }
@@ -980,6 +1094,46 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             sink.record(&observation);
                         }
                         self.pointer_gc_admission_observations.push(observation);
+                    }
+                    if async_fbgc && !self.background_file_backed_gc.contains_key(&workspace_id) {
+                        let history = history.clone();
+                        let run_id = run_id.clone();
+                        let protected_event_ids = protected_event_ids.clone();
+                        let policy = self.short_memory_policy.clone();
+                        let archive_store = self.archive_store.clone();
+                        let history_projection = self.history_projection;
+                        let background_policy = PointerGcProjectionPolicy {
+                            allow_new_archive_writes: true,
+                            ready_archives: None,
+                            ..projection_policy
+                        };
+                        let task = std::thread::Builder::new()
+                            .name("structure-file-backed-gc".to_owned())
+                            .spawn(move || {
+                                let mut memory = archive_store.open_manager()?;
+                                let projection = project_model_step(
+                                    &history,
+                                    &run_id,
+                                    &protected_event_ids,
+                                    &policy,
+                                    background_policy,
+                                    history_projection,
+                                    &mut memory,
+                                )?;
+                                Ok(BackgroundFileBackedGcOutcome {
+                                    observation: projection.pointer_gc_admission,
+                                    committed_archive_ids: projection.committed_archive_ids,
+                                })
+                            });
+                        match task {
+                            Ok(task) => {
+                                self.background_file_backed_gc
+                                    .insert(workspace_id.clone(), task);
+                            }
+                            Err(error) => {
+                                self.background_file_backed_gc_error = Some(error.to_string());
+                            }
+                        }
                     }
                     if let Some(observation) = projection.auto_hydration.clone() {
                         self.auto_hydration_observations.push(observation);
@@ -2081,9 +2235,16 @@ fn blocked_tool_result(call: &ToolCallItem, repeat_count: usize) -> ToolResultIt
 struct ModelStepProjection {
     short_memory: Vec<ShortMemoryEntry>,
     run_memory: Vec<ShortMemoryEntry>,
+    committed_archive_ids: HashSet<String>,
     continuation_substitution: ContinuationSubstitution,
     pointer_gc_admission: Option<PointerGcAdmissionObservation>,
     auto_hydration: Option<AutoHydrationObservation>,
+}
+
+#[derive(Debug)]
+struct BackgroundFileBackedGcOutcome {
+    observation: Option<PointerGcAdmissionObservation>,
+    committed_archive_ids: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -2143,8 +2304,10 @@ impl PointerGcRunEconomics {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PointerGcProjectionPolicy {
+struct PointerGcProjectionPolicy<'a> {
     strategy: RuntimeCompactionStrategy,
+    allow_new_archive_writes: bool,
+    ready_archives: Option<&'a HashSet<String>>,
     admission_policy: PointerGcAdmissionPolicy,
     checkpoint_batches: usize,
     effort: usize,
@@ -2189,6 +2352,8 @@ pub fn project_compaction_for_benchmark(
     let measured_input_tokens = estimate_tokens_for_bytes(request_bytes, 0, 0);
     let projection_policy = PointerGcProjectionPolicy {
         strategy,
+        allow_new_archive_writes: true,
+        ready_archives: None,
         admission_policy: PointerGcAdmissionPolicy::Profitability,
         checkpoint_batches: checkpoint_batches.max(1),
         effort: DEFAULT_POINTER_GC_EFFORT,
@@ -2271,7 +2436,7 @@ fn project_model_step(
     run_id: &RunId,
     protected_event_ids: &HashSet<EventId>,
     policy: &ShortMemoryPolicy,
-    pointer_gc: PointerGcProjectionPolicy,
+    pointer_gc: PointerGcProjectionPolicy<'_>,
     history_projection: HistoryProjection,
     memory: &mut LongMemoryManager,
 ) -> Result<ModelStepProjection, RuntimeError> {
@@ -2316,6 +2481,13 @@ fn project_model_step(
     } else {
         (materialization.entries, None)
     };
+    let committed_archive_ids = entries
+        .iter()
+        .filter_map(|entry| match &entry.item {
+            ShortMemoryItem::MemoryPointer(pointer) => Some(pointer.path.clone()),
+            _ => None,
+        })
+        .collect();
     let entries = provider_safe_policy_entries(entries, history, &materialization.batches, run_id);
     let auto_hydration = if pointer_gc.strategy.enabled() {
         hydrate_repeated_tool_batch(
@@ -2367,6 +2539,7 @@ fn project_model_step(
     Ok(ModelStepProjection {
         short_memory,
         run_memory,
+        committed_archive_ids,
         continuation_substitution,
         pointer_gc_admission,
         auto_hydration: auto_hydration.map(|(_, observation)| observation),
@@ -2677,7 +2850,7 @@ fn replace_archivable_batches_with_pointers(
     batches: &[EventBatch],
     visibility: &[EventVisibilityDecision],
     run_id: &RunId,
-    policy: PointerGcProjectionPolicy,
+    policy: PointerGcProjectionPolicy<'_>,
     memory: &mut impl LongMemoryStore,
 ) -> Result<(Vec<ShortMemoryEntry>, Option<PointerGcAdmissionObservation>), RuntimeError> {
     let history_position: HashMap<_, _> = history
@@ -2711,21 +2884,24 @@ fn replace_archivable_batches_with_pointers(
         })?;
         let content_hash = stable_content_hash(&archived_content);
         let memory_id = pointer_archive_path(batch, &content_hash);
-        let already_archived =
-            if let Some(archive) = memory.get_archive(&memory_id).map_err(long_memory_error)? {
-                if archive.content_hash != content_hash
-                    || stable_content_hash(&archive.content) != content_hash
-                    || archive.content != archived_content
-                {
-                    return Err(RuntimeError::new(
-                        RuntimeErrorKind::InvalidLongMemory,
-                        format!("archived runtime evidence failed verification: {memory_id}"),
-                    ));
-                }
-                true
-            } else {
-                false
-            };
+        // A foreground async projection reads only the completed worker's
+        // immutable ready set. It never races an in-progress archive write.
+        let already_archived = if let Some(ready) = policy.ready_archives {
+            ready.contains(&memory_id)
+        } else if let Some(archive) = memory.get_archive(&memory_id).map_err(long_memory_error)? {
+            if archive.content_hash != content_hash
+                || stable_content_hash(&archive.content) != content_hash
+                || archive.content != archived_content
+            {
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidLongMemory,
+                    format!("archived runtime evidence failed verification: {memory_id}"),
+                ));
+            }
+            true
+        } else {
+            false
+        };
         let pointer_item = ShortMemoryItem::MemoryPointer(MemoryPointer {
             path: memory_id.clone(),
             content_hash: content_hash.clone(),
@@ -2837,19 +3013,20 @@ fn replace_archivable_batches_with_pointers(
     let effective_effort = cumulative_pointer_gc_effort(policy.effort, prior_admissions);
     let (blocked_by_reset_debt, blocked_by_cooldown) =
         pointer_gc_epoch_blockers(policy.economics, minimum_reuse_steps);
-    let checkpoint_is_profitable = match policy.admission_policy {
-        PointerGcAdmissionPolicy::Profitability => {
-            new_checkpoint_count > 0
-                && !blocked_by_reset_debt
-                && !blocked_by_cooldown
-                && pointer_gc_is_profitable(
-                    estimated_cache_reset_tokens,
-                    estimated_economic_saved_tokens_per_call,
-                    weighted_remaining_steps_bps,
-                    effective_effort,
-                )
-        }
-    };
+    let checkpoint_is_profitable = policy.allow_new_archive_writes
+        && match policy.admission_policy {
+            PointerGcAdmissionPolicy::Profitability => {
+                new_checkpoint_count > 0
+                    && !blocked_by_reset_debt
+                    && !blocked_by_cooldown
+                    && pointer_gc_is_profitable(
+                        estimated_cache_reset_tokens,
+                        estimated_economic_saved_tokens_per_call,
+                        weighted_remaining_steps_bps,
+                        effective_effort,
+                    )
+            }
+        };
     let observation = (candidate_count > 0).then(|| PointerGcAdmissionObservation {
         run_id: run_id.clone(),
         model_step: policy.model_step + 1,
@@ -3608,9 +3785,14 @@ mod tests {
         )
     }
 
-    fn pointer_gc_policy(checkpoint_batches: usize, effort: usize) -> PointerGcProjectionPolicy {
+    fn pointer_gc_policy(
+        checkpoint_batches: usize,
+        effort: usize,
+    ) -> PointerGcProjectionPolicy<'static> {
         PointerGcProjectionPolicy {
             strategy: RuntimeCompactionStrategy::PointerGc,
+            allow_new_archive_writes: true,
+            ready_archives: None,
             admission_policy: PointerGcAdmissionPolicy::Profitability,
             checkpoint_batches,
             effort,
@@ -6835,6 +7017,30 @@ mod tests {
         let mut memory =
             LongMemoryManager::with_file_archive(&archive_root).expect("file archive opens");
 
+        let ready = HashSet::new();
+        let foreground_policy = PointerGcProjectionPolicy {
+            allow_new_archive_writes: false,
+            ready_archives: Some(&ready),
+            ..policy
+        };
+        let (foreground, foreground_observation) = replace_archivable_batches_with_pointers(
+            &history,
+            ShortMemoryProjector::project_full(&history),
+            &batches,
+            &visibility,
+            &RunId::new("run-1"),
+            foreground_policy,
+            &mut memory,
+        )
+        .expect("foreground keeps exact evidence while archive is pending");
+        assert!(
+            foreground
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        );
+        assert!(!foreground_observation.expect("candidate observed").admitted);
+        assert_eq!(memory.archived_count().expect("archive count succeeds"), 0);
+
         let (entries, observation) = replace_archivable_batches_with_pointers(
             &history,
             ShortMemoryProjector::project_full(&history),
@@ -6860,7 +7066,27 @@ mod tests {
                 _ => None,
             })
             .expect("one file pointer is projected");
-        assert!(archive_root.join(pointer_path).is_file());
+        assert!(archive_root.join(&pointer_path).is_file());
+        let ready = HashSet::from([pointer_path.clone()]);
+        let resumed_policy = PointerGcProjectionPolicy {
+            ready_archives: Some(&ready),
+            ..foreground_policy
+        };
+        let (resumed, _) = replace_archivable_batches_with_pointers(
+            &history,
+            ShortMemoryProjector::project_full(&history),
+            &batches,
+            &visibility,
+            &RunId::new("run-1"),
+            resumed_policy,
+            &mut memory,
+        )
+        .expect("completed archive is adopted without a foreground write");
+        assert!(
+            resumed
+                .iter()
+                .any(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        );
         assert!(entries.iter().any(|entry| {
             matches!(&entry.item, ShortMemoryItem::ToolCall(call) if call.call_id == "call-2")
         }));
@@ -6873,6 +7099,211 @@ mod tests {
         assert!(observation.admitted);
         assert_eq!(memory.archived_count().expect("archive count succeeds"), 1);
         std::fs::remove_dir_all(archive_root).expect("file archive fixture is removed");
+    }
+
+    #[tokio::test]
+    async fn file_backed_gc_does_not_wait_for_an_in_flight_archive_worker() {
+        let archive_root = std::env::temp_dir().join(format!(
+            "structure-async-fbgc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after epoch")
+                .as_nanos()
+        ));
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("workspace-1");
+        let mut runtime = CoreRuntime::with_memory_configuration(
+            RecordingModel::successful(),
+            NoopRunner,
+            ShortMemoryPolicy::default(),
+            false,
+            RuntimeArchiveStore::File {
+                root: archive_root.clone(),
+            },
+        );
+        runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
+        runtime.set_async_file_backed_gc(true);
+        runtime
+            .open_session(&session_id, &workspace_id)
+            .expect("session opens");
+        let (release, waiting) = tokio::sync::oneshot::channel::<()>();
+        runtime.background_file_backed_gc.insert(
+            workspace_id,
+            std::thread::spawn(move || {
+                let _ = waiting.blocking_recv();
+                Ok(BackgroundFileBackedGcOutcome {
+                    observation: None,
+                    committed_archive_ids: HashSet::new(),
+                })
+            }),
+        );
+
+        let events = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            handle(
+                &mut runtime,
+                &session_id,
+                Some(&RunId::new("run-1")),
+                &[],
+                &Command::MessageSend {
+                    content: "hello".to_owned(),
+                },
+            ),
+        )
+        .await
+        .expect("model request is independent of the archive worker")
+        .expect("run succeeds");
+        assert!(matches!(events.last(), Some(Event::RunCompleted { .. })));
+        assert!(runtime.async_file_backed_gc_pending());
+        release.send(()).expect("worker release succeeds");
+        let task = runtime
+            .background_file_backed_gc
+            .remove(&WorkspaceId::new("workspace-1"))
+            .expect("worker exists");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("worker exits");
+        task.join().expect("worker joins").expect("worker succeeds");
+        std::fs::remove_dir_all(archive_root).expect("archive fixture is removed");
+    }
+
+    #[tokio::test]
+    async fn background_file_archive_becomes_visible_on_a_later_request() {
+        let archive_root = std::env::temp_dir().join(format!(
+            "structure-async-fbgc-adoption-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after epoch")
+                .as_nanos()
+        ));
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("workspace-1");
+        let history = vec![
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path":"src/main.rs"}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "x".repeat(4_000),
+                    is_error: false,
+                },
+            ),
+        ];
+        let policy = ShortMemoryPolicy {
+            default_ttl_events: 0,
+            recency_floor: 0,
+            recent_turns_load_all: 0,
+            ttl_overrides: BTreeMap::new(),
+            decay_rules: Vec::new(),
+            ..ShortMemoryPolicy::default()
+        };
+        let mut runtime = CoreRuntime::with_memory_configuration(
+            RecordingModel::successful(),
+            NoopRunner,
+            policy,
+            false,
+            RuntimeArchiveStore::File {
+                root: archive_root.clone(),
+            },
+        );
+        runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
+        runtime.set_async_file_backed_gc(true);
+        runtime.set_pointer_gc_checkpoint_batches(1);
+        runtime.set_pointer_gc_continuation_probability_bps(PROBABILITY_SCALE_BPS);
+        runtime.set_pointer_gc_min_reuse_steps(1);
+        runtime.set_max_model_steps_per_run(128);
+        runtime
+            .open_session(&session_id, &workspace_id)
+            .expect("session opens");
+
+        let mut first = TestEventLog::new(&history, &session_id, Some(&RunId::new("run-1")));
+        RuntimeEngine::handle(
+            &mut runtime,
+            &session_id,
+            Some(&RunId::new("run-1")),
+            &mut first,
+            &Command::MessageSend {
+                content: "first".to_owned(),
+            },
+        )
+        .await
+        .expect("first run succeeds");
+        assert!(
+            runtime
+                .model()
+                .request
+                .as_ref()
+                .expect("request recorded")
+                .short_memory
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while runtime.async_file_backed_gc_pending() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("archive worker finishes");
+        assert!(
+            runtime
+                .long_memory(&workspace_id)
+                .expect("memory open")
+                .archive_count()
+                .expect("count succeeds")
+                > 0
+        );
+
+        let mut second = TestEventLog::new(&first.history, &session_id, Some(&RunId::new("run-2")));
+        RuntimeEngine::handle(
+            &mut runtime,
+            &session_id,
+            Some(&RunId::new("run-2")),
+            &mut second,
+            &Command::MessageSend {
+                content: "second".to_owned(),
+            },
+        )
+        .await
+        .expect("second run succeeds");
+        assert!(
+            runtime
+                .model()
+                .request
+                .as_ref()
+                .expect("request recorded")
+                .short_memory
+                .iter()
+                .any(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        );
+        if let Some(task) = runtime.background_file_backed_gc.remove(&workspace_id) {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while !task.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("second worker finishes");
+            task.join()
+                .expect("second worker joins")
+                .expect("second worker succeeds");
+        }
+        std::fs::remove_dir_all(archive_root).expect("archive fixture is removed");
     }
 
     #[test]
@@ -7088,6 +7519,28 @@ mod tests {
             .collect();
         let mut policy = pointer_gc_policy(1, 1);
         policy.strategy = RuntimeCompactionStrategy::FileBackedGc;
+
+        let ready = HashSet::new();
+        let foreground_policy = PointerGcProjectionPolicy {
+            allow_new_archive_writes: false,
+            ready_archives: Some(&ready),
+            ..policy
+        };
+        let (foreground, _) = replace_archivable_batches_with_pointers(
+            &events,
+            ShortMemoryProjector::project_full(&events),
+            std::slice::from_ref(&batch),
+            &visibility,
+            &RunId::new("run-1"),
+            foreground_policy,
+            &mut memory,
+        )
+        .expect("pending archive never blocks the foreground request");
+        assert!(
+            foreground
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        );
 
         let error = replace_archivable_batches_with_pointers(
             &events,

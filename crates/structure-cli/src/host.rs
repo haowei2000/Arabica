@@ -8,7 +8,7 @@
 //! this; neither adds a second way to do it.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::Args;
 use sha2::{Digest, Sha256};
@@ -193,6 +193,68 @@ impl ModelProvider for ScriptedModel {
 pub struct HostRunner {
     local: LocalRunner,
     mcp: crate::mcp::McpTools,
+    /// Workspace root, for reading the file snapshots the write journal
+    /// takes and restores.
+    root: PathBuf,
+    /// Checkpoints for the terminal `/diff` and `/undo` commands, shared
+    /// with the session layer through [`Self::write_journal`].
+    writes: std::sync::Arc<std::sync::Mutex<crate::checkpoint::WriteJournal>>,
+}
+
+impl HostRunner {
+    /// The write journal `/diff` and `/undo` read; `execute` records into
+    /// the same handle.
+    pub(crate) fn write_journal(
+        &self,
+    ) -> std::sync::Arc<std::sync::Mutex<crate::checkpoint::WriteJournal>> {
+        std::sync::Arc::clone(&self.writes)
+    }
+
+    /// Run one local tool call, checkpointing the three write tools:
+    /// snapshot every path the call names before and after, and record the
+    /// call when anything actually moved. MCP tools are routed before this
+    /// and are never checkpointed -- a server's side effects are not
+    /// visible to this host.
+    async fn execute_with_checkpoint(
+        &mut self,
+        request: ToolExecutionRequest,
+    ) -> Result<ToolExecutionResult, RunnerError> {
+        let paths = crate::checkpoint::mutating_paths(&request.call);
+        if paths.is_empty() {
+            return self.local.execute(request).await;
+        }
+        let call_id = request.call.call_id.clone();
+        let tool = request.call.name.clone();
+        let mut before = Vec::with_capacity(paths.len());
+        for path in &paths {
+            before.push(tokio::fs::read(self.root.join(path)).await.ok());
+        }
+        let result = self.local.execute(request).await;
+        let mut movements = Vec::with_capacity(paths.len());
+        for (path, before) in paths.iter().zip(before) {
+            let after = tokio::fs::read(self.root.join(path)).await.ok();
+            // A call that changed nothing leaves nothing to undo; one that
+            // failed halfway but moved a file is still worth a checkpoint.
+            if before != after {
+                movements.push(crate::checkpoint::FileMovement {
+                    path: path.clone(),
+                    before,
+                    after,
+                });
+            }
+        }
+        if !movements.is_empty() {
+            self.writes
+                .lock()
+                .expect("write journal lock poisoned")
+                .record(crate::checkpoint::WriteCheckpoint {
+                    call_id,
+                    tool,
+                    movements,
+                });
+        }
+        result
+    }
 }
 
 impl RunnerEnvironment for HostRunner {
@@ -214,7 +276,7 @@ impl RunnerEnvironment for HostRunner {
         if self.mcp.contains(&request.call.name) {
             self.mcp.execute(request).await
         } else {
-            self.local.execute(request).await
+            self.execute_with_checkpoint(request).await
         }
     }
 
@@ -238,10 +300,24 @@ pub fn coding_system_instructions(root: &Path) -> String {
         "You are Structure, an autonomous coding agent working in {}. \
          The host operating system is {}. Use paths relative to that \
          workspace root for every tool call; the tools refuse absolute \
-         paths and any path that would escape the root.",
+         paths and any path that would escape the root. A user may refer to \
+         workspace files as @path; inspect those files with read_file before \
+         relying on their contents.",
         root.display(),
         std::env::consts::OS,
     )
+}
+
+/// The standing instructions for a CLI run: the fixed coding preamble from
+/// [`coding_system_instructions`], then any `AGENTS.md` discovered in the
+/// workspace (`instructions.rs`), each annotated with the file it came from.
+/// Every build site calls this, and terminal chat plus ACP re-call it before
+/// each turn, so all three surfaces send the same instructions and a file
+/// edited mid-session reaches the next model request.
+pub fn system_instructions(root: &Path) -> Vec<String> {
+    let mut instructions = vec![coding_system_instructions(root)];
+    instructions.extend(crate::instructions::rendered(root, root));
+    instructions
 }
 
 /// Derives a stable [`structure_protocol::WorkspaceId`] from a working
@@ -289,6 +365,10 @@ pub fn build_host_runtime_with_mcp(
     let runner = HostRunner {
         local: LocalRunner::with_policy(runner_root, tool_policy),
         mcp,
+        root: runner_root.to_path_buf(),
+        writes: std::sync::Arc::new(std::sync::Mutex::new(
+            crate::checkpoint::WriteJournal::default(),
+        )),
     };
     let archive_root = structure_home
         .join("runtime-memory")
@@ -301,10 +381,11 @@ pub fn build_host_runtime_with_mcp(
         RuntimeArchiveStore::File { root: archive_root },
     );
     runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
+    runtime.set_async_file_backed_gc(true);
     runtime.set_tools(tools);
     runtime.set_max_model_steps_per_run(MAX_MODEL_STEPS_PER_RUN);
     runtime.set_max_model_steps_without_progress(usize::MAX);
-    runtime.set_system_instructions(vec![coding_system_instructions(runner_root)]);
+    runtime.set_system_instructions(system_instructions(runner_root));
     runtime
 }
 
@@ -467,6 +548,26 @@ mod tests {
     }
 
     #[test]
+    fn build_host_runtime_includes_discovered_project_instructions() {
+        let root = temp_root("agents-md");
+        std::fs::write(root.join("AGENTS.md"), "Never edit generated files.\n")
+            .expect("instruction file is written");
+        let runtime = build_host_runtime(
+            HostModel::Scripted(ScriptedModel::default()),
+            &root,
+            LocalRunnerPolicy::coding(),
+            &root.join("state"),
+        );
+        let instructions = runtime.system_instructions();
+        assert_eq!(instructions.len(), 2);
+        assert!(
+            instructions[1].starts_with("Project instructions from AGENTS.md at AGENTS.md:\n\n")
+        );
+        assert!(instructions[1].contains("Never edit generated files."));
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn build_host_runtime_honors_a_policy_without_shell() {
         let root = temp_root("no-shell");
         let runtime = build_host_runtime(
@@ -476,6 +577,45 @@ mod tests {
             &root.join("state"),
         );
         assert!(!runtime.tools().iter().any(|tool| tool.name == "shell"));
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn a_local_write_is_checkpointed_and_undoable() {
+        let root = temp_root("checkpoint");
+        let mut runner = HostRunner {
+            local: structure_runner::LocalRunner::with_policy(&root, LocalRunnerPolicy::coding()),
+            mcp: crate::mcp::McpTools::default(),
+            root: root.clone(),
+            writes: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::checkpoint::WriteJournal::default(),
+            )),
+        };
+        let request = ToolExecutionRequest {
+            run_id: RunId::new("r"),
+            call: structure_model::ToolCallItem {
+                id: None,
+                call_id: "call-1".to_owned(),
+                name: "write_file".to_owned(),
+                arguments: serde_json::json!({
+                    "path": "note.txt",
+                    "content": "agent content"
+                }),
+                provider_state: None,
+            },
+        };
+        let result = runner.execute(request).await.expect("write executes");
+        assert!(!result.result.is_error);
+        assert!(root.join("note.txt").exists());
+        let journal = runner.write_journal();
+        let mut journal = journal.lock().expect("write journal lock poisoned");
+        assert!(!journal.is_empty());
+        assert!(matches!(
+            journal.undo_last(&root),
+            crate::checkpoint::UndoOutcome::Reverted { .. }
+        ));
+        // The agent created the file, so undoing removes it again.
+        assert!(!root.join("note.txt").exists());
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 

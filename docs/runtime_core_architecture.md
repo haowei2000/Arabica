@@ -283,6 +283,21 @@ rewrite, preventing full/pointer oscillation. The server selects
 `CoreRuntime` setters. Each eligible decision is exposed as a
 `PointerGcAdmissionObservation` for attribution.
 
+The CLI and HTTP host enable asynchronous FileBackedGC with a file archive.
+The foreground model step never writes a newly admitted archive. It projects
+from a frozen set of verified archive IDs returned by completed background
+workers, and keeps other batches in full context. A worker uses an immutable
+event-log snapshot, applies the same profitability gate, persists exact
+archives, and publishes its ready IDs only after the whole pass succeeds.
+Workers are limited to one per workspace; failed passes leave the current
+conversation usable and are exposed as diagnostics. A later pass can verify
+and adopt archives left by a prior process or an interrupted pass. The
+host does not wait for unfinished workers when a one-shot process exits;
+the exact session log remains the recovery source. The
+provider-free benchmark keeps synchronous projection for deterministic
+comparison. Projection and ready-set checks still run before model calls;
+the expensive archive verification and writes run off the request path.
+
 During an active run, the newest tool step is explicitly protected and sent
 through the provider's lossless continuation channel. Before every later model
 step, older closed tool batches from that same run pass through the normal TTL

@@ -23,7 +23,7 @@ use structure_session::{
 
 use crate::config::{save_workspace_settings, set_thinking};
 use crate::host::{
-    HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds, build_host_runtime,
+    HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds, build_host_runtime_with_mcp,
     workspace_id_for,
 };
 use crate::print::{self, Resume};
@@ -258,10 +258,21 @@ impl InteractiveSession {
         if options.allow_shell {
             tool_policy = tool_policy.with_tool(LocalTool::Shell);
         }
+        // MCP servers come from the user config file, shared with `-p` and
+        // ACP through the same client and permission logic. A broken one is
+        // reported and skipped rather than failing the session.
+        let (mcp, mcp_diagnostics) = crate::mcp::connect_configured(&runner_root, &structure_home)
+            .await
+            .map_err(|error| format!("mcp configuration: {error}"))?;
+        for diagnostic in mcp_diagnostics {
+            eprintln!("structure: {diagnostic}");
+        }
         let mut manager = SessionManager::with_ids(
-            build_host_runtime(model, &runner_root, tool_policy, &structure_home),
+            build_host_runtime_with_mcp(model, &runner_root, tool_policy, &structure_home, mcp),
             Box::new(UuidIds),
         );
+        let instructions_sha256 =
+            crate::instructions::sha256(manager.runtime().system_instructions());
         let (session_id, store) = match resumed {
             Some(stored) => {
                 let session_id = stored.header.id.clone();
@@ -315,7 +326,7 @@ impl InteractiveSession {
                         workspace_id: &workspace_id,
                         cwd: &runner_root,
                         profile: None,
-                        instructions_sha256: None,
+                        instructions_sha256: Some(&instructions_sha256),
                     },
                 )?);
                 store.observe(event, EventVisibility::Client);
@@ -332,6 +343,114 @@ impl InteractiveSession {
             read_only: options.read_only,
             allow_shell: options.allow_shell,
         })
+    }
+
+    /// Mark this session suspended in its store so a later `--resume`,
+    /// `/resume`, or ACP `session/load` can pick it back up cleanly.
+    pub(crate) async fn suspend(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let envelope = CommandEnvelope::new(
+            CommandId::new(uuid::Uuid::now_v7().to_string()),
+            Some(self.session_id.clone()),
+            Command::SessionSuspend,
+        );
+        self.manager
+            .dispatch(
+                envelope,
+                DispatchControl {
+                    observer: Some(Arc::clone(&self.store) as Arc<dyn SessionEventObserver>),
+                    ..DispatchControl::default()
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// `/sessions`: the stored sessions for this workspace, formatted the
+    /// same way `structure sessions list` prints them.
+    pub(crate) fn session_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        Ok(self
+            .session_list_entries()?
+            .into_iter()
+            .map(|entry| entry.line)
+            .collect())
+    }
+
+    /// The same listings as [`Self::session_list`], keeping each session's
+    /// id so `/resume`'s picker can act on the selection.
+    pub(crate) fn session_list_entries(
+        &self,
+    ) -> Result<Vec<crate::sessions::SessionEntry>, Box<dyn std::error::Error>> {
+        crate::sessions::listing_entries(
+            &self.structure_home,
+            Some(&workspace_id_for(&self.runner_root)),
+        )
+    }
+
+    /// `/resume <id>`: open `id` in this workspace, then suspend the
+    /// session it replaces. The new session is opened before the old one
+    /// is suspended, so an unknown id leaves the current session
+    /// untouched. On success the caller replaces its session with the
+    /// returned one.
+    pub(crate) async fn switch_to(
+        &mut self,
+        id: &str,
+    ) -> Result<InteractiveSession, Box<dyn std::error::Error>> {
+        let next = InteractiveSession::open(
+            self.config.clone(),
+            InteractiveOptions {
+                allow_shell: self.allow_shell,
+                read_only: self.read_only,
+                resume: Resume::Id(id.to_owned()),
+            },
+        )
+        .await?;
+        self.suspend().await?;
+        Ok(next)
+    }
+
+    /// Re-read the workspace `AGENTS.md` files so the next turn's model
+    /// request reflects edits made since the session opened. Both terminal
+    /// surfaces call this before dispatching a turn.
+    pub(crate) fn refresh_instructions(&mut self) {
+        self.manager
+            .runtime_mut()
+            .set_system_instructions(crate::host::system_instructions(&self.runner_root));
+    }
+
+    /// `/diff`: the agent's net file changes this session, as recorded by
+    /// the runner's write checkpoints.
+    pub(crate) fn write_report(&self) -> String {
+        self.manager
+            .runtime()
+            .runner()
+            .write_journal()
+            .lock()
+            .expect("write journal lock poisoned")
+            .report(&self.runner_root)
+    }
+
+    /// `/undo`: revert the most recent agent write call. Refuses -- and
+    /// touches nothing -- when a file it changed has moved on on disk, so
+    /// user edits are never overwritten.
+    pub(crate) fn undo_last_write(&self) -> String {
+        let journal = self.manager.runtime().runner().write_journal();
+        let mut journal = journal.lock().expect("write journal lock poisoned");
+        match journal.undo_last(&self.runner_root) {
+            crate::checkpoint::UndoOutcome::NothingToDo => {
+                "No agent file changes to undo.".to_owned()
+            }
+            crate::checkpoint::UndoOutcome::Reverted { tool, paths } => {
+                format!("Reverted {tool}: {}", paths.join(", "))
+            }
+            crate::checkpoint::UndoOutcome::Conflict { path } => format!(
+                "{path} changed on disk since the agent last wrote it; nothing was \
+                 overwritten. Put the file back to the agent's content, then /undo \
+                 again."
+            ),
+            crate::checkpoint::UndoOutcome::Failed(message) => {
+                format!("could not revert: {message}")
+            }
+        }
     }
 
     pub(crate) fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -367,6 +486,7 @@ impl InteractiveSession {
         lines: &mut tokio::sync::mpsc::UnboundedReceiver<std::io::Result<String>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let terminal = TerminalObserver::new();
+        self.refresh_instructions();
         set_progress(self.manager.runtime_mut().model_mut(), terminal.sink());
         let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
             Arc::clone(&self.store) as Arc<dyn SessionEventObserver>,
@@ -493,7 +613,9 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
             return 0;
         }
         if text == "/help" {
-            println!("/help  /exit  /session  /model <name>  /thinking <off|on|low|medium|high>");
+            println!(
+                "/help  /exit  /session  /sessions  /resume <id>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>"
+            );
             continue;
         }
         if text == "/session" {
@@ -505,6 +627,89 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
                 session.read_only,
                 session.allow_shell
             );
+            continue;
+        }
+        if text == "/diff" {
+            print!("{}", session.write_report());
+            continue;
+        }
+        if text == "/undo" {
+            println!("{}", session.undo_last_write());
+            continue;
+        }
+        if text == "/sessions" {
+            match session.session_list() {
+                Ok(lines) if lines.is_empty() => println!("no sessions found"),
+                Ok(lines) => {
+                    for line in &lines {
+                        println!("{line}");
+                    }
+                }
+                Err(error) => eprintln!("error: {error}"),
+            }
+            continue;
+        }
+        if text == "/resume" || text.starts_with("/resume ") {
+            let id = text["/resume".len()..].trim();
+            let id =
+                if id.is_empty() {
+                    // `/resume` alone: list resumable sessions and pick one.
+                    // A line number, a unique id prefix, or an exact id works;
+                    // an empty line cancels.
+                    let entries = match session.session_list_entries() {
+                        Ok(entries) => entries,
+                        Err(error) => {
+                            eprintln!("error: {error}");
+                            continue;
+                        }
+                    };
+                    if entries.is_empty() {
+                        println!("no sessions found");
+                        continue;
+                    }
+                    for (index, entry) in entries.iter().enumerate() {
+                        println!("{:>3}. {}", index + 1, entry.line);
+                    }
+                    prompt("resume: number or id (Enter cancels)> ");
+                    let answer = match lines.recv().await {
+                        Some(Ok(line)) => line.trim().to_owned(),
+                        _ => String::new(),
+                    };
+                    if answer.is_empty() {
+                        continue;
+                    }
+                    match answer.parse::<usize>().ok().and_then(|number| {
+                        number.checked_sub(1).and_then(|index| entries.get(index))
+                    }) {
+                        Some(entry) => entry.id.clone(),
+                        None => {
+                            let mut matches = entries
+                                .iter()
+                                .filter(|entry| entry.id.starts_with(&answer))
+                                .collect::<Vec<_>>();
+                            if matches.len() > 1 {
+                                eprintln!("'{}' matches more than one session", answer);
+                                continue;
+                            }
+                            match matches.pop() {
+                                Some(entry) => entry.id.clone(),
+                                None => {
+                                    eprintln!("no session matches '{}'", answer);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    id.to_owned()
+                };
+            match session.switch_to(&id).await {
+                Ok(next) => {
+                    session = next;
+                    println!("session: {}", session.session_id);
+                }
+                Err(error) => eprintln!("error: {error}"),
+            }
             continue;
         }
         if let Some(model) = text.strip_prefix("/model ") {

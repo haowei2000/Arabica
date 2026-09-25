@@ -16,15 +16,15 @@ mod permission;
 mod stop_reason;
 mod time;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
     Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
-    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities,
+    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer,
     NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, ResumeSessionRequest,
     ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOption, SessionId as AcpSessionId, SessionInfo,
@@ -225,9 +225,8 @@ impl AcpState {
         }
         let workspace_id = crate::host::workspace_id_for(&request.cwd);
         let model = (self.model_factory)()?;
-        let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
-            .await
-            .map_err(|error| AcpError::invalid_params().data(error))?;
+        let mcp =
+            connect_session_mcp(request.mcp_servers, &request.cwd, &self.structure_home).await?;
         let runtime = build_host_runtime_with_mcp(
             model,
             &request.cwd,
@@ -236,6 +235,8 @@ impl AcpState {
             mcp,
         );
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
+        let instructions_sha256 =
+            crate::instructions::sha256(manager.runtime().system_instructions());
         let envelope = CommandEnvelope::new(
             CommandId::new(uuid::Uuid::now_v7().to_string()),
             None,
@@ -267,7 +268,7 @@ impl AcpState {
                 workspace_id: &workspace_id,
                 cwd: &request.cwd,
                 profile: None,
-                instructions_sha256: None,
+                instructions_sha256: Some(&instructions_sha256),
             },
         )
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
@@ -337,9 +338,8 @@ impl AcpState {
         );
 
         let model = (self.model_factory)()?;
-        let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
-            .await
-            .map_err(|error| AcpError::invalid_params().data(error))?;
+        let mcp =
+            connect_session_mcp(request.mcp_servers, &request.cwd, &self.structure_home).await?;
         let runtime = build_host_runtime_with_mcp(
             model,
             &request.cwd,
@@ -442,9 +442,8 @@ impl AcpState {
         );
 
         let model = (self.model_factory)()?;
-        let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
-            .await
-            .map_err(|error| AcpError::invalid_params().data(error))?;
+        let mcp =
+            connect_session_mcp(request.mcp_servers, &request.cwd, &self.structure_home).await?;
         let runtime = build_host_runtime_with_mcp(
             model,
             &request.cwd,
@@ -834,6 +833,43 @@ async fn serve(
         .await
 }
 
+/// Connect an ACP request's client-supplied MCP servers, then the ones
+/// declared in the user config file behind them; when both declare the same
+/// name the client's entry wins, because the editor is the more specific
+/// configuration. A client-supplied server that fails to connect fails the
+/// request (the client asked for it); a user-config server that fails is
+/// reported on stderr and skipped, so one broken entry in the config file
+/// cannot take the session down.
+async fn connect_session_mcp(
+    client_servers: Vec<McpServer>,
+    cwd: &Path,
+    structure_home: &Path,
+) -> AcpResult<crate::mcp::McpTools> {
+    let client_names: HashSet<String> = client_servers
+        .iter()
+        .map(crate::mcp::server_name)
+        .map(str::to_owned)
+        .collect();
+    let mut tools = crate::mcp::McpTools::connect(client_servers, cwd)
+        .await
+        .map_err(|error| AcpError::invalid_params().data(error))?;
+    let configured = crate::config::user_config_mcp(structure_home)
+        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+    let not_supplied_by_client = configured
+        .into_iter()
+        .filter(|server| !client_names.contains(crate::mcp::server_name(server)))
+        .collect::<Vec<_>>();
+    let (extra, diagnostics) =
+        crate::mcp::McpTools::connect_lenient(not_supplied_by_client, cwd).await;
+    for diagnostic in diagnostics {
+        eprintln!("structure: {diagnostic}");
+    }
+    tools
+        .extend(extra)
+        .map_err(|error| AcpError::invalid_params().data(error))?;
+    Ok(tools)
+}
+
 /// The `session/prompt` handler proper, split out of the closure only for
 /// readability: look up the session and claim its manager synchronously (so
 /// a concurrent second prompt on the same session is rejected immediately,
@@ -871,6 +907,12 @@ fn handle_prompt(
         entry.cwd.clone(),
     ));
     let progress = acp_observer.progress_sink();
+    // Re-read the workspace `AGENTS.md` files so a file edited mid-session
+    // reaches this turn's model request, matching terminal chat's per-turn
+    // refresh.
+    guard
+        .runtime_mut()
+        .set_system_instructions(crate::host::system_instructions(&entry.cwd));
     let model = guard.runtime_mut().model_mut();
     match model {
         HostModel::Api(_) => {

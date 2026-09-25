@@ -32,149 +32,219 @@ pub struct McpTools {
     definitions: Vec<ToolDefinition>,
 }
 
+/// One server's live connection plus its advertised tools, between
+/// transport setup and route registration.
+struct Connected {
+    name: String,
+    client: Client,
+    tools: Vec<rmcp::model::Tool>,
+}
+
+/// Bring one server up and discover its tools. Error messages carry the
+/// server name and the failure, never environment values or header values.
+async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, String> {
+    let (name, client) = match server {
+        McpServer::Stdio(config) => {
+            if !config.command.is_absolute() {
+                return Err(format!(
+                    "MCP server '{}' command must be absolute",
+                    config.name
+                ));
+            }
+            let mut command = tokio::process::Command::new(&config.command);
+            command
+                .args(&config.args)
+                .current_dir(cwd)
+                .kill_on_drop(true)
+                .env_clear();
+            // Only the environment explicitly supplied with the server may
+            // contain MCP credentials. Do not leak the agent's provider
+            // key to a server process.
+            for key in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SYSTEMROOT"] {
+                if let Some(value) = std::env::var_os(key) {
+                    command.env(key, value);
+                }
+            }
+            for variable in &config.env {
+                command.env(&variable.name, &variable.value);
+            }
+            let transport = TokioChildProcess::new(command).map_err(|error| {
+                format!("MCP server '{}' could not start: {error}", config.name)
+            })?;
+            let client =
+                tokio::time::timeout(std::time::Duration::from_secs(15), ().serve(transport))
+                    .await
+                    .map_err(|_| format!("MCP server '{}' initialization timed out", config.name))?
+                    .map_err(|error| {
+                        format!(
+                            "MCP server '{}' initialization failed: {error}",
+                            config.name
+                        )
+                    })?;
+            (config.name, client)
+        }
+        McpServer::Http(config) => {
+            let mut headers = reqwest::header::HeaderMap::new();
+            for header in &config.headers {
+                let key = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(
+                    |_| {
+                        format!(
+                            "MCP server '{}' has an invalid HTTP header name",
+                            config.name
+                        )
+                    },
+                )?;
+                let value =
+                    reqwest::header::HeaderValue::from_str(&header.value).map_err(|_| {
+                        format!(
+                            "MCP server '{}' has an invalid HTTP header value",
+                            config.name
+                        )
+                    })?;
+                headers.insert(key, value);
+            }
+            let http_client = reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .map_err(|error| {
+                    format!("MCP server '{}' HTTP client failed: {error}", config.name)
+                })?;
+            let transport = StreamableHttpClientTransport::with_client(
+                http_client,
+                rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str()),
+            );
+            let client =
+                tokio::time::timeout(std::time::Duration::from_secs(15), ().serve(transport))
+                    .await
+                    .map_err(|_| format!("MCP server '{}' initialization timed out", config.name))?
+                    .map_err(|error| {
+                        format!(
+                            "MCP server '{}' initialization failed: {error}",
+                            config.name
+                        )
+                    })?;
+            (config.name, client)
+        }
+        McpServer::Sse(config) => {
+            return Err(format!(
+                "MCP server '{}' uses unsupported SSE transport",
+                config.name
+            ));
+        }
+        _ => return Err("unsupported MCP transport".to_owned()),
+    };
+    if name.is_empty() {
+        return Err("MCP server name must not be empty".to_owned());
+    }
+    let tools = tokio::time::timeout(std::time::Duration::from_secs(15), client.list_all_tools())
+        .await
+        .map_err(|_| format!("MCP server '{name}' tool discovery timed out"))?
+        .map_err(|error| format!("MCP server '{name}' tool discovery failed: {error}"))?;
+    Ok(Connected {
+        name,
+        client,
+        tools,
+    })
+}
+
 impl McpTools {
     pub async fn connect(servers: Vec<McpServer>, cwd: &Path) -> Result<Self, String> {
         let mut result = Self::default();
         let mut names = HashSet::new();
         for server in servers {
-            let (name, client) = match server {
-                McpServer::Stdio(config) => {
-                    if !config.command.is_absolute() {
-                        return Err(format!(
-                            "MCP server '{}' command must be absolute",
-                            config.name
-                        ));
-                    }
-                    let mut command = tokio::process::Command::new(&config.command);
-                    command
-                        .args(&config.args)
-                        .current_dir(cwd)
-                        .kill_on_drop(true)
-                        .env_clear();
-                    // Only the environment explicitly supplied by the ACP
-                    // client may contain MCP credentials. Do not leak the
-                    // agent's provider key to a client-supplied process.
-                    for key in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SYSTEMROOT"] {
-                        if let Some(value) = std::env::var_os(key) {
-                            command.env(key, value);
-                        }
-                    }
-                    for variable in &config.env {
-                        command.env(&variable.name, &variable.value);
-                    }
-                    let transport = TokioChildProcess::new(command).map_err(|error| {
-                        format!("MCP server '{}' could not start: {error}", config.name)
-                    })?;
-                    let client = tokio::time::timeout(
-                        std::time::Duration::from_secs(15),
-                        ().serve(transport),
-                    )
-                    .await
-                    .map_err(|_| format!("MCP server '{}' initialization timed out", config.name))?
-                    .map_err(|error| {
-                        format!(
-                            "MCP server '{}' initialization failed: {error}",
-                            config.name
-                        )
-                    })?;
-                    (config.name, client)
-                }
-                McpServer::Http(config) => {
-                    let mut headers = reqwest::header::HeaderMap::new();
-                    for header in &config.headers {
-                        let key = reqwest::header::HeaderName::from_bytes(header.name.as_bytes())
-                            .map_err(|_| {
-                            format!(
-                                "MCP server '{}' has an invalid HTTP header name",
-                                config.name
-                            )
-                        })?;
-                        let value = reqwest::header::HeaderValue::from_str(&header.value).map_err(
-                            |_| {
-                                format!(
-                                    "MCP server '{}' has an invalid HTTP header value",
-                                    config.name
-                                )
-                            },
-                        )?;
-                        headers.insert(key, value);
-                    }
-                    let http_client = reqwest::Client::builder()
-                        .default_headers(headers)
-                        .build()
-                        .map_err(|error| {
-                            format!("MCP server '{}' HTTP client failed: {error}", config.name)
-                        })?;
-                    let transport = StreamableHttpClientTransport::with_client(
-                        http_client,
-                        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str()),
-                    );
-                    let client = tokio::time::timeout(
-                        std::time::Duration::from_secs(15),
-                        ().serve(transport),
-                    )
-                    .await
-                    .map_err(|_| format!("MCP server '{}' initialization timed out", config.name))?
-                    .map_err(|error| {
-                        format!(
-                            "MCP server '{}' initialization failed: {error}",
-                            config.name
-                        )
-                    })?;
-                    (config.name, client)
-                }
-                McpServer::Sse(config) => {
-                    return Err(format!(
-                        "MCP server '{}' uses unsupported SSE transport",
-                        config.name
-                    ));
-                }
-                _ => return Err("unsupported MCP transport".to_owned()),
-            };
-            if name.is_empty() {
-                return Err("MCP server name must not be empty".to_owned());
-            }
-            if !names.insert(name.clone()) {
-                return Err(format!("duplicate MCP server name '{name}'"));
-            }
-            let tools =
-                tokio::time::timeout(std::time::Duration::from_secs(15), client.list_all_tools())
-                    .await
-                    .map_err(|_| format!("MCP server '{name}' tool discovery timed out"))?
-                    .map_err(|error| {
-                        format!("MCP server '{name}' tool discovery failed: {error}")
-                    })?;
-            let server_index = result.clients.len();
-            for tool in tools {
-                let exposed_name = format!("mcp__{}__{}", safe_name(&name), safe_name(&tool.name));
-                if tool.name.is_empty() || exposed_name.len() > 64 {
-                    return Err(format!(
-                        "MCP server '{name}' exposed a tool name that cannot be advertised to the model"
-                    ));
-                }
-                if result.routes.contains_key(&exposed_name) {
-                    return Err(format!("MCP tool name collision at '{exposed_name}'"));
-                }
-                result.routes.insert(
-                    exposed_name.clone(),
-                    RoutedTool {
-                        server: server_index,
-                        original_name: tool.name.to_string(),
-                    },
-                );
-                result.definitions.push(ToolDefinition {
-                    name: exposed_name,
-                    description: format!(
-                        "MCP server '{name}': {}",
-                        tool.description.as_deref().unwrap_or("No description")
-                    ),
-                    input_schema: serde_json::Value::Object((*tool.input_schema).clone()),
-                    strict: None,
-                });
-            }
-            result.clients.push(client);
+            let connected = connect_server(server, cwd).await?;
+            result.register(connected, &mut names)?;
         }
         Ok(result)
+    }
+
+    /// Connect as many servers as possible, collecting one diagnostic per
+    /// failure: the shape terminal surfaces want, where one broken server
+    /// must not take the session down. [`Self::connect`] keeps the strict
+    /// all-or-nothing contract the ACP client relies on.
+    pub async fn connect_lenient(servers: Vec<McpServer>, cwd: &Path) -> (Self, Vec<String>) {
+        let mut result = Self::default();
+        let mut names = HashSet::new();
+        let mut diagnostics = Vec::new();
+        for server in servers {
+            match connect_server(server, cwd).await {
+                Ok(connected) => {
+                    if let Err(error) = result.register(connected, &mut names) {
+                        diagnostics.push(error);
+                    }
+                }
+                Err(error) => diagnostics.push(error),
+            }
+        }
+        (result, diagnostics)
+    }
+
+    /// Wire one live server's tools into the route table.
+    fn register(
+        &mut self,
+        connected: Connected,
+        names: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        let Connected {
+            name,
+            client,
+            tools,
+        } = connected;
+        if !names.insert(name.clone()) {
+            return Err(format!("duplicate MCP server name '{name}'"));
+        }
+        let server_index = self.clients.len();
+        for tool in tools {
+            let exposed_name = format!("mcp__{}__{}", safe_name(&name), safe_name(&tool.name));
+            if tool.name.is_empty() || exposed_name.len() > 64 {
+                return Err(format!(
+                    "MCP server '{name}' exposed a tool name that cannot be advertised to the model"
+                ));
+            }
+            if self.routes.contains_key(&exposed_name) {
+                return Err(format!("MCP tool name collision at '{exposed_name}'"));
+            }
+            self.routes.insert(
+                exposed_name.clone(),
+                RoutedTool {
+                    server: server_index,
+                    original_name: tool.name.to_string(),
+                },
+            );
+            self.definitions.push(ToolDefinition {
+                name: exposed_name,
+                description: format!(
+                    "MCP server '{name}': {}",
+                    tool.description.as_deref().unwrap_or("No description")
+                ),
+                input_schema: serde_json::Value::Object((*tool.input_schema).clone()),
+                strict: None,
+            });
+        }
+        self.clients.push(client);
+        Ok(())
+    }
+
+    /// Absorb another set of connections behind this one, re-basing its
+    /// server indices; used to combine client-supplied servers with
+    /// user-config ones.
+    pub fn extend(&mut self, other: McpTools) -> Result<(), String> {
+        let offset = self.clients.len();
+        for (exposed_name, route) in other.routes {
+            if self.routes.contains_key(&exposed_name) {
+                return Err(format!("MCP tool name collision at '{exposed_name}'"));
+            }
+            self.routes.insert(
+                exposed_name.clone(),
+                RoutedTool {
+                    server: route.server + offset,
+                    original_name: route.original_name,
+                },
+            );
+        }
+        self.definitions.extend(other.definitions);
+        self.clients.extend(other.clients);
+        Ok(())
     }
 
     pub fn definitions(&self) -> &[ToolDefinition] {
@@ -184,6 +254,29 @@ impl McpTools {
     pub fn contains(&self, name: &str) -> bool {
         self.routes.contains_key(name)
     }
+}
+
+/// A server declaration's display name, whatever transport it uses.
+pub fn server_name(server: &McpServer) -> &str {
+    match server {
+        McpServer::Stdio(config) => &config.name,
+        McpServer::Http(config) => &config.name,
+        _ => "",
+    }
+}
+
+/// Connect the MCP servers declared in the user config file
+/// (`$STRUCTURE_HOME/config.toml`), for terminal chat and `-p`. A malformed
+/// config is an error; a server that cannot come up becomes a diagnostic
+/// and is skipped. Diagnostics name the server and the failure, never the
+/// values of its environment variables or headers.
+pub async fn connect_configured(
+    cwd: &Path,
+    structure_home: &Path,
+) -> Result<(McpTools, Vec<String>), String> {
+    let servers =
+        crate::config::user_config_mcp(structure_home).map_err(|error| error.to_string())?;
+    Ok(McpTools::connect_lenient(servers, cwd).await)
 }
 
 fn safe_name(value: &str) -> String {
@@ -294,6 +387,68 @@ mod tests {
             _ => return StatusCode::NOT_FOUND.into_response(),
         };
         Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
+    }
+
+    #[tokio::test]
+    async fn a_broken_server_becomes_a_diagnostic_not_a_failure() {
+        let (tools, diagnostics) = McpTools::connect_lenient(
+            vec![McpServer::Sse(
+                agent_client_protocol::schema::v1::McpServerSse::new(
+                    "dead",
+                    "http://127.0.0.1:1/sse",
+                ),
+            )],
+            Path::new("/"),
+        )
+        .await;
+        assert!(tools.definitions().is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0].contains("unsupported SSE transport"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn extend_merges_tools_from_two_servers() {
+        let saw_header = Arc::new(AtomicBool::new(false));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let app = axum::Router::new()
+            .route("/mcp", post(mcp_http))
+            .with_state(saw_header.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let config = McpServerHttp::new("remote", format!("http://{address}/mcp"));
+        let (extra, diagnostics) =
+            McpTools::connect_lenient(vec![McpServer::Http(config)], Path::new("/")).await;
+        assert!(diagnostics.is_empty());
+        // The base holds nothing; extending must re-base server indices so
+        // the merged route table still executes against the right client.
+        let mut merged = McpTools::default();
+        merged.extend(extra).expect("merge succeeds");
+        assert_eq!(merged.definitions()[0].name, "mcp__remote__echo");
+        let response = merged
+            .execute(ToolExecutionRequest {
+                run_id: RunId::new("run-1"),
+                call: ToolCallItem {
+                    id: None,
+                    call_id: "call-1".to_owned(),
+                    name: "mcp__remote__echo".to_owned(),
+                    arguments: json!({"value": "merged"}),
+                    provider_state: None,
+                },
+            })
+            .await
+            .expect("merged tool call succeeds");
+        assert!(
+            response
+                .output
+                .iter()
+                .any(|item| matches!(item, RunnerOutput::Stdout(text) if text.contains("merged")))
+        );
+        server.abort();
     }
 
     #[tokio::test]

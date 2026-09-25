@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: structure-linux-x86_64.tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: structure-linux-aarch64.tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: structure-macos-x86_64.tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: structure-macos-aarch64.tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: structure-windows-x86_64.zip
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cross linker (aarch64 linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build release binary
+        run: cargo build --release -p structure-cli
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          dir="structure-${{ matrix.target }}"
+          mkdir -p "$dir"
+          cp target/${{ matrix.target }}/release/structure "$dir/"
+          cp README.md LICENSE NOTICE "$dir/"
+          tar czf "${{ matrix.archive }}" "$dir"
+          shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = "structure-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/structure.exe" $dir/
+          Copy-Item README.md, LICENSE, NOTICE $dir/
+          Compress-Archive -Path $dir -DestinationPath "${{ matrix.archive }}"
+          $hash = (Get-FileHash "${{ matrix.archive }}" -Algorithm SHA256).Hash
+          "$hash  ${{ matrix.archive }}" | Out-File "${{ matrix.archive }}.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Generate release notes
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          {
+            echo "## Structure $tag"
+            echo
+            echo "Binaries for Linux (x86_64, aarch64), macOS (x86_64, Apple silicon) and Windows (x86_64)."
+            echo "Verify with the \`.sha256\` sidecar files."
+            echo
+            echo "### Changes"
+            echo
+            git log --format='- %s' "$(git tag --sort=-creatordate | sed -n 2p)..$tag" 2>/dev/null || git log --format='- %s' -20
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: RELEASE_NOTES.md
+          files: dist/*
+          fail_on_unmatched_files: true

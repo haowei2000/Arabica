@@ -63,17 +63,52 @@ in the project: a malicious repository could otherwise redirect model calls
 and capture the real API key. ACP retains its environment-and-flag resolution
 and its per-session model and thinking controls.
 
+## Project instructions
+
+Every surface (terminal chat, `structure acp`, `structure -p`) sends the
+same project instructions to the model. An `AGENTS.md` file in the workspace
+root is loaded as a standing system instruction, annotated with its source
+path so the model request records where the text came from. When the session
+directory sits deeper than the workspace root, `AGENTS.md` files along the
+way apply too, root first: the deepest file is rendered last and takes
+precedence when two files disagree. Missing, unreadable, or non-UTF-8 files
+are skipped silently.
+
+Instructions are re-read before each turn (each ACP prompt, each terminal
+message, each `-p` invocation), so editing `AGENTS.md` mid-session reaches
+the next model request. New session files record an `instructions_sha256`
+header field -- a hash of the instructions in effect at creation, for
+tooling that wants a cheap "did the effective instructions change" signal.
+
+### Streaming
+
+Terminal chat streams model output as it arrives for the
+`open_ai_chat_completions` and `anthropic_messages` API types: assistant
+text appears incrementally, thinking output streams to the thinking view,
+and `-p`/ACP receive progress through the same path. Other API types
+currently fall back to one-shot completion and print the answer once it is
+complete.
+
 ## Interactive terminal
 
 Run `structure` (or `structure chat`) in a project directory to start a
-continuous conversation. In a terminal, this opens a full-screen TUI with a
-scrollable transcript, a multi-line editor, model/thinking status, streamed
-responses, tool activity, and permission prompts. When stdin or stdout is
-redirected, the simple line-based interface remains available. `--plain`
+continuous conversation. In a terminal, the chat runs inline, Claude-Code
+style: the transcript is printed straight into the terminal's native
+scrollback -- normal scrolling, selection, and search keep working -- while a
+small input box pinned to the bottom owns the editor and status line.
+Tool calls render folded: one summary line per call, a status line for the
+result, and a colored diff for file edits; Ctrl+O toggles verbose printing
+for later events. When stdin or stdout is redirected, the simple line-based
+interface remains available. `--plain`
 selects that interface explicitly. Each prompt uses the same session and event
 log; `/exit` or `/quit` ends the terminal process. `--continue` restores the most
 recent session in the current directory, and `--resume <ID>` restores a
-specific one (`structure sessions list` shows IDs).
+specific one (`structure sessions list` shows IDs). Inside a running terminal
+chat, `/sessions` lists this workspace's stored sessions and `/resume <id>`
+switches to one in place: the new session opens first (an unknown id leaves
+the current session untouched), the previous one is suspended, and the next
+message continues the resumed session's history. `/resume` without an id
+lists resumable sessions; type a line number or an id prefix to pick one.
 
 CLI and ACP sessions use the runtime's file-backed context projection. Older
 eligible evidence may be archived under
@@ -81,6 +116,10 @@ eligible evidence may be archived under
 `~/.structure/runtime-memory/`); archives are never written into the project.
 The archive stores exact runtime events for `memory_search` and `memory_read`
 to recover when needed. The original session event log remains intact.
+Archive preparation runs on a background worker while model requests continue.
+A request uses only archives completed by an earlier worker pass; pending
+batches remain in full context. `/context` shows whether preparation is still
+running and reports the last error observed at a model-step boundary.
 Archival is subject to the runtime's cost gate, so a short conversation may
 produce no archive files.
 
@@ -91,12 +130,27 @@ structure --allow-shell
 structure --plain
 ```
 
-In the TUI, Enter sends, Shift+Enter or Ctrl+J inserts a line, PageUp/PageDown
-scrolls the transcript, Ctrl+T shows or hides thinking, and Escape cancels a
-running turn. Ctrl+C exits at the editor and cancels a running turn. Messages
-typed during a run are queued for the next turn. The TUI restores the terminal
-screen on exit. `/help` lists commands. `/session` shows the current session and
-model. `/context` opens a scrollable view of the last recorded model request,
+In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
+configured choices, and `@` searches workspace file paths (respecting ignore
+rules). Use Up/Down and Tab or Enter to choose a suggestion; enter again to
+send. File suggestions insert a path reference for the agent to inspect with
+its read tool; they do not inline the file contents. The file index refreshes
+after each turn. Enter sends, Shift+Enter inserts a line, Ctrl+T shows or
+hides thinking, and Escape cancels a running turn. The transcript lives in
+the terminal's own scrollback, so it scrolls with the usual terminal keys,
+mouse wheel, and selection -- no mouse capture is used. Ctrl+C cancels a
+running turn and exits at the editor. Messages
+typed during a run are queued for the next turn. `/help` lists commands. `/session` shows the current session and
+model. `/diff` reports the agent's net file changes this session, as unified
+diffs, and marks files that have changed on disk since the agent's last write.
+`/undo` reverts the agent's most recent write call (`write_file`, `edit_files`,
+or `delete_file`; one `edit_files` call counts as one change even when it edits
+several files). Undo is all-or-nothing per call: when any file it touched no
+longer matches what the call left behind -- because you edited it, for example
+-- nothing is reverted, the file is left untouched, and the checkpoint stays
+for a later retry. Only the local write tools are checkpointed: writes made by
+MCP tools are not undoable, and the journal lives in process memory, so a
+resumed session starts with an empty one. `/context` opens a scrollable view of the last recorded model request,
 provider-reported token usage, a policy preview for the next turn, and the
 workspace archive count. The preview excludes the next message and FileBackedGC
 admission; it is not a token estimate. Escape or `q` closes the view. The
@@ -108,8 +162,9 @@ and `high`. The model name must be supported by the configured endpoint.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval (`y` once, `a` for the session, `n` once, or `v` for the session).
-The TUI shows the complete tool arguments in a focused permission view; use
-Up/Down or PageUp/PageDown to inspect long content before deciding.
+The approval prompt shows what the call targets -- the write path with a
+content preview for `write_file`, old → new strings for `edit_files` -- right
+above the y/a/n/v question.
 `memory_search` and `memory_read` are read-only recovery tools.
 Shell is available only with `--allow-shell` and also requires approval.
 `--read-only` excludes mutating tools and cannot be combined with
@@ -204,6 +259,39 @@ only a small base environment (`PATH`, `HOME`, temporary-directory and locale
 variables) plus the `env` entries supplied by the ACP client; it does not
 inherit the model provider's API key. HTTP requests use the headers in the
 client's server configuration.
+
+### User-configured MCP servers
+
+Terminal chat and `-p` read MCP servers from the user config file
+(`$STRUCTURE_HOME/config.toml`, default `~/.structure/config.toml`), so the
+same servers work in the terminal without an editor client supplying them:
+
+```toml
+[[mcp]]
+name = "docs"
+command = "/usr/local/bin/docs-mcp"   # stdio transport
+args = ["--verbose"]
+
+[mcp.env]
+DOCS_TOKEN = "..."                    # credentials require chmod 600
+
+[[mcp]]
+name = "search"
+url = "https://mcp.example.test/mcp"  # streamable HTTP transport
+
+[mcp.headers]
+Authorization = "Bearer ..."
+```
+
+Exactly one of `command` (stdio) or `url` (HTTP) selects the transport.
+ACP clients can supply servers too; when a client and the config file
+declare the same name, the client's entry wins. A server that fails to
+connect is reported on stderr and skipped -- one broken entry does not take
+the session down. Diagnostics name the server and the failure, never a
+credential value. Every MCP tool call goes through the same permission
+prompt (terminal) or `session/request_permission` (ACP) as the other
+surface, and server configuration, especially `env` and `headers` values,
+is never written to the session log.
 
 ### ACP verification
 

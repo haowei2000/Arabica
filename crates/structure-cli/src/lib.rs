@@ -12,9 +12,11 @@
 
 pub mod acp;
 pub mod auth;
+mod checkpoint;
 pub mod config;
 mod context;
 pub mod host;
+mod instructions;
 pub mod interactive;
 pub mod mcp;
 pub mod print;
