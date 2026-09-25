@@ -7,7 +7,7 @@ experiment package; do not reintroduce a parallel implementation.
 
 ## Active Workspace
 
-- Rust version: 1.85+
+- Rust version: 1.88 (matches the workspace `rust-version`)
 - Edition: 2024
 - Async runtime: Tokio
 - HTTP/SSE host: Axum
@@ -23,8 +23,10 @@ experiment package; do not reintroduce a parallel implementation.
 - `crates/structure-runner`: tool execution boundary
 - `crates/structure-runtime`: orchestration and memory policies
 - `crates/structure-session`: session lifecycle, history, and sequencing
+- `crates/structure-adapters`: persistence adapters implementing the session ports (JSONL session store)
+- `crates/structure-cli`: stdio composition host (interactive chat, `acp`, one-shot mode)
 - `crates/structure-server`: HTTP and SSE transport
-- `benchmarks/runtime-short-memory`: active short-memory benchmark
+- `benchmarks/runtime-short-memory`: active short-memory benchmark (workspace member; `benchmarks/cli-comparison` and `benchmarks/protocol` hold protocol documents and fixtures only)
 
 Dependency direction should follow these boundaries. Transport concerns belong
 in `structure-server`; protocol types belong in `structure-protocol`; session
