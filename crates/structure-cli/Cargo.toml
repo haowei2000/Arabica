@@ -1,6 +1,8 @@
 [package]
-name = "structure-cli"
-description = "Composition host binding the canonical protocol to stdio: ACP and one-shot execution"
+name = "arabica"
+description = "Arabica: the Structure coding agent terminal host - fullscreen TUI chat, ACP for Zed, and one-shot runs"
+keywords = ["ai", "agent", "tui", "cli", "llm"]
+categories = ["command-line-utilities", "development-tools"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -25,13 +27,13 @@ similar.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 toml.workspace = true
-structure-adapters = { path = "../structure-adapters" }
-structure-model = { path = "../structure-model" }
-structure-protocol = { path = "../structure-protocol" }
-structure-provider = { path = "../structure-provider" }
-structure-runner = { path = "../structure-runner" }
-structure-runtime = { path = "../structure-runtime" }
-structure-session = { path = "../structure-session" }
+structure-adapters = { version = "0.1.0", path = "../structure-adapters" }
+structure-model = { version = "0.1.0", path = "../structure-model" }
+structure-protocol = { version = "0.1.0", path = "../structure-protocol" }
+structure-provider = { version = "0.1.0", path = "../structure-provider" }
+structure-runner = { version = "0.1.0", path = "../structure-runner" }
+structure-runtime = { version = "0.1.0", path = "../structure-runtime" }
+structure-session = { version = "0.1.0", path = "../structure-session" }
 tokio.workspace = true
 uuid.workspace = true
 
