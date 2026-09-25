@@ -5,17 +5,19 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-repository.workspace = true
+keywords = ["ai", "agent", "persistence"]
+categories = ["development-tools"]
+readme = "../../README.md"
 
 [dependencies]
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true }
 serde_json.workspace = true
-structure-protocol = { path = "../structure-protocol" }
-structure-session = { path = "../structure-session" }
+structure-protocol = { version = "0.1.0", path = "../structure-protocol" }
+structure-session = { version = "0.1.0", path = "../structure-session" }
 
 [dev-dependencies]
-structure-model = { path = "../structure-model" }
+structure-model = { version = "0.1.0", path = "../structure-model" }
 
 [lints]
 workspace = true
