@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Structure — a headless AI coding agent in Rust</title>
+<meta name="description" content="Structure is a protocol-first, headless AI coding agent written in Rust: canonical command/event protocol, file-backed sessions, terminal TUI, ACP support for Zed.">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #79c0ff;
+    --green: #7ee787;
+    --yellow: #e3b341;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); line-height: 1.6; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 72px 0 48px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 2.6rem; letter-spacing: -0.02em; }
+  h1 .accent { color: var(--accent); }
+  .tagline { font-size: 1.25rem; color: var(--muted); margin-top: 12px; }
+  .badges { margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .badge { border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; font-size: 0.85rem; color: var(--muted); }
+  section { padding: 48px 0; border-bottom: 1px solid var(--border); }
+  h2 { font-size: 1.4rem; margin-bottom: 20px; }
+  h2 .dash { color: var(--green); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .card h3 { font-size: 1rem; margin-bottom: 8px; color: var(--accent); }
+  .card p { font-size: 0.9rem; color: var(--muted); }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+  code { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+  .inline { background: var(--panel); border-radius: 4px; padding: 2px 6px; font-size: 0.85em; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+  td:first-child { color: var(--accent); white-space: nowrap; }
+  footer { padding: 32px 0 64px; color: var(--muted); font-size: 0.85rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .cta { display: inline-block; background: var(--accent); color: var(--bg); font-weight: 600; border-radius: 8px; padding: 10px 20px; margin-right: 12px; margin-top: 8px; }
+  .cta:hover { text-decoration: none; filter: brightness(1.1); }
+</style>
+</head>
+<body>
+<header class="wrap">
+  <h1>Structure<span class="accent">_</span></h1>
+  <p class="tagline">A headless AI coding agent, protocol-first, in Rust.</p>
+  <div class="badges">
+    <span class="badge">Rust 1.88 · edition 2024</span>
+    <span class="badge">unsafe forbidden</span>
+    <span class="badge">Apache-2.0</span>
+  </div>
+  <div style="margin-top: 28px">
+    <a class="cta" href="#install">Get started</a>
+    <a class="cta" style="background: var(--panel); color: var(--accent); border: 1px solid var(--border)" href="https://github.com/haowei2000/Structure">Source</a>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2><span class="dash">──</span> What is Structure</h2>
+  <p>
+    Structure runs a coding agent as a <strong>canonical command/event protocol</strong>:
+    clients submit <span class="inline">CommandEnvelope</span>s, the session layer sequences them,
+    and the runtime emits <span class="inline">EventEnvelope</span>s. Three surfaces share one core —
+    a fullscreen terminal TUI, one-shot <span class="inline">structure -p</span> for scripts,
+    and <span class="inline">structure acp</span> for editors like Zed. There is no frontend
+    and no server-side state to leak; sessions are append-only JSONL you own.
+  </p>
+</section>
+
+<section class="wrap">
+  <h2><span class="dash">──</span> Highlights</h2>
+  <div class="grid">
+    <div class="card"><h3>Fullscreen TUI</h3><p>Scrolling history pane, Claude-style divider, pinned editor. Tool calls fold to one line and flip ✓/✗ in place; file edits render as colored diffs. ↑/↓ walks blocks, Enter copies them.</p></div>
+    <div class="card"><h3>Workspace instructions</h3><p>An AGENTS.md in the workspace root becomes a standing system instruction — re-read every turn, layered deepest-first when nested.</p></div>
+    <div class="card"><h3>Write checkpoints</h3><p>/diff shows the agent's net file changes; /undo reverts its last write call — all-or-nothing, never touching your own edits.</p></div>
+    <div class="card"><h3>MCP servers</h3><p>Declare stdio or streamable-HTTP servers in ~/.structure/config.toml or per-session from an ACP client. Credentials never reach the session log.</p></div>
+    <div class="card"><h3>Session memory</h3><p>File-backed compaction archives older context losslessly; memory_search/memory_read recover it on demand. /context shows exactly what the next request carries.</p></div>
+    <div class="card"><h3>Multi-provider</h3><p>OpenAI Chat Completions, OpenAI Responses, Anthropic Messages — with true streaming. Gemini dialects are next.</p></div>
+  </div>
+</section>
+
+<section class="wrap" id="install">
+  <h2><span class="dash">──</span> Install</h2>
+  <p>Grab a binary from <a href="https://github.com/haowei2000/Structure/releases">GitHub Releases</a>, or build from source:</p>
+<pre><code>git clone https://github.com/haowei2000/Structure
+cd Structure
+cargo build --release -p structure-cli
+./target/release/structure --help</code></pre>
+  <p style="margin-top: 16px">Configure a provider (OpenAI-compatible endpoint works out of the box):</p>
+<pre><code>mkdir -p ~/.structure
+cat > ~/.structure/config.toml &lt;&lt;'EOF'
+[provider]
+api_type = "open_ai_chat_completions"
+api_key  = "sk-..."                 # keep the file chmod 600
+base_url = "https://api.openai.com/v1"
+model    = "gpt-4.1"
+EOF
+chmod 600 ~/.structure/config.toml</code></pre>
+  <p style="margin-top: 16px">Then drop an <span class="inline">AGENTS.md</span> in your project and start:</p>
+<pre><code>cd your-project
+structure            # fullscreen TUI
+structure -p "..."   # one-shot, for scripts</code></pre>
+</section>
+
+<section class="wrap">
+  <h2><span class="dash">──</span> Architecture</h2>
+  <table>
+    <tr><td>structure-protocol</td><td>Canonical commands, events, ids; the contract everything speaks</td></tr>
+    <tr><td>structure-runtime</td><td>Agent loop, short-memory projection, file-backed GC</td></tr>
+    <tr><td>structure-session</td><td>Session lifecycle, sequencing, per-session event ordering</td></tr>
+    <tr><td>structure-provider</td><td>Model-provider boundary and API adapters</td></tr>
+    <tr><td>structure-runner</td><td>Confined local tools (read/write/edit/shell) behind one trait</td></tr>
+    <tr><td>structure-adapters</td><td>JSONL session store and persistence adapters</td></tr>
+    <tr><td>structure-cli</td><td>Terminal chat, ACP host, one-shot runner</td></tr>
+    <tr><td>structure-server</td><td>Axum HTTP/SSE host for the same protocol</td></tr>
+  </table>
+</section>
+
+<footer class="wrap">
+  Licensed under Apache-2.0 · <a href="https://github.com/haowei2000/Structure">GitHub</a> · <a href="https://github.com/haowei2000/Structure/releases">Releases</a>
+</footer>
+</body>
+</html>
