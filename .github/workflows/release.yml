@@ -59,7 +59,7 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Build release binary
-        run: cargo build --release -p structure-cli
+        run: cargo build --release -p arabica
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
