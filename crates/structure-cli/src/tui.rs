@@ -559,36 +559,35 @@ fn completion_for(
         .find(|(_, ch)| ch.is_whitespace())
         .map_or(0, |(i, ch)| i + ch.len_utf8());
     let token = &before[word_start..];
-    let (replace_start, candidates): (usize, Vec<String>) =
+    let found: Option<(usize, Vec<String>)> =
         if word_start == 0 && token.starts_with('/') && !token.contains(' ') {
-            (
+            Some((
                 word_start,
                 COMMANDS
                     .iter()
                     .filter(|command| command.starts_with(token))
                     .map(|command| (*command).to_owned())
                     .collect(),
-            )
+            ))
         } else if before.starts_with("/thinking ") && word_start == "/thinking ".len() {
-            (
+            Some((
                 word_start,
                 THINKING_LEVELS
                     .iter()
                     .filter(|level| level.starts_with(token))
                     .map(|level| (*level).to_owned())
                     .collect(),
-            )
+            ))
         } else if before.starts_with("/model ") && word_start == "/model ".len() {
-            (
+            Some((
                 word_start,
                 models
                     .iter()
                     .filter(|model| model.to_lowercase().contains(&token.to_lowercase()))
                     .cloned()
                     .collect(),
-            )
-        } else if let Some(query) = token.strip_prefix('@') {
-            let query = query.to_lowercase();
+            ))
+        } else if let Some(query) = token.strip_prefix('@').map(str::to_lowercase) {
             let mut matches: Vec<_> = files
                 .iter()
                 .filter(|file| file.to_lowercase().contains(&query))
@@ -602,10 +601,13 @@ fn completion_for(
                 })
                 .collect();
             matches.sort_by_key(|file| (!file[1..].to_lowercase().starts_with(&query), file.len()));
-            (word_start, matches)
+            Some((word_start, matches))
         } else {
-            return None;
+            None
         };
+    // No match anywhere, or a single candidate identical to the token,
+    // offers nothing to choose.
+    let (replace_start, candidates) = found?;
     if candidates.is_empty() || (candidates.len() == 1 && candidates[0] == token) {
         return None;
     }
