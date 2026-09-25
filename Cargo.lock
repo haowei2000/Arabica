@@ -154,6 +154,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "arabica"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "axum",
+ "clap",
+ "crossterm",
+ "ignore",
+ "ratatui",
+ "reqwest 0.13.5",
+ "rmcp",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "structure-adapters",
+ "structure-model",
+ "structure-protocol",
+ "structure-provider",
+ "structure-runner",
+ "structure-runtime",
+ "structure-session",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "uuid",
+]
+
+[[package]]
 name = "async-channel"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3116,36 +3146,6 @@ dependencies = [
  "structure-model",
  "structure-protocol",
  "structure-session",
-]
-
-[[package]]
-name = "structure-cli"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol",
- "axum",
- "clap",
- "crossterm",
- "ignore",
- "ratatui",
- "reqwest 0.13.5",
- "rmcp",
- "rpassword",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "structure-adapters",
- "structure-model",
- "structure-protocol",
- "structure-provider",
- "structure-runner",
- "structure-runtime",
- "structure-session",
- "tokio",
- "tokio-util",
- "toml",
- "uuid",
 ]
 
 [[package]]

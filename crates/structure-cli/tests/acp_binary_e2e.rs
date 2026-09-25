@@ -308,7 +308,7 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
     // The ACP session id is exactly the stringified Structure session id
     // (`acp::AcpState::new_session`), so this round-trips it back rather
     // than re-deriving anything the store itself would not have used.
-    let workspace_id = structure_cli::host::workspace_id_for(&workspace_root);
+    let workspace_id = arabica::host::workspace_id_for(&workspace_root);
     let stored = structure_adapters::FileSessionStore::read_session(
         &structure_home,
         &workspace_id,

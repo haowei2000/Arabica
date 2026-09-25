@@ -33,7 +33,7 @@ fn temp_dir(label: &str) -> PathBuf {
 }
 
 fn seed_session(structure_home: &Path, workspace_root: &Path, session_id: &str) {
-    let workspace_id = structure_cli::host::workspace_id_for(workspace_root);
+    let workspace_id = arabica::host::workspace_id_for(workspace_root);
     FileSessionStore::create(
         structure_home,
         NewSession {

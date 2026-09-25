@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arabica::auth::save_key;
 use axum::Json;
 use axum::extract::State;
 use axum::routing::post;
 use serde_json::{Value, json};
-use structure_cli::auth::save_key;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
@@ -723,7 +723,7 @@ async fn resume_switches_sessions_inside_one_terminal_run() {
     let canonical_root = std::fs::canonicalize(&root).unwrap();
     let workspace_dir = home
         .join("sessions")
-        .join(structure_cli::host::workspace_id_for(&canonical_root).to_string());
+        .join(arabica::host::workspace_id_for(&canonical_root).to_string());
     let mut files: Vec<PathBuf> = std::fs::read_dir(&workspace_dir)
         .unwrap()
         .flatten()

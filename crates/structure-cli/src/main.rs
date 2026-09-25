@@ -1,16 +1,16 @@
 //! `structure`: interactive terminal host, ACP agent, and one-shot runner.
 
-use clap::{Args, Parser, Subcommand};
-use std::io::IsTerminal;
-use structure_cli::auth::AuthAction;
-use structure_cli::config::resolve_cli_config;
-use structure_cli::host::{
+use arabica::auth::AuthAction;
+use arabica::config::resolve_cli_config;
+use arabica::host::{
     HostConfigArgs, HostModel, LocalRunnerPolicy, build_host_runtime, process_environment,
     resolve_provider_config,
 };
-use structure_cli::interactive::{self, InteractiveOptions};
-use structure_cli::print::{self, OutputFormat, PrintOptions, Resume};
-use structure_cli::sessions::SessionsAction;
+use arabica::interactive::{self, InteractiveOptions};
+use arabica::print::{self, OutputFormat, PrintOptions, Resume};
+use arabica::sessions::SessionsAction;
+use clap::{Args, Parser, Subcommand};
+use std::io::IsTerminal;
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
 use structure_runner::LocalTool;
 
@@ -106,7 +106,7 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the sessions subcommand");
             2
         } else {
-            structure_cli::sessions::run(action)
+            arabica::sessions::run(action)
         };
     }
     if let Some(Commands::Auth { action }) = command {
@@ -114,7 +114,7 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the auth subcommand");
             2
         } else {
-            structure_cli::auth::run(action)
+            arabica::auth::run(action)
         };
     }
 
@@ -175,7 +175,7 @@ async fn run_chat(provider_config: ApiProviderConfig, args: PrintArgs) -> i32 {
         resume: args.resume_mode(),
     };
     if !args.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        structure_cli::tui::run(provider_config, options).await
+        arabica::tui::run(provider_config, options).await
     } else {
         interactive::run(provider_config, options).await
     }
@@ -191,7 +191,7 @@ async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
     // build, test, or run `git` would not be a meaningfully useful trade
     // for that safety.
     let tool_policy = LocalRunnerPolicy::coding().with_tool(LocalTool::Shell);
-    match structure_cli::acp::run(provider_config, tool_policy).await {
+    match arabica::acp::run(provider_config, tool_policy).await {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("error: {error}");
@@ -258,11 +258,11 @@ fn describe_configuration(
     let home = structure_adapters::default_structure_home()?;
     println!(
         "  user config: {}",
-        structure_cli::config::user_config_path(&home).display()
+        arabica::config::user_config_path(&home).display()
     );
     println!(
         "  workspace:   {}",
-        structure_cli::config::workspace_config_path(&home, &runner_root).display()
+        arabica::config::workspace_config_path(&home, &runner_root).display()
     );
     println!(
         "  tools:       {}",

@@ -1,6 +1,8 @@
 [package]
-name = "structure-cli"
-description = "Composition host binding the canonical protocol to stdio: ACP and one-shot execution"
+name = "arabica"
+description = "Arabica: the Structure coding agent terminal host - fullscreen TUI chat, ACP for Zed, and one-shot runs"
+keywords = ["ai", "agent", "tui", "cli", "llm"]
+categories = ["command-line-utilities", "development-tools"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
