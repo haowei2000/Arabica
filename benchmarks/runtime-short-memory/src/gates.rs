@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+use arabica_model::{MemoryLoadState, ShortMemoryItem};
+use arabica_protocol::RunId;
+use arabica_runtime::KeyAdmissionDecision;
 use serde::{Deserialize, Serialize};
-use structure_model::{MemoryLoadState, ShortMemoryItem};
-use structure_protocol::RunId;
-use structure_runtime::KeyAdmissionDecision;
 
 use crate::{Baseline, BenchmarkProjection, ShortMemoryTrace};
 
@@ -240,7 +240,7 @@ impl CorrectnessGates {
             trace.oracle.gold_evidence_event_ids.len(),
         );
         let full_replay_items: Vec<_> =
-            structure_runtime::ShortMemoryProjector::project_full(&trace.events)
+            arabica_runtime::ShortMemoryProjector::project_full(&trace.events)
                 .into_iter()
                 .map(|entry| entry.item)
                 .collect();
@@ -397,7 +397,7 @@ impl ProjectionMetrics {
             projection.entries.iter().map(|entry| &entry.item).collect();
         let materialised_bytes = serde_json::to_vec(&materialised_items)?.len();
         let full_replay_items: Vec<_> =
-            structure_runtime::ShortMemoryProjector::project_full(&trace.events)
+            arabica_runtime::ShortMemoryProjector::project_full(&trace.events)
                 .into_iter()
                 .map(|entry| entry.item)
                 .collect();
@@ -535,8 +535,8 @@ impl Error for BenchmarkRunError {}
 
 #[cfg(test)]
 mod tests {
-    use structure_model::ShortMemoryItem;
-    use structure_runtime::KeyAdmissionPolicy;
+    use arabica_model::ShortMemoryItem;
+    use arabica_runtime::KeyAdmissionPolicy;
 
     use super::*;
     use crate::{SyntheticTraceConfig, SyntheticTraceGenerator};

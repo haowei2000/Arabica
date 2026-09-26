@@ -16,15 +16,13 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use structure_protocol::{
-    Command as RuntimeCommand, CommandEnvelope, CommandId, Event, WorkspaceId,
-};
-use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
-use structure_runner::LocalRunner;
-use structure_runtime::{
+use arabica_protocol::{Command as RuntimeCommand, CommandEnvelope, CommandId, Event, WorkspaceId};
+use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+use arabica_runner::LocalRunner;
+use arabica_runtime::{
     CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
 };
-use structure_session::SessionManager;
+use arabica_session::SessionManager;
 
 use crate::tier_b::{ProviderCallObservation, ProviderRecorder, RecordingProvider};
 
@@ -58,7 +56,7 @@ impl CliSurface {
         match self {
             Self::PiAgent => "piagent",
             Self::CodexCli => "codex-cli",
-            Self::Structure => "structure",
+            Self::Structure => "arabica",
             Self::OpenCode => "opencode",
             Self::Aider => "aider",
             Self::StructureFullReplay => "structure-full-replay",
@@ -81,7 +79,7 @@ impl CliSurface {
         match value {
             "piagent" => Ok(Self::PiAgent),
             "codex-cli" => Ok(Self::CodexCli),
-            "structure" => Ok(Self::Structure),
+            "arabica" => Ok(Self::Structure),
             "opencode" => Ok(Self::OpenCode),
             "aider" => Ok(Self::Aider),
             "structure-full-replay" => Ok(Self::StructureFullReplay),
@@ -534,7 +532,7 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
     if surfaces.iter().any(|surface| surface.is_structure())
         && (manifest.provider_base_url.is_none() || manifest.provider_api_key_env.is_none())
     {
-        blockers.push("structure-provider-configuration-missing".to_owned());
+        blockers.push("arabica-provider-configuration-missing".to_owned());
     }
     if let Some(name) = &manifest.provider_api_key_env
         && std::env::var_os(name).is_none()
@@ -1396,9 +1394,9 @@ async fn run_structure_trial(
         tool_use_turns: calls
             .iter()
             .filter(|call| {
-                call.finish_reason.as_ref().is_some_and(|reason| {
-                    matches!(reason, structure_model::FinishReason::ToolCalls)
-                })
+                call.finish_reason
+                    .as_ref()
+                    .is_some_and(|reason| matches!(reason, arabica_model::FinishReason::ToolCalls))
             })
             .count() as u64,
         tool_use_without_observed_call_turns: u64::from(protocol_empty_tool_use),
@@ -1434,7 +1432,7 @@ async fn run_structure_trial(
 
 fn structure_usage(
     calls: &[ProviderCallObservation],
-    events: &[structure_protocol::EventEnvelope],
+    events: &[arabica_protocol::EventEnvelope],
 ) -> CliUsage {
     let mut usage = CliUsage {
         input_tokens: calls.iter().map(|call| call.input_tokens).sum(),
@@ -1452,7 +1450,7 @@ fn structure_usage(
             .filter(|event| matches!(event.event, Event::ToolCallRequested { .. }))
             .count() as u64,
         event_count: events.len() as u64,
-        source: "structure-provider-observations".to_owned(),
+        source: "arabica-provider-observations".to_owned(),
     };
     usage.fresh_tokens = usage
         .input_tokens
@@ -1567,7 +1565,7 @@ async fn run_process(
 ) -> Result<ProcessResult, String> {
     let capture_id = PROCESS_CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let capture_root = std::env::temp_dir().join(format!(
-        "structure-cli-capture-{}-{capture_id}",
+        "arabica-cli-capture-{}-{capture_id}",
         std::process::id()
     ));
     std::fs::create_dir(&capture_root)

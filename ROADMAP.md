@@ -19,15 +19,15 @@ reality rather than aspiration.
 
 **Composition hosts**
 
-- `structure-server`: Axum HTTP host with `GET /health`, `GET /v1/schema`,
+- `arabica-server`: Axum HTTP host with `GET /health`, `GET /v1/schema`,
   `POST /v1/commands` (command in, canonical events out), and `GET /v1/events`
   (SSE broadcast fan-out). Configured via `OPENAI__*` / `STRUCTURE__*`
   environment variables.
-- `structure-cli`: stdio composition host with interactive chat, one-shot
+- `arabica-cli`: stdio composition host with interactive chat, one-shot
   `structure -p`, Agent Client Protocol (`acp`), MCP support, checkpoints,
   session management, and a TUI.
 
-**Model-provider boundary (`structure-provider`)**
+**Model-provider boundary (`arabica-provider`)**
 
 - Implemented API dialects: OpenAI Chat Completions (streaming with
   non-streaming fallback), OpenAI Responses (stateless continuation with
@@ -39,14 +39,14 @@ reality rather than aspiration.
   authorization headers), transient-send retries, and explicit experiment
   sampling controls.
 
-**Tool execution boundary (`structure-runner`)**
+**Tool execution boundary (`arabica-runner`)**
 
 - Eight local tools: `read_file`, `write_file`, `edit_files`, `delete_file`,
   `list_dir`, `grep`, `find_files`, `shell`, with workspace-root confinement,
   policy presets (`read_only`, `coding`, `legacy`), shell interaction
   classification, and output truncation.
 
-**Runtime (`structure-runtime`)**
+**Runtime (`arabica-runtime`)**
 
 - Event-sourced `CoreRuntime` engine; canonical event log is the only
   continuation source.
@@ -59,8 +59,8 @@ reality rather than aspiration.
 
 **Session & persistence**
 
-- `structure-session`: session lifecycle, history, sequencing.
-- `structure-adapters`: JSONL observer/store adapters implementing the session
+- `arabica-session`: session lifecycle, history, sequencing.
+- `arabica-adapters`: JSONL observer/store adapters implementing the session
   ports.
 
 **Experiments**
@@ -94,7 +94,7 @@ capability is added.
       and document it as a protocol invariant.
 - [ ] **Security review of the shell boundary.** Re-audit command
       classification, scrubbing, and workspace escape resistance in
-      `structure-runner`; add conformance tests for hostile inputs
+      `arabica-runner`; add conformance tests for hostile inputs
       (path traversal, shell metacharacters, symlinked roots).
 
 ## P2 — Provider layer completion
@@ -135,7 +135,7 @@ The research core. Items here should land together with benchmark evidence.
 
 - [ ] **Session query endpoints.** Read-only HTTP surface for session
       history, event ranges, and archive lookup (projection only; session
-      sequencing stays in `structure-session`).
+      sequencing stays in `arabica-session`).
 - [ ] **Transport-level auth.** The server currently assumes a trusted local
       network. Add an optional token/mTLS story without ever logging
       credentials.
@@ -170,7 +170,7 @@ The research core. Items here should land together with benchmark evidence.
       -D warnings`, `cargo test --workspace`, and the `no unsafe` guarantee.
 - [ ] **Documentation pass.** Link `docs/runtime_core_architecture.md`
       decisions from this roadmap. (`AGENTS.md` crate ownership was already
-      reconciled with the workspace: `structure-adapters` and `structure-cli`
+      reconciled with the workspace: `arabica-adapters` and `arabica-cli`
       are listed, and the non-member `benchmarks/` subdirectories are
       annotated.)
 
@@ -181,7 +181,7 @@ The research core. Items here should land together with benchmark evidence.
 - No frontend, TUI productization, or UI dependencies (the CLI TUI is a
   transport for the protocol, not a product surface).
 - No second implementation of the runtime, protocol, or experiment framework.
-- No provider-specific branching outside `structure-provider`.
+- No provider-specific branching outside `arabica-provider`.
 - No silent protocol compatibility breaks; additive changes with schema
   updates only.
 

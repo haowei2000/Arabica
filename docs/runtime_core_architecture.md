@@ -81,7 +81,7 @@ a core rewrite behind a frozen protocol is survivable.
 └─────────────────────────────────────────┘  └──────────────────────────────────┘
 ```
 
-All arrows use types rooted in `structure-protocol`. A composition host may
+All arrows use types rooted in `arabica-protocol`. A composition host may
 wire the modules in-process or expose the same protocol over HTTP + SSE.
 
 ### Cargo workspace
@@ -89,29 +89,29 @@ wire the modules in-process or expose the same protocol over HTTP + SSE.
 ```
 Cargo.toml                    # workspace root
 crates/
-  structure-model/            # provider-neutral RuntimeItem, RuntimeRequest,
+  arabica-model/            # provider-neutral RuntimeItem, RuntimeRequest,
                               #   tools, usage, and stream delta vocabulary
-  structure-provider/         # ModelProvider port, ApiType dispatch, complete
+  arabica-provider/         # ModelProvider port, ApiType dispatch, complete
                               #   provider request/response codecs and clients
-  structure-protocol/         # Command/Event serde types, protocol_version,
+  arabica-protocol/         # Command/Event serde types, protocol_version,
                               #   error codes; schema export is the next step
-  structure-runner/           # RunnerEnvironment boundary; local/container/
+  arabica-runner/           # RunnerEnvironment boundary; local/container/
                               #   remote execution implementations
-  structure-runtime/          # context, agent loop, tool routing, normalized
+  arabica-runtime/          # context, agent loop, tool routing, normalized
                               #   command output; no session scheduling
-  structure-session/          # session lifecycle, run scheduling, state machine,
+  arabica-session/          # session lifecycle, run scheduling, state machine,
                               #   event sequencing, persistence ports
-  structure-adapters/         # EventStore/EventBus/BlobStore impls:
+  arabica-adapters/         # EventStore/EventBus/BlobStore impls:
                               #   sqlite, postgres, redis-streams, in-proc, fs, s3
-  structure-server/           # axum HTTP+SSE binding; --profile local|service
+  arabica-server/           # axum HTTP+SSE binding; --profile local|service
   structure-exec/             # headless one-shot: events as JSONL on stdout
 ```
 
-Dependency rule: `structure-protocol` is the only shared external wire
-vocabulary. `structure-provider` depends on model + protocol;
-`structure-runner` depends on model + protocol; neither depends on the other.
-`structure-runtime` depends on provider + runner + protocol, and
-`structure-session` depends on protocol + runtime. Composition hosts may
+Dependency rule: `arabica-protocol` is the only shared external wire
+vocabulary. `arabica-provider` depends on model + protocol;
+`arabica-runner` depends on model + protocol; neither depends on the other.
+`arabica-runtime` depends on provider + runner + protocol, and
+`arabica-session` depends on protocol + runtime. Composition hosts may
 depend on all modules. Runtime and session may not depend on UI, axum, sqlx,
 or redis directly.
 
@@ -127,7 +127,7 @@ or redis directly.
 | Schema / SDK | schemars → JSON Schema; utoipa → OpenAPI; surface SDKs generated only after protocol freeze |
 | Errors / logs | thiserror / tracing |
 
-## 4. The Protocol (`structure-protocol`)
+## 4. The Protocol (`arabica-protocol`)
 
 The single most important artifact, now a Rust crate that is the source of
 truth for every surface. The normative contract, invariants, and freeze
@@ -165,7 +165,7 @@ on the stream; no surface polls state the stream already carries.**
 
 axum + utoipa serve the OpenAPI spec; the TypeScript SDK is generated from it
 (opencode's approach). No hand-written `api.ts`. Rust clients (tui, cli) link
-`structure-protocol` directly.
+`arabica-protocol` directly.
 
 ## 5. Runtime, Session Management, and Runner Environment
 
@@ -277,7 +277,7 @@ probability is 7,500 basis points and the default effort is 1; higher effort
 requires proportionally more expected return. Once an epoch has been archived,
 its pointers remain committed even if later observations would reject a new
 rewrite, preventing full/pointer oscillation. The server selects
-`file_backed_gc` by default through `STRUCTURE__COMPACTION_STRATEGY`, reads
+`file_backed_gc` by default through `ARABICA__COMPACTION_STRATEGY`, reads
 `COMPACTION_EFFORT` (with `PGC_EFFORT` as a compatibility fallback), and reads
 `PGC_CONTINUATION_PROBABILITY_BPS`; embedders configure the same policy through
 `CoreRuntime` setters. Each eligible decision is exposed as a
@@ -362,15 +362,15 @@ Runtime evidence archive ── memory_search/read + SHA-256 verify ──> cont
   contract. Runtime selects the adapter at construction; Tier-B uses the file
   adapter so pointer evidence survives Runtime recreation.
 - The current server and Harbor entry points select the file adapter. The
-  server uses `STRUCTURE__ARCHIVE_ROOT`, defaulting to
-  `target/structure-runtime-memory`; SQLite remains opt-in for later scale and
+  server uses `ARABICA__ARCHIVE_ROOT`, defaulting to
+  `target/arabica-runtime-memory`; SQLite remains opt-in for later scale and
   indexing experiments.
 - Session Management owns the append-only history and fork boundary. Runtime
   owns the pure projection policy and long-memory disclosure policy.
 
 | Port | Service profile | Local profile |
 |---|---|---|
-| EventStore | Postgres (sqlx) | SQLite (sqlx), `~/.structure/<workspace>.db` |
+| EventStore | Postgres (sqlx) | SQLite (sqlx), `~/.arabica/<workspace>.db` |
 | EventBus | Redis Streams + consumer groups | tokio broadcast (in-proc) |
 | BlobStore | S3 | local fs |
 | Execution | horizontal worker processes | in-process task set |
@@ -379,8 +379,8 @@ Runtime evidence archive ── memory_search/read + SHA-256 verify ──> cont
 
 | Host | What it is | Analog |
 |---|---|---|
-| `structure-server --profile service` | multi-tenant hosted backend, public bind | current FastAPI deployment |
-| `structure-server --profile local` ("daemon") | single-user, loopback, token auth, auto-spawned by clients | opencode server on :4096 |
+| `arabica-server --profile service` | multi-tenant hosted backend, public bind | current FastAPI deployment |
+| `arabica-server --profile local` ("daemon") | single-user, loopback, token auth, auto-spawned by clients | opencode server on :4096 |
 | `structure-exec` | embed core in-process, JSONL events on stdout, exit code from terminal run state | codex-exec |
 | `structure acp` | Agent Client Protocol v1 over stdio, one `SessionManager` per ACP session | Zed's own agent servers, `claude-code-acp` |
 | MCP server mode | expose runtime as MCP tools | codex-mcp-server |
@@ -389,15 +389,15 @@ One binary for both server profiles is the structural advantage neither
 reference has: their hosted products do not run the same code as their local
 ones. Ours does by construction.
 
-`structure-exec` is implemented as the print mode of `structure-cli`
-(`crates/structure-cli/src/print.rs`; Appendix B). The Python benchmark
+`structure-exec` is implemented as the print mode of `arabica-cli`
+(`crates/arabica-cli/src/print.rs`; Appendix B). The Python benchmark
 adapter this section used to pair it with was removed with the Python
 implementation in `a3823ee`; the maintained experiment package
 (`benchmarks/runtime-short-memory`) links the production crates directly
 instead of speaking the protocol over a transport.
 
-`structure acp` is implemented in `crates/structure-cli/src/acp/`. It is the
-other binding of `structure-cli` alongside `structure-exec`; see Appendix B.
+`structure acp` is implemented in `crates/arabica-cli/src/acp/`. It is the
+other binding of `arabica-cli` alongside `structure-exec`; see Appendix B.
 
 ## 7. Surfaces (Deferred)
 
@@ -408,10 +408,10 @@ complete.
 
 Amended 2026-09-21 (Appendix B): this rule governs UI surfaces, not composition
 hosts. A host wires the existing modules in one process and binds the canonical
-contract to a transport without adding vocabulary. `structure-server` does this
-for HTTP + SSE; `structure-cli` does it for stdio (ACP) and one-shot execution.
+contract to a transport without adding vocabulary. `arabica-server` does this
+for HTTP + SSE; `arabica-cli` does it for stdio (ACP) and one-shot execution.
 Hosts may depend on Runtime, Session Management and Runner Environment, exactly
-as `structure-server` already does.
+as `arabica-server` already does.
 
 Future surfaces remain thin clients: they may construct commands, subscribe
 to events, and render state, but may not import Runtime, Session Management,
@@ -434,9 +434,9 @@ Both references route permission through the protocol (opencode
 user machines:
 
 Design agreed 2026-09-21 (Appendix B). Implemented at the Runtime layer
-(`crates/structure-runtime/src/control.rs`, wired into the tool-call loop);
+(`crates/arabica-runtime/src/control.rs`, wired into the tool-call loop);
 host-side wiring (ACP's `session/request_permission`, the print host's static
-policy) lands with `structure-cli` (§11 T6-T8):
+policy) lands with `arabica-cli` (§11 T6-T8):
 
 1. Runtime emits `tool.call.permission_requested` (call id only — no
    interaction kind, so the event cannot suggest the classifier participates
@@ -476,7 +476,7 @@ is a post-cutover milestone — it is one of the reasons Rust was chosen.
 
 | Old code | Lines | Verdict |
 |---|---|---|
-| `structure-local-runtime/types.rs` | 672 | **mine** — event taxonomy, status enums, usage types seed `structure-protocol` |
+| `structure-local-runtime/types.rs` | 672 | **mine** — event taxonomy, status enums, usage types seed `arabica-protocol` |
 | `structure-local-runtime/store.rs` | 1,101 | **reference** — SQLite schema shape; reimplement on sqlx (old code is sync rusqlite) |
 | `structure-local-runtime/runtime.rs` | 5,906 | **reference** — agent-loop logic; architecture is sync, rewrite async |
 | `structure-local-runtime/model.rs` | 1,178 | **reference** — provider trait shape; no streaming, rewrite |
@@ -493,7 +493,7 @@ production until phase 6.
 - [x] **Workspace bootstrap and module split** — root `Cargo.toml`; explicit
   model, provider, protocol, runner, runtime, session, and HTTP/SSE host crates;
   fmt, clippy, tests, and enforced dependency direction.
-- [ ] **`structure-protocol` completion** — core session/message/context and
+- [ ] **`arabica-protocol` completion** — core session/message/context and
   typed tool-call vocabulary, JSON Schema export, HTTP command submission, and
   SSE delivery are implemented. Python event reconciliation, golden wire
   fixtures, permission events, and generated SDKs remain.
@@ -503,14 +503,14 @@ production until phase 6.
   sessions, streaming deltas, background dispatch/event sinks, MCP routing,
   approvals, SQLite EventStore, and the in-process bus remain.
 - [x] **`structure-exec`** — headless one-shot over the local profile. Implemented
-   as the print mode of `structure-cli` (`structure -p`, `crates/structure-cli/src/print.rs`),
+   as the print mode of `arabica-cli` (`structure -p`, `crates/arabica-cli/src/print.rs`),
    emitting canonical event envelopes as JSONL (`--output-format jsonl`) or just
    the final answer (`--output-format text`, the default). The Python benchmark
    adapter this entry used to feed was removed with the Python implementation
    in `a3823ee`.
 - [x] **ACP host** — `structure acp` binds the contract to Agent Client
    Protocol v1 over stdio so editors can drive Structure directly
-   (`crates/structure-cli/src/acp/`). v2 stays behind a feature flag while it
+   (`crates/arabica-cli/src/acp/`). v2 stays behind a feature flag while it
    is draft. See Appendix B.
 - [ ] **UI surfaces after protocol freeze** — generate clients from the frozen
    schema, then introduce TUI, web, and desktop shells as separate thin
@@ -569,7 +569,7 @@ gate.
 ## Appendix B — Decision Record: ACP-First Composition Host
 
 **Status:** Accepted 2026-09-21.
-**Decision:** add `crates/structure-cli`, a composition host with two bindings —
+**Decision:** add `crates/arabica-cli`, a composition host with two bindings —
 `structure acp` (Agent Client Protocol v1 over stdio) and `structure -p`
 (one-shot execution, the `structure-exec` role from §11). ACP is the default
 integration surface, so editors can drive Structure without a separate adapter.
@@ -577,7 +577,7 @@ integration surface, so editors can drive Structure without a separate adapter.
 ### Why this is not the surface reintroduction §7 forbids
 
 The host adds no Command or Event vocabulary and renders nothing. It wires the
-same modules `structure-server` already wires and binds the canonical contract
+same modules `arabica-server` already wires and binds the canonical contract
 to a different transport. §7 protects the protocol from being shaped by UI
 behavior; a host that only translates cannot do that. TUI, web and desktop
 remain blocked by the §9 checklist in `protocol.md`.
@@ -601,7 +601,7 @@ filesystem and terminal APIs would therefore have to be undone for v2.
 | A Session-scoped denial the gate remembers, not only an allow (implemented: `session_decision`, replacing `session_allows`) | ACP's `RejectAlways` permission option must mean what it says: an ACP surface that offered it against a gate that only remembered allows would silently re-ask |
 | A provider-valid history projection (implemented: `HistoryProjection::ExactTranscript`, later supplemented by provider-safe Policy projection) | multi-turn chat must keep each completed tool call adjacent to its result; the CLI now filters duplicate `command.output` records from its model-facing Policy view while retaining them in the audit log and archive so FileBackedGC can operate |
 | MSRV 1.85 → 1.88, `serde_json/preserve_order` unified workspace-wide (implemented) | required by `agent-client-protocol`; the feature must be explicit so serialized bytes do not depend on the build invocation |
-| The ACP surface itself (implemented: `crates/structure-cli/src/acp/`) | `initialize`/`session/new`/`session/prompt`/`session/cancel`, the Event→`session/update` mapping, stop-reason derivation, and the permission-request bridge, built against `agent-client-protocol` v2.2.0's builder/handler API rather than the simpler trait-based shape earlier drafts of this document assumed -- see that crate's own `concepts::ordering` module for why `session/prompt` must `cx.spawn` its run and return immediately |
+| The ACP surface itself (implemented: `crates/arabica-cli/src/acp/`) | `initialize`/`session/new`/`session/prompt`/`session/cancel`, the Event→`session/update` mapping, stop-reason derivation, and the permission-request bridge, built against `agent-client-protocol` v2.2.0's builder/handler API rather than the simpler trait-based shape earlier drafts of this document assumed -- see that crate's own `concepts::ordering` module for why `session/prompt` must `cx.spawn` its run and return immediately |
 
 ### Alternatives rejected
 

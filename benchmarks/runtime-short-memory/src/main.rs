@@ -4,7 +4,7 @@ use std::fmt::Display;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use structure_runtime::{KeyAdmissionPolicy, ShortMemoryPolicy};
+use arabica_runtime::{KeyAdmissionPolicy, ShortMemoryPolicy};
 use structure_short_memory_benchmark::{
     Baseline, BenchmarkRun, ScalingConfig, ScalingRunner, SyntheticTraceConfig,
     SyntheticTraceGenerator,
@@ -188,7 +188,7 @@ fn baseline_from_name(
             recent_turns_load_all: 2,
             key_admission,
         }),
-        "s" | "structure" => {
+        "s" | "arabica" => {
             let policy = ShortMemoryPolicy {
                 key_admission,
                 ..ShortMemoryPolicy::default()

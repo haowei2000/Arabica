@@ -1,0 +1,26 @@
+[package]
+name = "arabica-session"
+description = "Session lifecycle, scheduling, and canonical event sequencing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+documentation = "https://docs.rs/arabica-session"
+keywords = ["ai", "agent", "sessions"]
+categories = ["development-tools"]
+readme = "../../README.md"
+
+[dependencies]
+serde = { workspace = true }
+arabica-protocol = { version = "0.1.0", path = "../arabica-protocol" }
+arabica-runtime = { version = "0.1.0", path = "../arabica-runtime" }
+
+[dev-dependencies]
+serde_json.workspace = true
+arabica-model = { version = "0.1.0", path = "../arabica-model" }
+arabica-provider = { version = "0.1.0", path = "../arabica-provider" }
+arabica-runner = { version = "0.1.0", path = "../arabica-runner" }
+tokio.workspace = true
+
+[lints]
+workspace = true

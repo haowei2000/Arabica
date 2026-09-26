@@ -154,10 +154,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "arabica"
+name = "arabica-adapters"
+version = "0.1.0"
+dependencies = [
+ "arabica-model",
+ "arabica-protocol",
+ "arabica-session",
+ "rustix",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "arabica-cli"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "arabica-adapters",
+ "arabica-model",
+ "arabica-protocol",
+ "arabica-provider",
+ "arabica-runner",
+ "arabica-runtime",
+ "arabica-session",
  "axum",
  "clap",
  "crossterm",
@@ -170,17 +189,106 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
- "structure-adapters",
- "structure-model",
- "structure-protocol",
- "structure-provider",
- "structure-runner",
- "structure-runtime",
- "structure-session",
  "tokio",
  "tokio-util",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "arabica-model"
+version = "0.1.0"
+dependencies = [
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "arabica-protocol"
+version = "0.1.0"
+dependencies = [
+ "arabica-model",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "arabica-provider"
+version = "0.1.0"
+dependencies = [
+ "arabica-model",
+ "arabica-protocol",
+ "axum",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "arabica-runner"
+version = "0.1.0"
+dependencies = [
+ "arabica-model",
+ "arabica-protocol",
+ "globset",
+ "ignore",
+ "regex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "arabica-runtime"
+version = "0.1.0"
+dependencies = [
+ "arabica-model",
+ "arabica-protocol",
+ "arabica-provider",
+ "arabica-runner",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "arabica-server"
+version = "0.1.0"
+dependencies = [
+ "arabica-protocol",
+ "arabica-provider",
+ "arabica-runner",
+ "arabica-runtime",
+ "arabica-session",
+ "axum",
+ "dotenvy",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tower",
+]
+
+[[package]]
+name = "arabica-session"
+version = "0.1.0"
+dependencies = [
+ "arabica-model",
+ "arabica-protocol",
+ "arabica-provider",
+ "arabica-runner",
+ "arabica-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3137,126 +3245,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "structure-adapters"
-version = "0.1.0"
-dependencies = [
- "rustix",
- "serde",
- "serde_json",
- "structure-model",
- "structure-protocol",
- "structure-session",
-]
-
-[[package]]
-name = "structure-model"
-version = "0.1.0"
-dependencies = [
- "schemars 1.2.1",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "structure-protocol"
-version = "0.1.0"
-dependencies = [
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "structure-model",
-]
-
-[[package]]
-name = "structure-provider"
-version = "0.1.0"
-dependencies = [
- "axum",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "structure-model",
- "structure-protocol",
- "tokio",
-]
-
-[[package]]
-name = "structure-runner"
-version = "0.1.0"
-dependencies = [
- "globset",
- "ignore",
- "regex",
- "rustix",
- "serde",
- "serde_json",
- "structure-model",
- "structure-protocol",
- "tokio",
- "toml",
-]
-
-[[package]]
-name = "structure-runtime"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "structure-model",
- "structure-protocol",
- "structure-provider",
- "structure-runner",
- "tokio",
-]
-
-[[package]]
-name = "structure-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "dotenvy",
- "futures-util",
- "serde",
- "serde_json",
- "structure-protocol",
- "structure-provider",
- "structure-runner",
- "structure-runtime",
- "structure-session",
- "tokio",
- "tokio-stream",
- "tower",
-]
-
-[[package]]
-name = "structure-session"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "structure-model",
- "structure-protocol",
- "structure-provider",
- "structure-runner",
- "structure-runtime",
- "tokio",
-]
-
-[[package]]
 name = "structure-short-memory-benchmark"
 version = "0.1.0"
 dependencies = [
+ "arabica-model",
+ "arabica-protocol",
+ "arabica-provider",
+ "arabica-runner",
+ "arabica-runtime",
+ "arabica-session",
  "serde",
  "serde_json",
  "sha2",
- "structure-model",
- "structure-protocol",
- "structure-provider",
- "structure-runner",
- "structure-runtime",
- "structure-session",
  "tokio",
 ]
 

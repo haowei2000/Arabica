@@ -6,9 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use arabica_protocol::TerminalControllerPolicy;
+use arabica_runtime::PointerGcAdmissionPolicy;
 use serde::{Deserialize, Serialize};
-use structure_protocol::TerminalControllerPolicy;
-use structure_runtime::PointerGcAdmissionPolicy;
 
 pub const LONG_HORIZON_MANIFEST_SCHEMA: &str = "structure.long-horizon/2026-09-v6";
 const PRIMARY_REPETITIONS: usize = 5;

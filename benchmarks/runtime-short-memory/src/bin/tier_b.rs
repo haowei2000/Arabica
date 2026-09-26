@@ -5,10 +5,10 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+use arabica_provider::{OpenAiModelProvider, OpenAiProviderConfig};
+use arabica_runtime::{KeyAdmissionPolicy, RuntimeCompactionStrategy, ShortMemoryPolicy};
 use serde::Serialize;
-use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
-use structure_provider::{OpenAiModelProvider, OpenAiProviderConfig};
-use structure_runtime::{KeyAdmissionPolicy, RuntimeCompactionStrategy, ShortMemoryPolicy};
 use structure_short_memory_benchmark::experiment::{
     AuditedProvider, ExperimentConfig, PairedFirstTurns, sha256, write_new,
 };

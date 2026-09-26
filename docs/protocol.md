@@ -1,7 +1,7 @@
 # Structure Command/Event Protocol
 
 **Status:** Draft v1.0 foundation
-**Source of truth:** `crates/structure-protocol`
+**Source of truth:** `crates/arabica-protocol`
 **Transport bindings:** in-process Rust types and HTTP + SSE
 **Surface status:** headless composition hosts only; web and desktop UI
 implementations are intentionally absent
@@ -17,8 +17,8 @@ owning session or presentation state.
 No module may add a private command/event vocabulary at its boundary.
 
 A *composition host* wires the existing modules in one process and exposes this
-contract without adding vocabulary of its own. `structure-server` binds it to
-HTTP + SSE; `structure-cli` binds it to stdio and one-shot execution. Hosts are
+contract without adding vocabulary of its own. `arabica-server` binds it to
+HTTP + SSE; `arabica-cli` binds it to stdio and one-shot execution. Hosts are
 not surfaces and are not blocked by the §9 checklist.
 
 A *UI surface* renders state for a human: web, desktop, or a terminal UI. None
@@ -39,16 +39,16 @@ compatibility fixtures. See Appendix B of `runtime_core_architecture.md`.
 The dependency direction is fixed:
 
 ```text
-structure-model       structure-protocol
+arabica-model       arabica-protocol
       ↑        ↑          ↑        ↑
       │        └──────────┤        │
-structure-provider  structure-runner
+arabica-provider  arabica-runner
               ↑       ↑
-          structure-runtime
+          arabica-runtime
                   ↑
-          structure-session
+          arabica-session
                   ↑
-          structure-server
+          arabica-server
 ```
 
 ## 3. Command Envelope
