@@ -1985,6 +1985,24 @@ async fn run_inner(
     let mut terminal = Terminal::new(backend)?;
 
     let mut transcript = Transcript::default();
+    // Startup banner: the Arabica mark in block characters, then the
+    // brand line. Committed as one block so block navigation treats it
+    // like any other content.
+    transcript.push_block(vec![
+        Line::styled(
+            " \u{2591}\u{2592}\u{2593} \u{2591}\u{2592}\u{2593}   \u{2591}\u{2592}\u{2593}\u{2593}",
+            theme::tool(),
+        ),
+        Line::styled(
+            " \u{2593}\u{2592}\u{2591} \u{2593}\u{2592}\u{2591}   \u{2592}\u{2591}\u{2591}  arabica",
+            theme::tool(),
+        ),
+        Line::styled(
+            "  \u{2591}\u{2592}\u{2593}   \u{2591}\u{2592}    \u{2593}\u{2593}\u{2592}  a coding agent in your terminal",
+            theme::muted(),
+        ),
+        Line::raw(String::new()),
+    ]);
     print_history(&mut transcript, &session);
     app.file_index = Some(workspace_files(&session.runner_root));
     draw(&mut terminal, &app, &transcript)?;

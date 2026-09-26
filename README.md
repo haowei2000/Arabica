@@ -1,5 +1,9 @@
 # Arabica
 
+<p align="center">
+  <img src="static/arabica-icon.svg" width="120" alt="Arabica icon: roasted coffee beans">
+</p>
+
 Arabica is a headless AI-agent runtime written in Rust. The project defines a
 canonical command/event protocol, session lifecycle, model-provider boundary,
 tool runner, memory policies, and an HTTP/SSE host.
