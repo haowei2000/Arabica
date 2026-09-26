@@ -26,6 +26,7 @@ use arabica_runtime::{
     PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
 };
 use arabica_session::{DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver};
+use crossterm::SynchronizedUpdate as _;
 use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Layout};
@@ -1008,9 +1009,15 @@ fn draw(terminal: &mut DefaultTerminal, app: &App, transcript: &Transcript) -> i
             .unwrap_or(80),
         std::sync::atomic::Ordering::Relaxed,
     );
-    terminal
-        .draw(|frame| render_fullscreen(frame, app, transcript))
-        .map(|_| ())
+    // Fence the frame in a synchronized-update pair (CSI ?2026): the
+    // terminal applies the whole repaint atomically, so fast frames never
+    // tear mid-draw. Terminals without support recover via the spec's
+    // timeout. Codex CLI and Claude Code fence the same way.
+    io::stdout().sync_update(|_| {
+        terminal
+            .draw(|frame| render_fullscreen(frame, app, transcript))
+            .map(|_| ())
+    })?
 }
 
 /// Fullscreen layout: scrolling history pane on top, Claude-style divider
