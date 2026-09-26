@@ -366,7 +366,7 @@ impl InteractiveSession {
     }
 
     /// `/sessions`: the stored sessions for this workspace, formatted the
-    /// same way `structure sessions list` prints them.
+    /// same way `arabica sessions list` prints them.
     pub(crate) fn session_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         Ok(self
             .session_list_entries()?
@@ -580,7 +580,7 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
         }
     };
     eprintln!(
-        "Structure session {}. Type /help for commands.",
+        "Arabica session {}. Type /help for commands.",
         session.session_id
     );
     let mut lines = input_lines();

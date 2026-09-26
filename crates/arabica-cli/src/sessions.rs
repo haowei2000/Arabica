@@ -1,4 +1,4 @@
-//! `structure sessions list`: show sessions stored under `$ARABICA_HOME`
+//! `arabica sessions list`: show sessions stored under `$ARABICA_HOME`
 //! (`arabica_adapters::FileSessionStore`), the same files `-p`'s
 //! `--continue`/`--resume <id>` (`crates/arabica-cli/src/print.rs`) pick
 //! back up.
@@ -63,7 +63,7 @@ pub(crate) struct SessionEntry {
 }
 
 /// One formatted line per stored session, most recently active first --
-/// what `structure sessions list` prints and what the terminal `/sessions`
+/// what `arabica sessions list` prints and what the terminal `/sessions`
 /// command shows. Empty when nothing is stored.
 pub(crate) fn listing_lines(
     arabica_home: &std::path::Path,

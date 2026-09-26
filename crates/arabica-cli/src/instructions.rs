@@ -1,6 +1,6 @@
 //! Discovery and rendering of workspace project instructions (`AGENTS.md`).
 //!
-//! Every CLI surface (terminal chat, `structure acp`, `structure -p`) builds
+//! Every CLI surface (terminal chat, `arabica acp`, `structure -p`) builds
 //! or refreshes its runtime through [`crate::host::system_instructions`],
 //! which calls [`rendered`] here, so the same files reach the model
 //! regardless of entry point.

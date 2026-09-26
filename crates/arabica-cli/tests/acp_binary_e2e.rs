@@ -1,4 +1,4 @@
-//! Drives the real, compiled `structure acp` binary as a subprocess against
+//! Drives the real, compiled `arabica acp` binary as a subprocess against
 //! a mock OpenAI-compatible HTTP server, over its actual stdin/stdout --
 //! not the in-process `Channel::duplex()` harness `crates/arabica-cli/src/acp/mod.rs`'s
 //! own `round_trip` tests use.
@@ -305,7 +305,7 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
         .expect("write_file actually ran against the real filesystem");
     assert_eq!(written, "hello from the mock model");
 
-    // The ACP session id is exactly the stringified Structure session id
+    // The ACP session id is exactly the stringified Arabica session id
     // (`acp::AcpState::new_session`), so this round-trips it back rather
     // than re-deriving anything the store itself would not have used.
     let workspace_id = arabica_cli::host::workspace_id_for(&workspace_root);

@@ -449,7 +449,7 @@ fn system_message_contents(request: &Value) -> Vec<&str> {
 }
 
 /// Reads the single session file's header line under `home`, the way
-/// `structure sessions list` does.
+/// `arabica sessions list` does.
 fn session_file_header(home: &std::path::Path) -> Value {
     fn walk(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {

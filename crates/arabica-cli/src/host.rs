@@ -4,7 +4,7 @@
 //! `docs/protocol.md` §1 and `docs/runtime_core_architecture.md` Appendix B):
 //! it only wires `arabica-provider`, `arabica-runner`, and
 //! `arabica-runtime` into a concrete `CoreRuntime` and picks the fixed
-//! policy a coding CLI needs. Terminal chat, `structure acp`, and `structure -p` build on
+//! policy a coding CLI needs. Terminal chat, `arabica acp`, and `structure -p` build on
 //! this; neither adds a second way to do it.
 
 use std::collections::VecDeque;

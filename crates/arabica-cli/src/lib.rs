@@ -5,7 +5,7 @@
 //! in one process and exposes the protocol without adding vocabulary of its
 //! own; it is not a UI surface and is not blocked by the protocol freeze
 //! checklist. `arabica-server` is the HTTP + SSE host; this crate is the
-//! stdio one. Interactive terminal chat, `structure acp` (Agent Client
+//! stdio one. Interactive terminal chat, `arabica acp` (Agent Client
 //! Protocol v1), and `structure -p` (one-shot execution) share the same
 //! runtime composition; see
 //! `docs/runtime_core_architecture.md` Appendix B for the decision record.

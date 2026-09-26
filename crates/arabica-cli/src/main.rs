@@ -1,4 +1,4 @@
-//! `structure`: interactive terminal host, ACP agent, and one-shot runner.
+//! `arabica`: interactive terminal host, ACP agent, and one-shot runner.
 
 use arabica_cli::auth::AuthAction;
 use arabica_cli::config::resolve_cli_config;
@@ -15,7 +15,7 @@ use clap::{Args, Parser, Subcommand};
 use std::io::IsTerminal;
 
 #[derive(Parser, Debug)]
-#[command(name = "arabica", about = "Structure coding agent host")]
+#[command(name = "arabica", about = "Arabica coding agent host")]
 struct Cli {
     #[command(flatten)]
     config: HostConfigArgs,
@@ -50,7 +50,7 @@ struct PrintArgs {
     #[arg(long = "continue", conflicts_with = "resume")]
     resume_last: bool,
     /// Resume a specific session by id instead of starting a new one.
-    /// Mutually exclusive with --continue. See `structure sessions list`.
+    /// Mutually exclusive with --continue. See `arabica sessions list`.
     #[arg(long, value_name = "ID", conflicts_with = "resume_last")]
     resume: Option<String>,
 }
@@ -222,7 +222,7 @@ async fn run_print(provider_config: ApiProviderConfig, task: String, args: Print
     .await
 }
 
-/// `structure config`: report the resolved provider without starting a run.
+/// `arabica config`: report the resolved provider without starting a run.
 fn describe_configuration(
     provider_config: ApiProviderConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -274,7 +274,7 @@ fn describe_configuration(
             .join(", ")
     );
     println!(
-        "  next: run `structure` for interactive chat or `structure -p \"task\"` for scripting"
+        "  next: run `arabica` for interactive chat or `arabica -p \"task\"` for scripting"
     );
     Ok(())
 }
