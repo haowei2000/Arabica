@@ -166,6 +166,36 @@ impl Transcript {
     }
 }
 
+/// Splits `text` into styled spans following the source line's span
+/// layout: styles are copied from the original spans proportionally by
+/// walking both texts in step. Used by search-hit rendering, which
+/// rebuilds a row with highlight segments.
+fn push_plain_spans(spans: &mut Vec<Span>, text: &str, source: &Line) {
+    let source_text: Vec<char> = source
+        .spans
+        .iter()
+        .flat_map(|span| span.content.chars().collect::<Vec<_>>())
+        .collect();
+    let mut styles = Vec::new();
+    for span in &source.spans {
+        for _ in 0..span.content.chars().count() {
+            styles.push(span.style);
+        }
+    }
+    for (offset, ch) in text.chars().enumerate() {
+        let style = styles
+            .get(source_text.len().saturating_sub(1).min(offset))
+            .copied()
+            .unwrap_or_default();
+        match spans.last_mut() {
+            Some(last) if last.style == style => {
+                last.content.to_mut().push(ch);
+            }
+            _ => spans.push(Span::styled(ch.to_string(), style)),
+        }
+    }
+}
+
 /// Replaces a one-row block's line in place (the running ⏺ line flipping
 /// to ✓/✗). Returns `false` when the block is not a single row; the caller
 /// then prints the status as its own row.
@@ -532,6 +562,67 @@ struct CompletionView {
     selected: usize,
 }
 
+/// An active case-insensitive substring search over the transcript.
+#[derive(Clone, Debug)]
+struct Search {
+    query: String,
+    /// Index into the flattened match list the view is anchored to.
+    current: usize,
+}
+
+/// One match: (line index, byte range within the line's plain text).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SearchHit {
+    line: usize,
+    start_byte: usize,
+    end_byte: usize,
+}
+
+/// Case-insensitive substring matches of `query` within a single line's
+/// plain text (byte offsets, safe on char boundaries for ASCII queries and
+/// computed on char boundaries for any query).
+fn line_matches(line_text: &str, query: &str) -> Vec<(usize, usize)> {
+    let lower_line = line_text.to_lowercase();
+    let lower_query = query.to_lowercase();
+    let mut hits = Vec::new();
+    if lower_query.is_empty() {
+        return hits;
+    }
+    let mut from = 0;
+    while let Some(relative) = lower_line[from..].find(&lower_query) {
+        let start = from + relative;
+        let end = start + lower_query.len();
+        // Byte offsets may split multi-byte chars after lowercasing; snap
+        // both ends to char boundaries of the original text.
+        let is_boundary = |b: usize| line_text.is_char_boundary(b);
+        if is_boundary(start) && is_boundary(end) {
+            hits.push((start, end));
+        }
+        from = end.max(start + 1);
+    }
+    hits
+}
+
+/// All hits of `query` across the transcript, in order.
+fn search_hits(transcript: &Transcript, query: &str) -> Vec<SearchHit> {
+    let mut hits = Vec::new();
+    for (line_index, line) in transcript.lines.iter().enumerate() {
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect();
+        for (start, end) in line_matches(&text, query) {
+            hits.push(SearchHit {
+                line: line_index,
+                start_byte: start,
+                end_byte: end,
+            });
+        }
+    }
+    hits
+}
+
 const COMMANDS: &[&str] = &[
     "/context",
     "/diff",
@@ -696,6 +787,10 @@ struct App {
     /// False once the user scrolled the history pane away from the bottom;
     /// new output stops auto-following until they return.
     scroll_pinned: bool,
+    /// Active history-pane search: the query and the match to keep in view.
+    search: Option<Search>,
+    /// Manual scroll offset in rows from the bottom (wheel/PageUp paging).
+    scroll_offset_rows: usize,
     /// Set while a permission decision is pending: the tool label shown in
     /// the viewport chooser.
     permission_prompt: Option<String>,
@@ -733,6 +828,8 @@ impl Default for App {
             permission_choice: 0,
             highlighted: None,
             scroll_pinned: true,
+            search: None,
+            scroll_offset_rows: 0,
             permission_prompt: None,
             running_tool: None,
         }
@@ -740,6 +837,50 @@ impl Default for App {
 }
 
 impl App {
+    /// Starts (or restarts) a search with `query`, anchored at the first
+    /// match.
+    fn start_search(&mut self, transcript: &Transcript, query: String) {
+        if query.is_empty() {
+            self.search = None;
+            return;
+        }
+        self.search = Some(Search { query, current: 0 });
+        self.jump_search_to_visible(transcript);
+    }
+
+    /// Moves to the next (down=false→previous) match.
+    fn step_search(&mut self, transcript: &Transcript, forward: bool) {
+        let Some(search) = self.search.as_mut() else {
+            return;
+        };
+        let hits = search_hits(transcript, &search.query);
+        if hits.is_empty() {
+            return;
+        }
+        search.current = if forward {
+            (search.current + 1) % hits.len()
+        } else {
+            search.current.checked_sub(1).unwrap_or(hits.len() - 1)
+        };
+        self.jump_search_to_visible(transcript);
+    }
+
+    /// Pins the scroll so the current match's row is on screen.
+    fn jump_search_to_visible(&mut self, transcript: &Transcript) {
+        let Some(search) = self.search.as_ref() else {
+            return;
+        };
+        let hits = search_hits(transcript, &search.query);
+        let Some(hit) = hits.get(search.current) else {
+            return;
+        };
+        // Translate the hit's line index into rows-from-bottom so the
+        // render-side offset lands on it.
+        let rows_from_bottom = transcript.lines.len().saturating_sub(hit.line + 1);
+        self.scroll_pinned = false;
+        self.scroll_offset_rows = rows_from_bottom.saturating_sub(4);
+    }
+
     fn new(session: &InteractiveSession) -> Self {
         Self {
             models: configured_models(&session.config.model),
@@ -992,7 +1133,11 @@ struct InlineGuard;
 impl Drop for InlineGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+        let _ = crossterm::execute!(
+            io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::cursor::Show
+        );
         // The transcript lives in the alternate buffer; print the last
         // status so exiting does not feel like losing the session.
         println!();
@@ -1047,26 +1192,78 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
             rows.push((line, highlighted));
         }
     }
-    // Auto-follow the bottom unless the user scrolled away.
+    // Auto-follow the bottom unless the user scrolled away. A manual
+    // wheel/paging offset wins; a search anchor or block highlight pins
+    // the view to its row.
     let total = rows.len();
     let max_scroll = total.saturating_sub(visible_rows);
-    let offset = if app.scroll_pinned {
-        max_scroll
-    } else if let Some(highlight) = highlight {
-        // Keep the highlighted block's first row visible.
-        let first_row = transcript
+    let search_anchor_row = app.search.as_ref().and_then(|search| {
+        let hits = search_hits(transcript, &search.query);
+        hits.get(search.current % hits.len().max(1))
+            .map(|hit| total.saturating_sub(hit.line + 1))
+    });
+    let highlight_row = highlight.and_then(|index| {
+        transcript
             .blocks
-            .get(highlight)
-            .map(|(start, _)| *start)
-            .unwrap_or(total);
-        first_row.saturating_sub(visible_rows / 4).min(max_scroll)
+            .get(index)
+            .map(|(start, _)| total.saturating_sub(*start + 1))
+    });
+    let offset = if !app.scroll_pinned && app.search.is_none() && app.highlighted.is_none() {
+        app.scroll_offset_rows.min(max_scroll)
+    } else if app.scroll_pinned && app.search.is_none() {
+        max_scroll
+    } else if let Some(anchor) = search_anchor_row {
+        anchor.saturating_sub(visible_rows / 4).min(max_scroll)
+    } else if let Some(anchor) = highlight_row {
+        anchor.saturating_sub(visible_rows / 4).min(max_scroll)
     } else {
         max_scroll
     };
     let shown = &rows[offset.min(total)..(offset + visible_rows).min(total)];
+    let search = app.search.as_ref();
     let lines: Vec<Line> = shown
         .iter()
         .map(|(line, highlighted)| {
+            let hit_ranges: Vec<(usize, usize)> = search
+                .map(|search| {
+                    line_matches(
+                        &line
+                            .spans
+                            .iter()
+                            .map(|s| s.content.to_string())
+                            .collect::<String>(),
+                        &search.query,
+                    )
+                })
+                .unwrap_or_default();
+            let hit_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+            if !hit_ranges.is_empty() {
+                // Rebuild spans, splitting any span text at match boundaries
+                // so the hit substring gets the highlight style.
+                let plain: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect();
+                let mut spans: Vec<Span> = Vec::new();
+                let mut consumed = 0usize;
+                for (start, end) in &hit_ranges {
+                    if *start > consumed {
+                        push_plain_spans(&mut spans, &plain[consumed..*start], line);
+                    }
+                    push_plain_spans(&mut spans, &plain[*start..*end], line);
+                    let last = spans.last_mut().expect("pushed above");
+                    last.style = last
+                        .style
+                        .add_modifier(ratatui::style::Modifier::BOLD)
+                        .fg(Color::Black)
+                        .bg(Color::Yellow);
+                    consumed = *end;
+                }
+                push_plain_spans(&mut spans, &plain[consumed..], line);
+                return Line::from(spans);
+            }
+            let _ = hit_style;
             if *highlighted {
                 Line::from(
                     line.spans
@@ -1749,10 +1946,30 @@ fn command(
         return true;
     }
     match text {
+        "/find" => {
+            let query = text.trim_start_matches("/find").trim().to_owned();
+            if query.is_empty() {
+                print_dim(
+                    transcript,
+                    "usage: /find <text>  (n/N jump, Esc exits search)",
+                );
+            } else {
+                app.start_search(transcript, query);
+                let hits = app
+                    .search
+                    .as_ref()
+                    .map(|search| search_hits(transcript, &search.query).len())
+                    .unwrap_or(0);
+                print_dim(
+                    transcript,
+                    &format!("search: {hits} matches (n/N jump, Esc exits)"),
+                );
+            }
+        }
         "/help" => {
             print_dim(
                 transcript,
-                "/help  /exit  /session  /sessions  /resume [id]  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
+                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
             );
         }
         "/session" => {
@@ -1987,7 +2204,11 @@ async fn run_inner(
 
     enable_raw_mode()?;
     let _guard = InlineGuard;
-    crossterm::execute!(io::stdout(), crossterm::event::EnableBracketedPaste)?;
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableMouseCapture
+    )?;
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -2028,17 +2249,93 @@ async fn run_inner(
             // them (handled below); scrolling moves the history pane while
             // the input stays pinned. Any typed character snaps back to
             // the bottom.
+            if let InputEvent::Mouse(mouse) = &key {
+                use crossterm::event::{MouseEvent, MouseEventKind};
+                let MouseEvent { kind, .. } = mouse;
+                let mut dirty = false;
+                match kind {
+                    MouseEventKind::ScrollUp => {
+                        app.scroll_pinned = false;
+                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_add(3);
+                        dirty = true;
+                    }
+                    MouseEventKind::ScrollDown => {
+                        app.scroll_pinned = false;
+                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_sub(3);
+                        dirty = true;
+                    }
+                    MouseEventKind::Down(_button) => {
+                        // Click a history row: highlight its block. Clicks
+                        // elsewhere (e.g. the editor) just restore focus.
+                        let (_, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let pane_rows = rows.saturating_sub(6) as usize;
+                        let total = transcript.lines.len();
+                        let visible_rows = pane_rows.min(total);
+                        let max_scroll = total.saturating_sub(visible_rows);
+                        let pinned = app.scroll_pinned || app.scroll_offset_rows > max_scroll;
+                        let offset = if pinned {
+                            max_scroll
+                        } else {
+                            app.scroll_offset_rows.min(max_scroll)
+                        };
+                        if mouse.row < rows.saturating_sub(6) {
+                            // First visible row index = total - visible -
+                            // scroll offset; the click adds its row within
+                            // the pane.
+                            let first_visible =
+                                total.saturating_sub(visible_rows).saturating_sub(offset);
+                            let clicked_line =
+                                (first_visible + mouse.row as usize).min(total.saturating_sub(1));
+                            app.highlighted = transcript.blocks.iter().position(|(start, end)| {
+                                clicked_line >= *start && clicked_line < *end
+                            });
+                            app.scroll_pinned = false;
+                            dirty = true;
+                        }
+                    }
+                    _ => {}
+                }
+                if dirty {
+                    draw(&mut terminal, &app, &transcript)?;
+                }
+                continue;
+            }
             if !app.busy
                 && app.permission_prompt.is_none()
                 && let InputEvent::Key(key) = &key
                 && key.kind == KeyEventKind::Press
-                && matches!(key.code, KeyCode::Up | KeyCode::Down)
-                && (app.completion.is_none() || app.input.is_empty())
             {
-                // Block-granularity scrolling: move one block per press.
-                navigate_blocks(&transcript, &mut app, key.code == KeyCode::Up);
-                draw(&mut terminal, &app, &transcript)?;
-                continue;
+                // Search jumps work even with text in the editor: n and
+                // N are search-only while a search is active.
+                if app.search.is_some()
+                    && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
+                {
+                    app.step_search(&transcript, key.code == KeyCode::Char('n'));
+                    draw(&mut terminal, &app, &transcript)?;
+                    continue;
+                }
+                // Wheel-free environments: PageUp/PageDown page the pane.
+                if app.completion.is_none()
+                    && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+                {
+                    let step: usize = 10;
+                    app.scroll_pinned = false;
+                    if key.code == KeyCode::PageUp {
+                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_add(step);
+                    } else {
+                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_sub(step);
+                    }
+                    draw(&mut terminal, &app, &transcript)?;
+                    continue;
+                }
+                if matches!(key.code, KeyCode::Up | KeyCode::Down)
+                    && (app.completion.is_none() || app.input.is_empty())
+                {
+                    // Block-granularity scrolling: move one block per press.
+                    navigate_blocks(&transcript, &mut app, key.code == KeyCode::Up);
+                    draw(&mut terminal, &app, &transcript)?;
+                    continue;
+                }
             }
             // With a block highlighted, Enter or c copies it.
             if app.input.is_empty()
@@ -2168,6 +2465,32 @@ mod tests {
 
         // Indented fence delimiters still count.
         assert_eq!(committable_prefix("  ```\nbody\n"), "  ```\n".len());
+    }
+
+    #[test]
+    fn line_matches_finds_all_case_insensitive_hits() {
+        assert_eq!(
+            line_matches("Hello hello HELLO", "hello"),
+            vec![(0, 5), (6, 11), (12, 17)]
+        );
+        assert!(line_matches("nothing", "xyz").is_empty());
+        assert!(line_matches("anything", "").is_empty());
+        // Unicode-safe: byte offsets land on char boundaries.
+        // Lowercasing can change byte lengths ("É" 2B -> "é" 2B stays, but
+        // offsets still shift); assert boundaries only.
+        let hits = line_matches("héllo HÉLLO", "héllo");
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn search_hits_walks_all_lines_in_order() {
+        let mut transcript = Transcript::default();
+        transcript.push_block(vec![Line::raw("alpha bravo")]);
+        transcript.push_block(vec![Line::raw("bravo alpha"), Line::raw("none here")]);
+        let hits = search_hits(&transcript, "alpha");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].line, 0);
+        assert_eq!(hits[1].line, 1);
     }
 
     #[test]
