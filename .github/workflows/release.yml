@@ -59,7 +59,7 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Build release binary
-        run: cargo build --release -p arabica
+        run: cargo build --release -p arabica-cli --bin arabica
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
@@ -68,7 +68,7 @@ jobs:
         run: |
           dir="structure-${{ matrix.target }}"
           mkdir -p "$dir"
-          cp target/${{ matrix.target }}/release/structure "$dir/"
+          cp target/${{ matrix.target }}/release/arabica "$dir/"
           cp README.md LICENSE NOTICE "$dir/"
           tar czf "${{ matrix.archive }}" "$dir"
           shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
@@ -78,7 +78,7 @@ jobs:
         run: |
           $dir = "structure-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/structure.exe" $dir/
+          Copy-Item "target/${{ matrix.target }}/release/arabica.exe" $dir/
           Copy-Item README.md, LICENSE, NOTICE $dir/
           Compress-Archive -Path $dir -DestinationPath "${{ matrix.archive }}"
           $hash = (Get-FileHash "${{ matrix.archive }}" -Algorithm SHA256).Hash
