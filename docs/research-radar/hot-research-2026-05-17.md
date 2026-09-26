@@ -96,7 +96,7 @@ external datasets, paid APIs, secrets, or unsafe security fixtures.
 
 ## PR Notes
 
-PR: https://github.com/haowei2000/Structure/pull/85
+PR: https://github.com/haowei2000/Arabica/pull/85
 
 The PR targets `develop` from `hot-research` and emphasizes:
 

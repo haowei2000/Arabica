@@ -18,7 +18,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
-repository = "https://github.com/haowei2000/Structure"
+repository = "https://github.com/haowei2000/Arabica"
 
 [workspace.dependencies]
 agent-client-protocol = "=2.2.0"

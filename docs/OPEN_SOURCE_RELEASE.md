@@ -21,7 +21,7 @@ Rotate or revoke:
 Do this in a disposable clone, not in an active working copy:
 
 ```bash
-git clone --mirror git@github.com:haowei2000/Structure.git Structure-public-clean.git
+git clone --mirror git@github.com:haowei2000/Arabica.git Structure-public-clean.git
 cd Structure-public-clean.git
 
 git filter-repo \
