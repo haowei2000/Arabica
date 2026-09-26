@@ -480,7 +480,7 @@ fn io_error(path: &Path, action: &str, error: std::io::Error) -> StoreError {
 /// Creates `path` as a directory with `0700` if it does not already exist;
 /// if it does, brings its permissions to `0700` regardless of how it got
 /// there, since every other decision in this module assumes the directory
-/// only a Structure session's own files, readable only by their owner.
+/// only a Arabica session's own files, readable only by their owner.
 fn create_private_dir(path: &Path) -> Result<(), StoreError> {
     if path.is_dir() {
         return set_permissions(path, 0o700);

@@ -1,6 +1,6 @@
 //! `structure -p`: run one task non-interactively and exit.
 //!
-//! Unlike `structure acp` (`crates/arabica-cli/src/acp/`), there is no
+//! Unlike `arabica acp` (`crates/arabica-cli/src/acp/`), there is no
 //! client on the other end to ask for permission, so this binding never
 //! wires a permission gate at all: what a tool policy admits, it runs
 //! outright, and what it excludes is invisible to the model. `--allow-shell`
@@ -9,7 +9,7 @@
 //!
 //! Every run persists to `$ARABICA_HOME` (`arabica_adapters::FileSessionStore`)
 //! so a later `--continue`/`--resume` has something to pick back up --
-//! `structure sessions list` (`crates/arabica-cli/src/sessions.rs`) reads
+//! `arabica sessions list` (`crates/arabica-cli/src/sessions.rs`) reads
 //! the same files to show what is available.
 
 use std::io::Read;

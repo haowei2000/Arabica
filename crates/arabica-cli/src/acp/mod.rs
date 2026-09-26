@@ -1,4 +1,4 @@
-//! `structure acp`: Agent Client Protocol v1 over stdio.
+//! `arabica acp`: Agent Client Protocol v1 over stdio.
 //!
 //! See `docs/runtime_core_architecture.md` Appendix B for the decision
 //! record and `crates/arabica-cli/src/host.rs` for the composition this
@@ -643,7 +643,7 @@ fn session_error(error: SessionError) -> AcpError {
     }
 }
 
-/// Runs `structure acp` to completion (until stdin closes). Every prompt
+/// Runs `arabica acp` to completion (until stdin closes). Every prompt
 /// turn asks the ACP client for permission through `permission::bridge` and
 /// streams progress through `mapping::AcpObserver`; neither ever writes to
 /// stdout, which carries only this connection's own JSON-RPC frames.
@@ -970,7 +970,7 @@ mod round_trip {
     //! module depends on (`cx.spawn`, the live observer, the permission
     //! bridge) is exercised for real rather than assumed from reading the
     //! code. A fuller scenario matrix (cancellation mid-run, step limits,
-    //! provider errors, a real `structure acp` binary against a mock HTTP
+    //! provider errors, a real `arabica acp` binary against a mock HTTP
     //! server) is T9's job; this is the minimum that must work for T7 to be
     //! trustworthy at all.
 
@@ -1060,7 +1060,7 @@ mod round_trip {
         AcpState::new(model_factory, tool_policy, arabica_home.to_path_buf())
     }
 
-    /// The exact policy `main.rs` builds for `structure acp` (`coding()`
+    /// The exact policy `main.rs` builds for `arabica acp` (`coding()`
     /// plus `shell`, opted in at the policy layer and gated by the
     /// permission bridge): tests that exercise the shell tool use this so a
     /// policy drift between the real binary and its own tests fails loudly.
@@ -1463,7 +1463,7 @@ mod round_trip {
             .expect("server task did not panic")
             .expect("server run completed cleanly");
 
-        // The ACP session id is exactly the stringified Structure session
+        // The ACP session id is exactly the stringified Arabica session
         // id (`AcpState::new_session`), so this round-trips it back rather
         // than re-deriving anything the store itself would not have used.
         let workspace_id = crate::host::workspace_id_for(&root);
@@ -1549,7 +1549,7 @@ mod round_trip {
 
         // Connection 2: a brand new AcpState -- its `sessions` map starts
         // empty, with no entry for this session at all, the same as a fresh
-        // `structure acp` process would have -- pointed at the SAME
+        // `arabica acp` process would have -- pointed at the SAME
         // arabica_home. session/load must find the session on disk,
         // replay its history as session/update notifications, then accept a
         // new prompt on the session it just restored.

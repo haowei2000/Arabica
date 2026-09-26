@@ -220,7 +220,7 @@ pub fn resolve_cli_config(
     };
     if environment_key.is_none() && configured_key.is_none() && saved_key.is_none() {
         return Err(
-            "API key is required; set [provider].api_key in ~/.arabica/config.toml, run `structure auth login`, or export OPENAI__API_KEY".into(),
+            "API key is required; set [provider].api_key in ~/.arabica/config.toml, run `arabica auth login`, or export OPENAI__API_KEY".into(),
         );
     }
     let mut config = resolve_provider_config(&selected, |name| {

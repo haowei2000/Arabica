@@ -1,9 +1,9 @@
-//! Drives the real, compiled `structure sessions list` binary as a
+//! Drives the real, compiled `arabica sessions list` binary as a
 //! subprocess. Unlike `acp_binary_e2e.rs` / `print_binary_e2e.rs`, this needs
 //! no mock model provider at all -- listing sessions touches no provider --
 //! which is exactly the behavior this test locks in: `run()` in `main.rs`
 //! must dispatch `sessions` before it resolves the provider configuration,
-//! not unconditionally beforehand, or `structure sessions list` would fail
+//! not unconditionally beforehand, or `arabica sessions list` would fail
 //! with an unrelated "API key is required" error for a user who only wants
 //! to see their session history.
 
