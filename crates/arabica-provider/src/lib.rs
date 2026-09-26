@@ -298,6 +298,7 @@ pub enum ApiModelProvider {
     OpenAiChatCompletions(OpenAiModelProvider),
     OpenAiResponses(OpenAiResponsesModelProvider),
     AnthropicMessages(AnthropicModelProvider),
+    GeminiGenerateContent(GeminiGenerateContentModelProvider),
 }
 
 impl ApiModelProvider {
@@ -312,6 +313,9 @@ impl ApiModelProvider {
                 adapter.complete_with_progress(request, progress).await
             }
             Self::AnthropicMessages(adapter) => {
+                adapter.complete_with_progress(request, progress).await
+            }
+            Self::GeminiGenerateContent(adapter) => {
                 adapter.complete_with_progress(request, progress).await
             }
             _ => self.complete(request).await,
@@ -350,6 +354,14 @@ impl ApiModelProvider {
                     .with_request_timeout_secs(config.request_timeout_secs)
                     .with_optional_raw_exchange_dir(config.raw_exchange_dir),
             ))),
+            ApiType::GeminiGenerateContent => Ok(Self::GeminiGenerateContent(
+                GeminiGenerateContentModelProvider::new(
+                    GeminiProviderConfig::new(config.api_key, config.base_url, config.model)?
+                        .with_optional_max_tokens(config.max_tokens)
+                        .with_request_timeout_secs(config.request_timeout_secs)
+                        .with_optional_raw_exchange_dir(config.raw_exchange_dir),
+                ),
+            )),
             api_type => Err(ProviderError::new(format!(
                 "API adapter {api_type} is declared but not implemented"
             ))),
@@ -361,6 +373,7 @@ impl ApiModelProvider {
             Self::OpenAiChatCompletions(_) => ApiType::OpenAiChatCompletions,
             Self::OpenAiResponses(_) => ApiType::OpenAiResponses,
             Self::AnthropicMessages(_) => ApiType::AnthropicMessages,
+            Self::GeminiGenerateContent(_) => ApiType::GeminiGenerateContent,
         }
     }
 }
@@ -374,6 +387,7 @@ impl ModelProvider for ApiModelProvider {
             Self::OpenAiChatCompletions(adapter) => adapter.complete(request).await,
             Self::OpenAiResponses(adapter) => adapter.complete(request).await,
             Self::AnthropicMessages(adapter) => adapter.complete(request).await,
+            Self::GeminiGenerateContent(adapter) => adapter.complete(request).await,
         }
     }
 
@@ -382,6 +396,7 @@ impl ModelProvider for ApiModelProvider {
             Self::OpenAiChatCompletions(adapter) => adapter.cancel(run_id).await,
             Self::OpenAiResponses(adapter) => adapter.cancel(run_id).await,
             Self::AnthropicMessages(adapter) => adapter.cancel(run_id).await,
+            Self::GeminiGenerateContent(adapter) => adapter.cancel(run_id).await,
         }
     }
 }
@@ -1646,6 +1661,631 @@ impl AnthropicStreamState {
         }
         Ok(())
     }
+}
+
+/// Configuration for a Gemini GenerateContent endpoint.
+///
+/// Credentials are supplied by the composition host. The adapter never reads
+/// process environment variables itself, which keeps configuration ownership
+/// outside the model-provider boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GeminiProviderConfig {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    pub max_tokens: Option<u32>,
+    pub request_timeout_secs: u64,
+    pub raw_exchange_dir: Option<PathBuf>,
+}
+
+impl GeminiProviderConfig {
+    pub fn new(
+        api_key: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
+        let config = Self {
+            api_key: api_key.into(),
+            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            model: model.into(),
+            max_tokens: None,
+            request_timeout_secs: 300,
+            raw_exchange_dir: None,
+        };
+        if config.api_key.trim().is_empty()
+            || config.base_url.trim().is_empty()
+            || config.model.trim().is_empty()
+        {
+            return Err(ProviderError::new(
+                "Gemini API key, base URL, and model must not be empty",
+            ));
+        }
+        Ok(config)
+    }
+    pub fn with_optional_max_tokens(mut self, value: Option<u32>) -> Self {
+        self.max_tokens = value.map(|value| value.max(1));
+        self
+    }
+    pub fn with_request_timeout_secs(mut self, seconds: u64) -> Self {
+        self.request_timeout_secs = seconds.max(1);
+        self
+    }
+    fn with_optional_raw_exchange_dir(mut self, directory: Option<PathBuf>) -> Self {
+        self.raw_exchange_dir = directory;
+        self
+    }
+}
+
+#[derive(Debug)]
+pub struct GeminiGenerateContentModelProvider {
+    client: Client,
+    config: GeminiProviderConfig,
+    active_runs: HashSet<RunId>,
+    raw_exchange_sequence: u64,
+}
+
+impl GeminiGenerateContentModelProvider {
+    pub fn new(config: GeminiProviderConfig) -> Self {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self {
+            client,
+            config,
+            active_runs: HashSet::new(),
+            raw_exchange_sequence: 0,
+        }
+    }
+    /// Gemini folds the model name into the path and selects the RPC with an
+    /// action suffix; `alt=sse` switches the streaming RPC from JSON-array
+    /// chunks to one SSE event per delta.
+    fn endpoint(&self, streaming: bool) -> String {
+        let action = if streaming {
+            "streamGenerateContent?alt=sse"
+        } else {
+            "generateContent"
+        };
+        format!(
+            "{}/models/{}:{action}",
+            self.config.base_url, self.config.model
+        )
+    }
+    fn capture(
+        &mut self,
+        run_id: &RunId,
+        request: &[u8],
+    ) -> Result<Option<PathBuf>, ProviderError> {
+        let Some(root) = self.config.raw_exchange_dir.clone() else {
+            return Ok(None);
+        };
+        self.raw_exchange_sequence = self.raw_exchange_sequence.saturating_add(1);
+        let directory = root.join(format!(
+            "{:04}-{}",
+            self.raw_exchange_sequence,
+            safe_path_component(&run_id.to_string())
+        ));
+        std::fs::create_dir_all(&root).map_err(raw_exchange_error)?;
+        std::fs::create_dir(&directory).map_err(raw_exchange_error)?;
+        std::fs::write(directory.join("request.raw.json"), request).map_err(raw_exchange_error)?;
+        write_json_file(
+            &directory.join("exchange.json"),
+            &RawExchangeStart {
+                sequence: self.raw_exchange_sequence,
+                run_id: run_id.to_string(),
+                started_at_unix_ms: unix_time_ms(),
+                request_bytes: request.len(),
+                authorization_header_recorded: false,
+            },
+        )?;
+        Ok(Some(directory))
+    }
+    fn encode(&self, request: &RuntimeRequest) -> Result<Value, ProviderError> {
+        gemini_generate_content_request(request, self.config.max_tokens.unwrap_or(8_192))
+    }
+}
+
+impl ModelProvider for GeminiGenerateContentModelProvider {
+    async fn complete(
+        &mut self,
+        request: ModelRunRequest,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let run_id = request.run_id.clone();
+        self.active_runs.insert(run_id.clone());
+        let mut prepared = compile_runtime_request(&request, &self.config.model);
+        prepared.generation.max_output_tokens = self.config.max_tokens;
+        let result = async {
+            let wire = self.encode(&prepared)?;
+            let body = serde_json::to_vec(&wire).map_err(|error| {
+                ProviderError::new(format!("Gemini request serialization failed: {error}"))
+            })?;
+            let captured = self.capture(&run_id, &body)?;
+            let response = self
+                .client
+                .post(self.endpoint(false))
+                // The API key travels in a header rather than a query
+                // parameter so it never lands in URLs or captured artifacts.
+                .header("x-goog-api-key", &self.config.api_key)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .send()
+                .await
+                .map_err(|error| ProviderError::new(format!("Gemini request failed: {error}")))?;
+            let status = response.status();
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| ProviderError::new(format!("Gemini response failed: {error}")))?;
+            if let Some(directory) = captured {
+                std::fs::write(directory.join("response.raw"), &bytes)
+                    .map_err(raw_exchange_error)?;
+                write_json_file(
+                    &directory.join("response.json"),
+                    &RawExchangeResponse {
+                        status: status.as_u16(),
+                        received_at_unix_ms: unix_time_ms(),
+                        response_bytes: bytes.len(),
+                    },
+                )?;
+            }
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| ProviderError::new(format!("invalid Gemini response: {error}")))?;
+            if !status.is_success() {
+                return Err(ProviderError::new(format!(
+                    "Gemini endpoint rejected request: {}",
+                    value
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                )));
+            }
+            let response = gemini_generate_content_response(value)?;
+            let final_output = response
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RuntimeItem::Message(message) if message.role == RuntimeRole::Assistant => {
+                        Some(
+                            message
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<String>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .find(|text| !text.is_empty());
+            Ok(ModelRunResult {
+                final_output,
+                prepared_request: Some(prepared.clone()),
+                response: Some(response),
+            })
+        }
+        .await;
+        self.active_runs.remove(&run_id);
+        result.map_err(|error| error.with_prepared_request(prepared))
+    }
+    async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
+        Ok(self.active_runs.remove(run_id))
+    }
+}
+
+impl GeminiGenerateContentModelProvider {
+    /// Streaming variant of [`ModelProvider::complete`]: the same request
+    /// against the `:streamGenerateContent?alt=sse` action (streaming is
+    /// selected by the endpoint action, not a body flag), decoded
+    /// incrementally. Text and thought deltas are emitted through `progress`
+    /// as they arrive, and the accumulated parts are assembled into exactly
+    /// the response JSON [`gemini_generate_content_response`] decodes, so
+    /// both paths share one decoder.
+    pub async fn complete_with_progress(
+        &mut self,
+        request: ModelRunRequest,
+        progress: &ModelProgressSink,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let run_id = request.run_id.clone();
+        self.active_runs.insert(run_id.clone());
+        let mut prepared = compile_runtime_request(&request, &self.config.model);
+        prepared.generation.max_output_tokens = self.config.max_tokens;
+        let result = async {
+            let wire = self.encode(&prepared)?;
+            let body = serde_json::to_vec(&wire).map_err(|error| {
+                ProviderError::new(format!("Gemini request serialization failed: {error}"))
+            })?;
+            let captured = self.capture(&run_id, &body)?;
+            let mut response = self
+                .client
+                .post(self.endpoint(true))
+                .header("x-goog-api-key", &self.config.api_key)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .send()
+                .await
+                .map_err(|error| ProviderError::new(format!("Gemini request failed: {error}")))?;
+            let status = response.status();
+            if !status.is_success() {
+                let bytes = response.bytes().await.map_err(|error| {
+                    ProviderError::new(format!("Gemini response failed: {error}"))
+                })?;
+                let value: Value = serde_json::from_slice(&bytes).map_err(|error| {
+                    ProviderError::new(format!("invalid Gemini response: {error}"))
+                })?;
+                return Err(ProviderError::new(format!(
+                    "Gemini endpoint rejected request: {}",
+                    value
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                )));
+            }
+            let mut raw = Vec::new();
+            let mut pending = Vec::new();
+            let mut state = GeminiStreamState::default();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| ProviderError::new(format!("Gemini stream failed: {error}")))?
+            {
+                raw.extend_from_slice(&chunk);
+                pending.extend_from_slice(&chunk);
+                while let Some((end, delimiter)) = sse_event_boundary(&pending) {
+                    let event = pending.drain(..end + delimiter).collect::<Vec<_>>();
+                    parse_gemini_stream_event(&event[..end], &mut state, progress)?;
+                }
+            }
+            if !pending.is_empty() {
+                parse_gemini_stream_event(&pending, &mut state, progress)?;
+            }
+            let assembled = state.finish()?;
+            if let Some(directory) = captured {
+                let assembled_bytes = serde_json::to_vec(&assembled).map_err(|error| {
+                    ProviderError::new(format!("Gemini response serialization failed: {error}"))
+                })?;
+                std::fs::write(directory.join("response.raw"), &assembled_bytes)
+                    .map_err(raw_exchange_error)?;
+                write_json_file(
+                    &directory.join("response.json"),
+                    &RawExchangeResponse {
+                        status: status.as_u16(),
+                        received_at_unix_ms: unix_time_ms(),
+                        response_bytes: raw.len(),
+                    },
+                )?;
+            }
+            let decoded = gemini_generate_content_response(assembled)?;
+            let final_output = decoded
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RuntimeItem::Message(message) if message.role == RuntimeRole::Assistant => {
+                        Some(
+                            message
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<String>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .find(|text| !text.is_empty());
+            Ok(ModelRunResult {
+                final_output,
+                prepared_request: Some(prepared.clone()),
+                response: Some(decoded),
+            })
+        }
+        .await;
+        self.active_runs.remove(&run_id);
+        result.map_err(|error| error.with_prepared_request(prepared))
+    }
+}
+
+/// Encodes a provider-neutral request into the Gemini GenerateContent wire
+/// shape. Adjacent same-role entries merge into one `contents` element
+/// because Gemini rejects consecutive same-role contents on some model
+/// versions, and merging is always semantically safe.
+fn gemini_generate_content_request(
+    request: &RuntimeRequest,
+    max_tokens: u32,
+) -> Result<Value, ProviderError> {
+    let mut system = Vec::new();
+    let mut contents: Vec<Value> = Vec::new();
+    // Gemini addresses conversation turns by role and expects one `contents`
+    // element per turn, so parts accumulate on the trailing element instead
+    // of opening a new one for every runtime item.
+    fn push_part(contents: &mut Vec<Value>, role: &str, part: Value) {
+        if let Some(entry) = contents
+            .last_mut()
+            .filter(|entry| entry.get("role").and_then(Value::as_str) == Some(role))
+        {
+            entry["parts"]
+                .as_array_mut()
+                .expect("contents carry a parts array")
+                .push(part);
+        } else {
+            contents.push(json!({"role": role, "parts": [part]}));
+        }
+    }
+    for item in &request.items {
+        match item {
+            RuntimeItem::Message(message)
+                if matches!(message.role, RuntimeRole::System | RuntimeRole::Developer) =>
+            {
+                system.push(json!({
+                    "text": text_content(&message.content, ApiType::GeminiGenerateContent)?
+                }));
+            }
+            RuntimeItem::Message(message) => {
+                let role = if message.role == RuntimeRole::Assistant {
+                    "model"
+                } else {
+                    "user"
+                };
+                push_part(
+                    &mut contents,
+                    role,
+                    json!({
+                        "text": text_content(&message.content, ApiType::GeminiGenerateContent)?
+                    }),
+                );
+            }
+            RuntimeItem::ToolCall(call) => push_part(
+                &mut contents,
+                "model",
+                json!({"functionCall": {"name": call.name, "args": call.arguments}}),
+            ),
+            RuntimeItem::ToolResult(result) => {
+                // Gemini addresses function results by declaration name rather
+                // than by call id; the call id is the only fallback available.
+                let name = result
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| result.call_id.clone());
+                push_part(
+                    &mut contents,
+                    "user",
+                    json!({"functionResponse": {"name": name, "response": {"result": text_content(&result.content, ApiType::GeminiGenerateContent)?}}}),
+                );
+            }
+            // Gemini has no client-supplied thought replay.
+            RuntimeItem::Reasoning(_) => {}
+        }
+    }
+    let mut value = json!({
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    });
+    if !system.is_empty() {
+        value["systemInstruction"] = json!({"parts": system});
+    }
+    // Gemini rejects an empty `functionDeclarations` array, so both tool keys
+    // are only present when tools are actually offered.
+    if !request.tools.is_empty() {
+        value["tools"] = json!([{"functionDeclarations": request.tools.iter().map(|tool| json!({
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.input_schema,
+        })).collect::<Vec<_>>()}]);
+        value["toolConfig"] = json!({"functionCallingConfig": match &request.tool_choice {
+            ToolChoice::Auto => json!({"mode": "AUTO"}),
+            ToolChoice::Required => json!({"mode": "ANY"}),
+            ToolChoice::None => json!({"mode": "NONE"}),
+            ToolChoice::Specific { name } => json!({
+                "mode": "ANY",
+                "allowedFunctionNames": [name],
+            }),
+        }});
+    }
+    Ok(value)
+}
+
+/// Decodes one GenerateContent response body into the typed runtime model.
+/// The non-streaming endpoint and the assembled SSE stream both funnel
+/// through here so the two wire paths cannot drift.
+fn gemini_generate_content_response(value: Value) -> Result<RuntimeResponse, ProviderError> {
+    let candidate = value
+        .pointer("/candidates/0")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut items = Vec::new();
+    let mut call_ordinal = 0usize;
+    for part in candidate
+        .pointer("/content/parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(call) = part.get("functionCall") {
+            call_ordinal += 1;
+            items.push(RuntimeItem::ToolCall(ToolCallItem {
+                id: None,
+                // Gemini function calls carry no id, so a stable synthetic one
+                // keys the following tool result without inventing wire state.
+                call_id: part
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("call-{call_ordinal}")),
+                name: call
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                arguments: call.get("args").cloned().unwrap_or_else(|| json!({})),
+                provider_state: None,
+            }));
+            continue;
+        }
+        if part.get("thought").and_then(Value::as_bool) == Some(true) {
+            // Thought parts hold model-internal reasoning; surface them only
+            // when they carry presentable text.
+            let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
+            if !text.is_empty() {
+                items.push(RuntimeItem::Reasoning(ReasoningItem {
+                    id: None,
+                    summary: vec![text.to_owned()],
+                    provider_state: None,
+                }));
+            }
+            continue;
+        }
+        if let Some(text) = part.get("text").and_then(Value::as_str) {
+            items.push(RuntimeItem::Message(MessageItem::text(
+                RuntimeRole::Assistant,
+                text,
+            )));
+        }
+    }
+    let usage = value.get("usageMetadata");
+    Ok(RuntimeResponse {
+        items,
+        finish_reason: match candidate.get("finishReason").and_then(Value::as_str) {
+            Some("STOP") => Some(FinishReason::Stop),
+            Some("MAX_TOKENS") => Some(FinishReason::Length),
+            Some(other) => Some(FinishReason::Provider {
+                value: other.to_owned(),
+            }),
+            None => None,
+        },
+        usage: RuntimeUsage {
+            input_tokens: usage
+                .and_then(|v| v.get("promptTokenCount"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .and_then(|v| v.get("candidatesTokenCount"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cached_input_tokens: usage
+                .and_then(|v| v.get("cachedContentTokenCount"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_creation_input_tokens: 0,
+            reasoning_output_tokens: usage
+                .and_then(|v| v.get("thoughtsTokenCount"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        },
+        provider_state: None,
+    })
+}
+
+/// Accumulates one Gemini SSE stream into the non-streaming response JSON
+/// shape [`gemini_generate_content_response`] decodes: text deltas append to
+/// the trailing text part, function calls arrive whole, and usage plus finish
+/// reason are taken from the last chunk that carries them.
+#[derive(Default)]
+struct GeminiStreamState {
+    parts: Vec<Value>,
+    finish_reason: Option<String>,
+    usage_metadata: Option<Value>,
+}
+
+impl GeminiStreamState {
+    fn finish(self) -> Result<Value, ProviderError> {
+        let mut candidate = json!({"content": {"parts": self.parts}});
+        if let Some(reason) = self.finish_reason {
+            candidate["finishReason"] = json!(reason);
+        }
+        let mut value = json!({"candidates": [candidate]});
+        if let Some(usage) = self.usage_metadata {
+            value["usageMetadata"] = usage;
+        }
+        Ok(value)
+    }
+}
+
+/// Appends a streamed text delta to the trailing part when it is a text part
+/// of the same thought-ness, so contiguous deltas assemble into the single
+/// part a non-streaming response would have carried. A missing `thought`
+/// flag means a plain part, not an unknown one.
+fn append_gemini_text_part(parts: &mut Vec<Value>, thought: bool, text: &str) {
+    if let Some(last) = parts.last_mut()
+        && last
+            .get("thought")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            == thought
+        && let Some(existing) = last.get("text").and_then(Value::as_str)
+    {
+        last["text"] = json!(format!("{existing}{text}"));
+    } else if thought {
+        parts.push(json!({"thought": true, "text": text}));
+    } else {
+        parts.push(json!({"text": text}));
+    }
+}
+
+/// Feeds one SSE event into the stream state, emitting progress for text and
+/// thought deltas. Stream chunks reuse the GenerateContent response shape,
+/// mirroring [`parse_anthropic_stream_event`]'s contract.
+fn parse_gemini_stream_event(
+    event: &[u8],
+    state: &mut GeminiStreamState,
+    progress: &ModelProgressSink,
+) -> Result<(), ProviderError> {
+    let event = std::str::from_utf8(event)
+        .map_err(|error| ProviderError::new(format!("Gemini stream is not UTF-8: {error}")))?;
+    let data = event
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.is_empty() {
+        return Ok(());
+    }
+    let value: Value = serde_json::from_str(&data)
+        .map_err(|error| ProviderError::new(format!("invalid Gemini stream event: {error}")))?;
+    if let Some(detail) = value.pointer("/error/message").and_then(Value::as_str) {
+        return Err(ProviderError::new(format!(
+            "Gemini stream failed: {detail}"
+        )));
+    }
+    if let Some(usage) = value.get("usageMetadata").filter(|usage| usage.is_object()) {
+        state.usage_metadata = Some(usage.clone());
+    }
+    let Some(candidate) = value.pointer("/candidates/0") else {
+        return Ok(());
+    };
+    if let Some(reason) = candidate.get("finishReason").and_then(Value::as_str) {
+        state.finish_reason = Some(reason.to_owned());
+    }
+    for part in candidate
+        .pointer("/content/parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        // Function calls stream as whole parts; only text arrives as deltas.
+        if let Some(call) = part.get("functionCall") {
+            state.parts.push(json!({"functionCall": call.clone()}));
+            continue;
+        }
+        let thought = part.get("thought").and_then(Value::as_bool) == Some(true);
+        let Some(text) = part
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        else {
+            continue;
+        };
+        append_gemini_text_part(&mut state.parts, thought, text);
+        progress.emit(if thought {
+            ModelProgress::Reasoning(text.to_owned())
+        } else {
+            ModelProgress::Message(text.to_owned())
+        });
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -3962,5 +4602,282 @@ mod tests {
         .expect("Anthropic adapter is implemented");
 
         assert_eq!(ApiType::AnthropicMessages, error.api_type());
+    }
+
+    #[test]
+    fn gemini_request_merges_adjacent_roles_and_maps_tools() {
+        let request = RuntimeRequest {
+            model: "test-model".to_owned(),
+            items: vec![
+                RuntimeItem::Message(MessageItem::text(RuntimeRole::System, "be concise")),
+                RuntimeItem::Message(MessageItem::text(RuntimeRole::User, "write a file")),
+                RuntimeItem::ToolCall(ToolCallItem {
+                    id: None,
+                    call_id: "call-1".to_owned(),
+                    name: "write_file".to_owned(),
+                    arguments: json!({"path": "note.txt"}),
+                    provider_state: None,
+                }),
+                RuntimeItem::ToolResult(ToolResultItem {
+                    id: None,
+                    call_id: "call-1".to_owned(),
+                    name: Some("write_file".to_owned()),
+                    content: vec![ContentBlock::text("written")],
+                    is_error: false,
+                }),
+                RuntimeItem::Reasoning(ReasoningItem {
+                    id: None,
+                    summary: vec!["thought".to_owned()],
+                    provider_state: None,
+                }),
+            ],
+            tools: vec![ToolDefinition {
+                name: "write_file".to_owned(),
+                description: "Write a local file".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"]
+                }),
+                strict: Some(true),
+            }],
+            tool_choice: ToolChoice::Specific {
+                name: "write_file".to_owned(),
+            },
+            generation: arabica_model::RuntimeGenerationConfig::default(),
+        };
+        let wire = gemini_generate_content_request(&request, 4096).expect("request encodes");
+        // System input lands in systemInstruction and Reasoning items are
+        // dropped; each role turn stays one merged contents element.
+        assert_eq!(wire["contents"].as_array().expect("contents").len(), 3);
+        assert_eq!(wire["contents"][0]["role"], "user");
+        assert_eq!(wire["contents"][0]["parts"][0]["text"], "write a file");
+        assert_eq!(wire["contents"][1]["role"], "model");
+        assert_eq!(
+            wire["contents"][1]["parts"][0]["functionCall"]["name"],
+            "write_file"
+        );
+        assert_eq!(
+            wire["contents"][1]["parts"][0]["functionCall"]["args"]["path"],
+            "note.txt"
+        );
+        assert_eq!(wire["contents"][2]["role"], "user");
+        assert_eq!(
+            wire["contents"][2]["parts"][0]["functionResponse"]["name"],
+            "write_file"
+        );
+        assert_eq!(
+            wire["contents"][2]["parts"][0]["functionResponse"]["response"]["result"],
+            "written"
+        );
+        assert_eq!(wire["systemInstruction"]["parts"][0]["text"], "be concise");
+        assert_eq!(
+            wire["tools"][0]["functionDeclarations"][0]["name"],
+            "write_file"
+        );
+        assert_eq!(
+            wire["tools"][0]["functionDeclarations"][0]["parameters"]["type"],
+            "object"
+        );
+        assert_eq!(wire["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+        assert_eq!(
+            wire["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
+            "write_file"
+        );
+        assert_eq!(wire["generationConfig"]["maxOutputTokens"], 4096);
+    }
+
+    #[test]
+    fn gemini_stream_parser_merges_text_deltas_and_keeps_function_calls_whole() {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_state = std::sync::Arc::clone(&state);
+        let sink = ModelProgressSink::new(move |progress: ModelProgress| match progress {
+            ModelProgress::Message(text) => {
+                sink_state.lock().unwrap().push(format!("message:{text}"))
+            }
+            ModelProgress::Reasoning(text) => {
+                sink_state.lock().unwrap().push(format!("reasoning:{text}"))
+            }
+            ModelProgress::Start => {}
+        });
+        let mut stream_state = GeminiStreamState::default();
+        let events: &[&str] = &[
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"calling "}]}}]}"#,
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"the "}]}}]}"#,
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"tool","thought":true}]}}]}"#,
+            r#"data: {"candidates":[{"content":{"parts":[{"text":{},"safetyRatings":[]}]}}]}"#,
+            r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"a.txt"}}}]}}]}"#,
+            r#"data: {"candidates":[{"content":{"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":9}}"#,
+        ];
+        for event in events {
+            parse_gemini_stream_event(event.as_bytes(), &mut stream_state, &sink)
+                .expect("event parses");
+        }
+        let value = stream_state.finish().expect("stream assembles");
+        let parts = &value["candidates"][0]["content"]["parts"];
+        // Contiguous text deltas assemble into the single part a
+        // non-streaming response would have carried.
+        assert_eq!(parts[0]["text"], "calling the ");
+        assert_eq!(parts[1]["text"], "tool");
+        assert_eq!(parts[1]["thought"], true);
+        let call = &parts[2];
+        assert_eq!(call["functionCall"]["name"], "read_file");
+        assert_eq!(call["functionCall"]["args"]["path"], "a.txt");
+        assert_eq!(value["candidates"][0]["finishReason"], "STOP");
+        assert_eq!(value["usageMetadata"]["promptTokenCount"], 5);
+        assert_eq!(value["usageMetadata"]["candidatesTokenCount"], 9);
+        // Unknown part fields never leak into the assembled response.
+        assert!(call.get("safetyRatings").is_none());
+        assert_eq!(
+            *state.lock().unwrap(),
+            vec![
+                "message:calling ".to_owned(),
+                "message:the ".to_owned(),
+                "reasoning:tool".to_owned(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn gemini_streaming_emits_progress_and_matches_the_nonstreaming_shape() {
+        use axum::http::HeaderValue;
+        use axum::response::Response;
+
+        const SSE: &str = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hel\"}],\"role\":\"model\"},\"index\":0}]}\n\
+            \n\
+            data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\"}],\"role\":\"model\"},\"index\":0}]}\n\
+            \n\
+            data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.txt\"}}}],\"role\":\"model\"},\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":7,\"cachedContentTokenCount\":3,\"thoughtsTokenCount\":2}}\n\
+            \n\
+            data: {\"candidates\":[{\"content\":{\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}]}\n\
+            \n";
+
+        let sse = SSE.to_owned();
+        let app = axum::Router::new().route(
+            "/v1beta/models/test-model:streamGenerateContent",
+            axum::routing::post(move || {
+                let sse = axum::body::Body::from(sse.clone());
+                async move {
+                    let mut response = Response::new(sse);
+                    response.headers_mut().insert(
+                        axum::http::header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    response
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let progresses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_progresses = std::sync::Arc::clone(&progresses);
+        let sink = ModelProgressSink::new(move |progress: ModelProgress| {
+            sink_progresses.lock().unwrap().push(match progress {
+                ModelProgress::Start => "start".to_owned(),
+                ModelProgress::Message(text) => format!("message:{text}"),
+                ModelProgress::Reasoning(text) => format!("reasoning:{text}"),
+            });
+        });
+        let provider = GeminiGenerateContentModelProvider::new(
+            GeminiProviderConfig::new("test-key", format!("http://{address}/v1beta"), "test-model")
+                .unwrap(),
+        );
+        let mut provider = ApiModelProvider::GeminiGenerateContent(provider);
+        let result = provider
+            .complete_with_progress(sample_request(), &sink)
+            .await
+            .expect("streamed completion succeeds");
+        assert_eq!(result.final_output.as_deref(), Some("Hello"));
+        let response = result.response.expect("response is decoded");
+        assert_eq!(response.finish_reason, Some(FinishReason::Stop));
+        assert_eq!(response.usage.input_tokens, 12);
+        assert_eq!(response.usage.output_tokens, 7);
+        assert_eq!(response.usage.cached_input_tokens, 3);
+        assert_eq!(response.usage.reasoning_output_tokens, 2);
+        // The assembled stream decodes exactly like the equivalent
+        // non-streaming body, so both wire paths share one decoder.
+        assert_eq!(
+            response,
+            gemini_generate_content_response(json!({
+                "candidates": [{
+                    "content": {"parts": [
+                        {"text": "Hello"},
+                        {"functionCall": {"name": "read_file", "args": {"path": "a.txt"}}}
+                    ], "role": "model"},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 12,
+                    "candidatesTokenCount": 7,
+                    "cachedContentTokenCount": 3,
+                    "thoughtsTokenCount": 2
+                }
+            }))
+            .expect("equivalent non-streaming body decodes")
+        );
+        assert!(matches!(
+            &response.items[1],
+            RuntimeItem::ToolCall(call) if call.call_id == "call-1" && call.name == "read_file"
+        ));
+        let progress = progresses.lock().unwrap();
+        assert_eq!(
+            *progress,
+            vec![
+                "start".to_owned(),
+                "message:Hel".to_owned(),
+                "message:lo".to_owned(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn gemini_provider_calls_a_compatible_endpoint() {
+        async fn generate(Json(body): Json<Value>) -> Json<Value> {
+            assert_eq!(body["contents"][0]["role"], "user");
+            assert_eq!(body["contents"][0]["parts"][0]["text"], "test");
+            assert!(
+                body["systemInstruction"]["parts"][0]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("You are an AI agent")
+            );
+            assert_eq!(body["generationConfig"]["maxOutputTokens"], 8192);
+            Json(json!({
+                "candidates": [{
+                    "content": {"parts": [{"text": "remembered"}], "role": "model"},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {"promptTokenCount": 6, "candidatesTokenCount": 2}
+            }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock endpoint binds");
+        let address = listener.local_addr().expect("mock address exists");
+        let app = Router::new().route("/v1beta/models/test-model:generateContent", post(generate));
+        tokio::spawn(async move {
+            serve(listener, app).await.expect("mock endpoint serves");
+        });
+        let mut provider = ApiModelProvider::new(ApiProviderConfig::new(
+            ApiType::GeminiGenerateContent,
+            "test-key",
+            format!("http://{address}/v1beta"),
+            "test-model",
+        ))
+        .expect("Gemini adapter is implemented");
+        assert_eq!(provider.api_type(), ApiType::GeminiGenerateContent);
+        let result = provider
+            .complete(sample_request())
+            .await
+            .expect("provider succeeds");
+        assert_eq!(result.final_output.as_deref(), Some("remembered"));
+        let response = result.response.expect("typed response exists");
+        assert_eq!(response.finish_reason, Some(FinishReason::Stop));
+        assert_eq!(response.usage.input_tokens, 6);
+        assert_eq!(response.usage.output_tokens, 2);
+        assert_eq!(response.provider_state, None);
     }
 }

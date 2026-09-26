@@ -99,9 +99,11 @@ capability is added.
 
 ## P2 — Provider layer completion
 
-- [ ] **Gemini adapters.** Implement `GeminiGenerateContent` and
-      `GeminiInteractions` codecs behind the existing `ApiCodec` trait so
-      runtime/session code never branches on providers.
+- [ ] **Gemini adapters.** `GeminiGenerateContent` is implemented with native
+      SSE streaming (request/response codecs, tool calls, usage mapping)
+      behind `ApiModelProvider`; `GeminiInteractions` still needs a codec
+      behind the existing `ApiCodec` trait so runtime/session code never
+      branches on providers.
 - [ ] **Streaming for OpenAI Responses.** Bring the Responses dialect to
       parity with Chat Completions streaming (deltas for message and
       reasoning via `ModelProgressSink`).
