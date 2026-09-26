@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+use arabica_protocol::{Event, EventEnvelope, EventId, RunId, SessionId};
 use serde::{Deserialize, Serialize};
-use structure_protocol::{Event, EventEnvelope, EventId, RunId, SessionId};
 
 pub const SHORT_MEMORY_TRACE_SCHEMA_VERSION: &str = "structure.short-memory.trace/v3";
 

@@ -9,9 +9,9 @@
 **Owner:** haowei
 **Related:** `docs/runtime_core_architecture.md` (v2 Rust core), `benchmarks/short_memory/` (回归验证)
 
-> **Rust v2 alignment (2026-07-26):** `structure-session` owns the append-only
+> **Rust v2 alignment (2026-07-26):** `arabica-session` owns the append-only
 > per-Session event history and captures inherited history at a fork boundary.
-> `structure-runtime::ShortMemoryProjector` now applies deterministic
+> `arabica-runtime::ShortMemoryProjector` now applies deterministic
 > event-count TTL, five-class retention, relation-aware decay, pinning, a
 > recency floor, stable semantic batching, deterministic key-budget admission,
 > and `LOAD_ALL` / `LOAD_KEY` / `NO_LOAD` materialisation. Workspace

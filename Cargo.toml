@@ -2,15 +2,15 @@
 resolver = "3"
 members = [
     "benchmarks/runtime-short-memory",
-    "crates/structure-adapters",
-    "crates/structure-cli",  # published as `arabica`
-    "crates/structure-model",
-    "crates/structure-provider",
-    "crates/structure-protocol",
-    "crates/structure-runner",
-    "crates/structure-runtime",
-    "crates/structure-server",
-    "crates/structure-session",
+    "crates/arabica-adapters",
+    "crates/arabica-cli",  # published as `arabica`
+    "crates/arabica-model",
+    "crates/arabica-provider",
+    "crates/arabica-protocol",
+    "crates/arabica-runner",
+    "crates/arabica-runtime",
+    "crates/arabica-server",
+    "crates/arabica-session",
 ]
 
 [workspace.package]

@@ -1,11 +1,11 @@
-# Structure
+# Arabica
 
-Structure is a headless AI-agent runtime written in Rust. The project defines a
+Arabica is a headless AI-agent runtime written in Rust. The project defines a
 canonical command/event protocol, session lifecycle, model-provider boundary,
 tool runner, memory policies, and an HTTP/SSE host.
 
 > Status: active development (`0.1.0`). There is no GUI in this repository;
-> `structure-cli` (below) is the only client-facing surface.
+> `arabica-cli` (below) is the only client-facing surface.
 
 ## Architecture
 
@@ -13,14 +13,14 @@ The Cargo workspace is split into small crates with explicit ownership:
 
 | Crate | Responsibility |
 |---|---|
-| `structure-model` | Shared model-facing content and tool types |
-| `structure-protocol` | Canonical commands, events, identifiers, and schema |
-| `structure-provider` | Model-provider abstraction and API implementations |
-| `structure-runner` | Local tool execution boundary |
-| `structure-runtime` | Agent loop, long memory, and short-memory projection |
-| `structure-session` | Session identity, sequencing, history, and lifecycle |
-| `structure-server` | Axum HTTP and SSE protocol host |
-| `structure-cli` | Stdio composition host: `structure acp` (Agent Client Protocol) and `structure -p` (one-shot) |
+| `arabica-model` | Shared model-facing content and tool types |
+| `arabica-protocol` | Canonical commands, events, identifiers, and schema |
+| `arabica-provider` | Model-provider abstraction and API implementations |
+| `arabica-runner` | Local tool execution boundary |
+| `arabica-runtime` | Agent loop, long memory, and short-memory projection |
+| `arabica-session` | Session identity, sequencing, history, and lifecycle |
+| `arabica-server` | Axum HTTP and SSE protocol host |
+| `arabica-cli` | Stdio composition host: `arabica acp` (Agent Client Protocol) and `arabica -p` (one-shot) |
 
 The runtime is protocol-first: clients submit a `CommandEnvelope`, the session
 layer validates and sequences the operation, and the runtime emits canonical
@@ -29,7 +29,7 @@ client-specific state.
 
 ## HTTP API
 
-`structure-server` currently exposes:
+`arabica-server` currently exposes:
 
 | Endpoint | Purpose |
 |---|---|
@@ -67,20 +67,20 @@ export OPENAI__MODEL="..."
 Then start the host:
 
 ```bash
-cargo run -p structure-server
+cargo run -p arabica-server
 ```
 
 Optional configuration:
 
-- `STRUCTURE__PORT`: listening port, default `4096`
-- `STRUCTURE__API_TYPE`: provider API dialect, default
+- `ARABICA__PORT`: listening port, default `4096`
+- `ARABICA__API_TYPE`: provider API dialect, default
   `open_ai_chat_completions`; `open_ai_responses` enables stateless Responses
   replay with exact reasoning/output-item retention
-- `STRUCTURE__TOOL_ROOT`: root directory available to the local runner
-- `STRUCTURE__COMPACTION_STRATEGY`: `file_backed_gc` (default), `pointer_gc`,
+- `ARABICA__TOOL_ROOT`: root directory available to the local runner
+- `ARABICA__COMPACTION_STRATEGY`: `file_backed_gc` (default), `pointer_gc`,
   or `disabled`
-- `STRUCTURE__ARCHIVE_ROOT`: local lossless-compaction archive directory, default
-  `target/structure-runtime-memory`
+- `ARABICA__ARCHIVE_ROOT`: local lossless-compaction archive directory, default
+  `target/arabica-runtime-memory`
 - `COMPACTION_EFFORT`: minimum expected return over one cache reset; legacy
   `PGC_EFFORT` remains accepted
 
@@ -90,15 +90,15 @@ not selected by either executable.
 
 ## Run the CLI
 
-`structure-cli` builds a `structure` binary with two entry points: `structure
+`arabica-cli` builds a `structure` binary with two entry points: `structure
 acp` (Agent Client Protocol v1 over stdio, for editors like Zed) and
 `structure -p "task"` (one-shot execution). Both read the same environment
 variables as the server above. See [`docs/cli.md`](docs/cli.md) for flags,
 exit codes, and a Zed configuration snippet.
 
 ```bash
-cargo build -p structure-cli --release
-./target/release/structure -p "explain this repository's crate layout"
+cargo build -p arabica-cli --release
+./target/release/arabica -p "explain this repository's crate layout"
 ```
 
 ## Benchmarks

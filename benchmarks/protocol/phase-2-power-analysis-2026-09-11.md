@@ -131,7 +131,7 @@ conclusive at the planned size.
 >    [-0.031, +0.104], p = 0.366. LoCoMo, 99 cases: 24 vs 24, p = 1.000.
 > 3. **No benchmark adapter exercises the paper's mechanism.** Glance/overview/
 >    detail disclosure exists in code (`Context.disclose`;
->    `DisclosureLevel` in `crates/structure-protocol`) but is not called by any
+>    `DisclosureLevel` in `crates/arabica-protocol`) but is not called by any
 >    memory adapter.
 >
 > The "87 cases" requirement below is therefore void: it was derived from an

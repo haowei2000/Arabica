@@ -100,7 +100,7 @@ Qualification failed all four gates; see that campaign's `final-report.md`.
 - The paper's disclosure mechanism exists in code (`Context.disclose` in
   `src/structure/models/context/context.py`; Rust
   `DisclosureLevel { Glance, Overview, Detail }` and the
-  `context.set_disclosure` operation in `crates/structure-protocol`), but no
+  `context.set_disclosure` operation in `crates/arabica-protocol`), but no
   benchmark adapter calls it.
 
 ## Actions taken

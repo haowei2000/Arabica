@@ -1,0 +1,30 @@
+[package]
+name = "arabica-server"
+description = "HTTP and SSE host for the Structure Command/Event Protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+keywords = ["ai", "agent", "http", "sse"]
+categories = ["development-tools"]
+readme = "../../README.md"
+
+[dependencies]
+axum.workspace = true
+dotenvy = "0.15"
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+arabica-provider = { version = "0.1.0", path = "../arabica-provider" }
+arabica-protocol = { version = "0.1.0", path = "../arabica-protocol" }
+arabica-runner = { version = "0.1.0", path = "../arabica-runner" }
+arabica-runtime = { version = "0.1.0", path = "../arabica-runtime" }
+arabica-session = { version = "0.1.0", path = "../arabica-session" }
+tokio.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
+
+[lints]
+workspace = true

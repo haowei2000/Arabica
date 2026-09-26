@@ -1,0 +1,18 @@
+[package]
+name = "arabica-model"
+description = "Provider-neutral runtime item and model request vocabulary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+keywords = ["ai", "agent", "llm"]
+categories = ["development-tools"]
+readme = "../../README.md"
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

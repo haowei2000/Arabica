@@ -17,19 +17,19 @@ experiment package; do not reintroduce a parallel implementation.
 
 ### Crate ownership
 
-- `crates/structure-model`: shared content, message, and tool types
-- `crates/structure-protocol`: canonical commands, events, IDs, and schema
-- `crates/structure-provider`: model-provider boundary
-- `crates/structure-runner`: tool execution boundary
-- `crates/structure-runtime`: orchestration and memory policies
-- `crates/structure-session`: session lifecycle, history, and sequencing
-- `crates/structure-adapters`: persistence adapters implementing the session ports (JSONL session store)
-- `crates/structure-cli`: stdio composition host (interactive chat, `acp`, one-shot mode)
-- `crates/structure-server`: HTTP and SSE transport
+- `crates/arabica-model`: shared content, message, and tool types
+- `crates/arabica-protocol`: canonical commands, events, IDs, and schema
+- `crates/arabica-provider`: model-provider boundary
+- `crates/arabica-runner`: tool execution boundary
+- `crates/arabica-runtime`: orchestration and memory policies
+- `crates/arabica-session`: session lifecycle, history, and sequencing
+- `crates/arabica-adapters`: persistence adapters implementing the session ports (JSONL session store)
+- `crates/arabica-cli`: stdio composition host (interactive chat, `acp`, one-shot mode)
+- `crates/arabica-server`: HTTP and SSE transport
 - `benchmarks/runtime-short-memory`: active short-memory benchmark (workspace member; `benchmarks/cli-comparison` and `benchmarks/protocol` hold protocol documents and fixtures only)
 
 Dependency direction should follow these boundaries. Transport concerns belong
-in `structure-server`; protocol types belong in `structure-protocol`; session
+in `arabica-server`; protocol types belong in `arabica-protocol`; session
 sequencing does not belong in the runtime.
 
 ## Commands
@@ -39,11 +39,11 @@ cargo build --workspace
 cargo test --workspace
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p structure-server
+cargo run -p arabica-server
 ```
 
 The server requires `OPENAI__API_KEY`, `OPENAI__BASE_URL`, and
-`OPENAI__MODEL`. It listens on port 4096 unless `STRUCTURE__PORT` is set.
+`OPENAI__MODEL`. It listens on port 4096 unless `ARABICA__PORT` is set.
 
 ## Coding Rules
 

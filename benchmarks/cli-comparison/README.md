@@ -33,14 +33,14 @@ Planning and preflight never call a model:
 cargo run -p structure-short-memory-benchmark --bin cli_comparison -- plan \
   --mode agent-stack \
   --suite benchmarks/cli-comparison/suite.json \
-  --output /tmp/structure-cli-comparison/manifest.json \
+  --output /tmp/arabica-cli-comparison/manifest.json \
   --model openai/gpt-5.6-sol \
   --thinking xhigh \
   --piagent-package-root /path/to/piagent \
   --surfaces piagent,codex-cli
 
 cargo run -p structure-short-memory-benchmark --bin cli_comparison -- preflight \
-  --manifest /tmp/structure-cli-comparison/manifest.json
+  --manifest /tmp/arabica-cli-comparison/manifest.json
 ```
 
 Plan a context-policy A/B without specifying surfaces (the exact two treatments
@@ -61,9 +61,9 @@ Running a trial can consume provider quota and therefore requires `--yes`:
 
 ```bash
 cargo run -p structure-short-memory-benchmark --bin cli_comparison -- run \
-  --manifest /tmp/structure-cli-comparison/manifest.json \
+  --manifest /tmp/arabica-cli-comparison/manifest.json \
   --trial-id falsey-config-r01-piagent \
-  --output-root /tmp/structure-cli-comparison \
+  --output-root /tmp/arabica-cli-comparison \
   --yes
 ```
 

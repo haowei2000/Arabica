@@ -1,37 +1,37 @@
-# `structure-cli`
+# `arabica-cli`
 
-`structure-cli` builds one binary, `structure`, with three ways to drive the
+`arabica-cli` builds one binary, `structure`, with three ways to drive the
 same coding agent: `structure` (interactive terminal chat), `structure acp`
 (Agent Client Protocol v1 over stdio, for editors), and `structure -p`
 (one-shot execution, for scripts and CI). All three
 bind the same canonical protocol (`docs/protocol.md`) to the same
-`CoreRuntime`/`LocalRunner` composition (`crates/structure-cli/src/host.rs`);
+`CoreRuntime`/`LocalRunner` composition (`crates/arabica-cli/src/host.rs`);
 neither is a second implementation of the agent. See
 `docs/runtime_core_architecture.md` Appendix B for the design record.
 
 ## Build
 
 ```bash
-cargo build -p structure-cli --release
+cargo build -p arabica-cli --release
 ```
 
 The binary is at `target/release/structure`.
 
 ## Configuration
 
-The CLI and ACP share `structure-server`'s environment variable names:
+The CLI and ACP share `arabica-server`'s environment variable names:
 
 | Variable | Flag override | Required | Purpose |
 |---|---|---|---|
 | `OPENAI__API_KEY` | *(none)* | yes for ACP; CLI can use saved auth | Credential. Deliberately has no flag: a `--api-key` argument would put the key in shell history and process listings. |
 | `OPENAI__BASE_URL` | `--base-url` | yes | Provider endpoint, e.g. `https://api.openai.com/v1`. |
 | `OPENAI__MODEL` | `--model` | yes | Model name. |
-| `STRUCTURE__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`, `gemini_interactions`. |
-| `STRUCTURE__MODELS` | *(none)* | no | Comma-separated model names offered in the ACP selector. The current `OPENAI__MODEL` is always included. |
+| `ARABICA__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`, `gemini_interactions`. |
+| `ARABICA__MODELS` | *(none)* | no | Comma-separated model names offered in the ACP selector. The current `OPENAI__MODEL` is always included. |
 
 A flag always overrides its matching variable. Terminal chat and `-p` also
-load `$STRUCTURE_HOME/config.toml` (default `~/.structure/config.toml`) and a
-workspace settings file under `$STRUCTURE_HOME/workspaces/<workspace-id>/config.toml`.
+load `$ARABICA_HOME/config.toml` (default `~/.arabica/config.toml`) and a
+workspace settings file under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml`.
 For the model, resolution is flag → saved workspace choice → environment →
 user config. For endpoint and API type, it is flag → environment → user
 config. Thinking is saved workspace choice → user config → off. `structure
@@ -49,16 +49,16 @@ thinking = "off"
 ```
 
 If `config.toml` contains `api_key`, restrict it to your account with
-`chmod 600 ~/.structure/config.toml`; the CLI refuses to read a key from a
+`chmod 600 ~/.arabica/config.toml`; the CLI refuses to read a key from a
 more permissive file or a symlink. Alternatively, run `structure auth login`
-once to enter the key without echoing it. The key is then saved in `$STRUCTURE_HOME/auth.json`
-(default `~/.structure/auth.json`) with owner-only file permissions. Run
+once to enter the key without echoing it. The key is then saved in `$ARABICA_HOME/auth.json`
+(default `~/.arabica/auth.json`) with owner-only file permissions. Run
 `structure auth status` to see which credential source is active, or
 `structure auth logout` to remove the separately saved key. Credential
 priority is `OPENAI__API_KEY` → user `config.toml` → `auth.json`. ACP still requires its environment
 variable, so editor clients keep their existing credential configuration.
 
-Workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.structure` directory
+Workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.arabica` directory
 in the project: a malicious repository could otherwise redirect model calls
 and capture the real API key. ACP retains its environment-and-flag resolution
 and its per-session model and thinking controls.
@@ -112,8 +112,8 @@ lists resumable sessions; type a line number or an id prefix to pick one.
 
 CLI and ACP sessions use the runtime's file-backed context projection. Older
 eligible evidence may be archived under
-`$STRUCTURE_HOME/runtime-memory/<workspace-id>/` (default
-`~/.structure/runtime-memory/`); archives are never written into the project.
+`$ARABICA_HOME/runtime-memory/<workspace-id>/` (default
+`~/.arabica/runtime-memory/`); archives are never written into the project.
 The archive stores exact runtime events for `memory_search` and `memory_read`
 to recover when needed. The original session event log remains intact.
 Archive preparation runs on a background worker while model requests continue.
@@ -194,7 +194,7 @@ Add to Zed's `settings.json`:
         "OPENAI__API_KEY": "<your-api-key>",
         "OPENAI__BASE_URL": "https://api.openai.com/v1",
         "OPENAI__MODEL": "<model-name>",
-        "STRUCTURE__MODELS": "<model-name>,<another-model>"
+        "ARABICA__MODELS": "<model-name>,<another-model>"
       }
     }
   }
@@ -208,7 +208,7 @@ secure launch environment if that is unacceptable. Zed's own model-provider
 settings do not configure Structure's provider.
 
 New and restored sessions expose ACP model and thinking selectors. The model
-selector contains `STRUCTURE__MODELS` plus the starting model. Chat
+selector contains `ARABICA__MODELS` plus the starting model. Chat
 Completions has `off` and `on` thinking levels; Responses has `off`, `low`,
 `medium`, and `high`. A switch applies to the next prompt in that session.
 The Chat Completions adapter sends a nonstandard `thinking` parameter when
@@ -224,18 +224,18 @@ adapters still emit their ACP updates after complete HTTP responses.
 
 `structure acp` advertises `read_file`, `list_dir`, `grep`, `find_files`,
 `write_file`, `edit_files`, `delete_file`, and `shell`
-(`crates/structure-cli/src/main.rs`'s `run_acp`). The read-only tools run
+(`crates/arabica-cli/src/main.rs`'s `run_acp`). The read-only tools run
 without asking; everything else — including `shell`, which has no path
 confinement and is gated by approval alone — goes through a real
 `session/request_permission` round trip before it runs
-(`crates/structure-cli/src/acp/permission.rs`). Four options are offered:
+(`crates/arabica-cli/src/acp/permission.rs`). Four options are offered:
 allow once, allow for the rest of the session, reject once, reject for the
 rest of the session — all four are enforced by the runtime's permission gate,
 not just displayed.
 
 ### Sessions and MCP tools
 
-ACP sessions are saved under `$STRUCTURE_HOME` (or its default location) as
+ACP sessions are saved under `$ARABICA_HOME` (or its default location) as
 append-only event logs. The agent supports `session/list`, `session/load`
 (replays history), `session/resume` (continues without replay), and
 `session/close` (suspends the session so it can be opened again). A client
@@ -263,7 +263,7 @@ client's server configuration.
 ### User-configured MCP servers
 
 Terminal chat and `-p` read MCP servers from the user config file
-(`$STRUCTURE_HOME/config.toml`, default `~/.structure/config.toml`), so the
+(`$ARABICA_HOME/config.toml`, default `~/.arabica/config.toml`), so the
 same servers work in the terminal without an editor client supplying them:
 
 ```toml
@@ -295,7 +295,7 @@ is never written to the session log.
 
 ### ACP verification
 
-`cargo test -p structure-cli` covers a real `structure acp` subprocess with
+`cargo test -p arabica-cli` covers a real `structure acp` subprocess with
 an ACP client and mock model provider, multi-turn message ordering, permission
 requests, ACP load/resume, and print-mode cross-process session recovery. The
 in-process ACP client test
@@ -353,6 +353,6 @@ structure --output-format jsonl -p "run the test suite and report failures" \
 
 Both entry points derive a `WorkspaceId` from the session's working directory
 (`sha256(cwd)`'s first 16 hex characters, prefixed `ws-`;
-`crates/structure-cli/src/host.rs::workspace_id_for`). The same project
+`crates/arabica-cli/src/host.rs::workspace_id_for`). The same project
 directory produces the same workspace id regardless of which binding opened
 it or how many times.

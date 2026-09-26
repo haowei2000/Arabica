@@ -19,7 +19,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 Run the HTTP/SSE host with:
 
 ```bash
-cargo run -p structure-server
+cargo run -p arabica-server
 ```
 
 See `README.md` for configuration and crate responsibilities, and `AGENTS.md`

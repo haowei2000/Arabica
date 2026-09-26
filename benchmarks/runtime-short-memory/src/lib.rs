@@ -2,7 +2,7 @@
 //!
 //! This crate owns benchmark schemas, synthetic traces, reference baselines,
 //! and correctness gates. Production event-to-memory semantics remain owned by
-//! `structure-runtime`.
+//! `arabica-runtime`.
 
 mod baseline;
 mod cli_comparison;

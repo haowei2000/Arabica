@@ -5,23 +5,23 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-use structure_model::{ContentBlock, ToolCallItem, ToolDefinition, ToolResultItem};
-use structure_protocol::{
+use arabica_model::{ContentBlock, ToolCallItem, ToolDefinition, ToolResultItem};
+use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, TerminalControllerPolicy,
     TerminalControllerTransitionReason, ToolInteractionKind, WorkspaceId,
 };
-use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
-use structure_runner::{
+use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+use arabica_runner::{
     RunnerEnvironment, RunnerError, RunnerOutput, ToolExecutionRequest, ToolExecutionResult,
     classify_shell_interaction, shell_classifier::inline_validation_position, truncate_output,
 };
-use structure_runtime::{
+use arabica_runtime::{
     AutoHydrationObservation, CoreRuntime, PointerGcAdmissionObservation, PointerGcAdmissionPolicy,
     PointerGcObservationSink, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
     runtime_complete_tool_definition,
 };
-use structure_session::SessionManager;
+use arabica_session::SessionManager;
+use serde::{Deserialize, Serialize};
 use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
@@ -1010,11 +1010,11 @@ mod tests {
             &config,
             Instant::now(),
             vec![EventEnvelope::new(
-                structure_protocol::EventMetadata {
-                    event_id: structure_protocol::EventId::new("event-1"),
-                    command_id: structure_protocol::CommandId::new("command-1"),
+                arabica_protocol::EventMetadata {
+                    event_id: arabica_protocol::EventId::new("event-1"),
+                    command_id: arabica_protocol::CommandId::new("command-1"),
                     workspace_id: WorkspaceId::new("workspace-1"),
-                    session_id: structure_protocol::SessionId::new("session-1"),
+                    session_id: arabica_protocol::SessionId::new("session-1"),
                     run_id: Some(RunId::new("run-1")),
                     sequence: 1,
                     occurred_at_ms: 0,

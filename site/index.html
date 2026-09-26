@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Structure — a headless AI coding agent in Rust</title>
-<meta name="description" content="Structure is a protocol-first, headless AI coding agent written in Rust: canonical command/event protocol, file-backed sessions, terminal TUI, ACP support for Zed.">
+<title>Arabica — a headless AI coding agent in Rust</title>
+<meta name="description" content="Arabica is a protocol-first, headless AI coding agent written in Rust: canonical command/event protocol, file-backed sessions, terminal TUI, ACP support for Zed.">
 <style>
   :root {
     --bg: #0d1117;
@@ -48,7 +48,7 @@
 </head>
 <body>
 <header class="wrap">
-  <h1>Structure<span class="accent">_</span></h1>
+  <h1>Arabica<span class="accent">_</span></h1>
   <p class="tagline">A headless AI coding agent, protocol-first, in Rust.</p>
   <div class="badges">
     <span class="badge">Rust 1.88 · edition 2024</span>
@@ -57,7 +57,7 @@
   </div>
   <div style="margin-top: 28px">
     <a class="cta" href="#install">Get started</a>
-    <a class="cta" style="background: var(--panel); color: var(--accent); border: 1px solid var(--border)" href="https://github.com/haowei2000/Structure">Source</a>
+    <a class="cta" style="background: var(--panel); color: var(--accent); border: 1px solid var(--border)" href="https://github.com/haowei2000/Arabica">Source</a>
   </div>
 </header>
 
@@ -67,8 +67,8 @@
     Structure runs a coding agent as a <strong>canonical command/event protocol</strong>:
     clients submit <span class="inline">CommandEnvelope</span>s, the session layer sequences them,
     and the runtime emits <span class="inline">EventEnvelope</span>s. Three surfaces share one core —
-    a fullscreen terminal TUI, one-shot <span class="inline">structure -p</span> for scripts,
-    and <span class="inline">structure acp</span> for editors like Zed. There is no frontend
+    a fullscreen terminal TUI, one-shot <span class="inline">arabica -p</span> for scripts,
+    and <span class="inline">arabica acp</span> for editors like Zed. There is no frontend
     and no server-side state to leak; sessions are append-only JSONL you own.
   </p>
 </section>
@@ -79,7 +79,7 @@
     <div class="card"><h3>Fullscreen TUI</h3><p>Scrolling history pane, Claude-style divider, pinned editor. Tool calls fold to one line and flip ✓/✗ in place; file edits render as colored diffs. ↑/↓ walks blocks, Enter copies them.</p></div>
     <div class="card"><h3>Workspace instructions</h3><p>An AGENTS.md in the workspace root becomes a standing system instruction — re-read every turn, layered deepest-first when nested.</p></div>
     <div class="card"><h3>Write checkpoints</h3><p>/diff shows the agent's net file changes; /undo reverts its last write call — all-or-nothing, never touching your own edits.</p></div>
-    <div class="card"><h3>MCP servers</h3><p>Declare stdio or streamable-HTTP servers in ~/.structure/config.toml or per-session from an ACP client. Credentials never reach the session log.</p></div>
+    <div class="card"><h3>MCP servers</h3><p>Declare stdio or streamable-HTTP servers in ~/.arabica/config.toml or per-session from an ACP client. Credentials never reach the session log.</p></div>
     <div class="card"><h3>Session memory</h3><p>File-backed compaction archives older context losslessly; memory_search/memory_read recover it on demand. /context shows exactly what the next request carries.</p></div>
     <div class="card"><h3>Multi-provider</h3><p>OpenAI Chat Completions, OpenAI Responses, Anthropic Messages — with true streaming. Gemini dialects are next.</p></div>
   </div>
@@ -87,43 +87,43 @@
 
 <section class="wrap" id="install">
   <h2><span class="dash">──</span> Install</h2>
-  <p>Grab a binary from <a href="https://github.com/haowei2000/Structure/releases">GitHub Releases</a>, or build from source:</p>
-<pre><code>git clone https://github.com/haowei2000/Structure
+  <p>Grab a binary from <a href="https://github.com/haowei2000/Arabica/releases">GitHub Releases</a>, or build from source:</p>
+<pre><code>git clone https://github.com/haowei2000/Arabica
 cd Structure
-cargo build --release -p structure-cli
-./target/release/structure --help</code></pre>
+cargo build --release -p arabica-cli
+./target/release/arabica --help</code></pre>
   <p style="margin-top: 16px">Configure a provider (OpenAI-compatible endpoint works out of the box):</p>
-<pre><code>mkdir -p ~/.structure
-cat > ~/.structure/config.toml &lt;&lt;'EOF'
+<pre><code>mkdir -p ~/.arabica
+cat > ~/.arabica/config.toml &lt;&lt;'EOF'
 [provider]
 api_type = "open_ai_chat_completions"
 api_key  = "sk-..."                 # keep the file chmod 600
 base_url = "https://api.openai.com/v1"
 model    = "gpt-4.1"
 EOF
-chmod 600 ~/.structure/config.toml</code></pre>
+chmod 600 ~/.arabica/config.toml</code></pre>
   <p style="margin-top: 16px">Then drop an <span class="inline">AGENTS.md</span> in your project and start:</p>
 <pre><code>cd your-project
-structure            # fullscreen TUI
-structure -p "..."   # one-shot, for scripts</code></pre>
+arabica               # fullscreen TUI
+arabica -p "..."      # one-shot, for scripts</code></pre>
 </section>
 
 <section class="wrap">
   <h2><span class="dash">──</span> Architecture</h2>
   <table>
-    <tr><td>structure-protocol</td><td>Canonical commands, events, ids; the contract everything speaks</td></tr>
-    <tr><td>structure-runtime</td><td>Agent loop, short-memory projection, file-backed GC</td></tr>
-    <tr><td>structure-session</td><td>Session lifecycle, sequencing, per-session event ordering</td></tr>
-    <tr><td>structure-provider</td><td>Model-provider boundary and API adapters</td></tr>
-    <tr><td>structure-runner</td><td>Confined local tools (read/write/edit/shell) behind one trait</td></tr>
-    <tr><td>structure-adapters</td><td>JSONL session store and persistence adapters</td></tr>
-    <tr><td>structure-cli</td><td>Terminal chat, ACP host, one-shot runner</td></tr>
-    <tr><td>structure-server</td><td>Axum HTTP/SSE host for the same protocol</td></tr>
+    <tr><td>arabica-protocol</td><td>Canonical commands, events, ids; the contract everything speaks</td></tr>
+    <tr><td>arabica-runtime</td><td>Agent loop, short-memory projection, file-backed GC</td></tr>
+    <tr><td>arabica-session</td><td>Session lifecycle, sequencing, per-session event ordering</td></tr>
+    <tr><td>arabica-provider</td><td>Model-provider boundary and API adapters</td></tr>
+    <tr><td>arabica-runner</td><td>Confined local tools (read/write/edit/shell) behind one trait</td></tr>
+    <tr><td>arabica-adapters</td><td>JSONL session store and persistence adapters</td></tr>
+    <tr><td>arabica-cli</td><td>Terminal chat, ACP host, one-shot runner</td></tr>
+    <tr><td>arabica-server</td><td>Axum HTTP/SSE host for the same protocol</td></tr>
   </table>
 </section>
 
 <footer class="wrap">
-  Licensed under Apache-2.0 · <a href="https://github.com/haowei2000/Structure">GitHub</a> · <a href="https://github.com/haowei2000/Structure/releases">Releases</a>
+  Licensed under Apache-2.0 · <a href="https://github.com/haowei2000/Arabica">GitHub</a> · <a href="https://github.com/haowei2000/Arabica/releases">Releases</a>
 </footer>
 </body>
 </html>

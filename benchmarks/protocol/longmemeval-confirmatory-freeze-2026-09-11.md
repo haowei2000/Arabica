@@ -25,7 +25,7 @@
 > No benchmark adapter exercises the paper's mechanism. Glance/overview/detail
 > disclosure exists in code (`Context.disclose` in
 > `src/structure/models/context/context.py`; `DisclosureLevel` in
-> `crates/structure-protocol`), but every memory adapter passes the full content
+> `crates/arabica-protocol`), but every memory adapter passes the full content
 > of lexically selected chunks to a `fulltext` reader. `StructurePathMemory`
 > adds date/temporal-cue boosts and a `0.001 * session_index` recency tiebreak;
 > it does not scan glances or escalate to detail.

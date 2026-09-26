@@ -1,4 +1,9 @@
 //! Recording and pairing for controlled live experiments.
+use arabica_protocol::RunId;
+use arabica_provider::{
+    ExperimentControls, ModelProvider, ModelRunRequest, ModelRunResult, OpenAiModelProvider,
+    ProviderError,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -6,11 +11,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-};
-use structure_protocol::RunId;
-use structure_provider::{
-    ExperimentControls, ModelProvider, ModelRunRequest, ModelRunResult, OpenAiModelProvider,
-    ProviderError,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -193,16 +193,16 @@ mod tests {
     }
     fn request(input: &str) -> ModelRunRequest {
         ModelRunRequest {
-            session_id: structure_protocol::SessionId::new("s"),
+            session_id: arabica_protocol::SessionId::new("s"),
             run_id: RunId::new("r"),
             input: input.into(),
             short_memory: vec![],
             run_memory: vec![],
             long_memory: vec![],
             tools: vec![],
-            tool_choice: structure_model::ToolChoice::Auto,
+            tool_choice: arabica_model::ToolChoice::Auto,
             continuation: vec![],
-            disclosure: structure_protocol::DisclosureLevel::Detail,
+            disclosure: arabica_protocol::DisclosureLevel::Detail,
             system_instructions: vec![],
         }
     }

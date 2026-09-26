@@ -1,11 +1,11 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use serde::{Deserialize, Serialize};
-use structure_protocol::{
+use arabica_protocol::{
     CommandId, Event, EventEnvelope, EventId, EventMetadata, OutputStream, RunId, SessionId,
     WorkspaceId,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::schema::{
     EvidenceUnitOracle, SHORT_MEMORY_TRACE_SCHEMA_VERSION, ShortMemoryTrace, ToolRelationOracle,

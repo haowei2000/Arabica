@@ -6,22 +6,22 @@ use std::process::Command as ProcessCommand;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-use structure_model::{
+use arabica_model::{
     FinishReason, MessageItem, RuntimeItem, RuntimeResponse, RuntimeRole, RuntimeUsage,
     ShortMemoryItem, ToolCallItem,
 };
-use structure_protocol::{
+use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, WorkspaceId,
 };
-use structure_provider::{
+use arabica_provider::{
     ModelProvider, ModelRunRequest, ModelRunResult, ProviderError, compile_runtime_request,
 };
-use structure_runner::LocalRunner;
-use structure_runtime::{
+use arabica_runner::LocalRunner;
+use arabica_runtime::{
     CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
 };
-use structure_session::SessionManager;
+use arabica_session::SessionManager;
+use serde::{Deserialize, Serialize};
 
 pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v6";
 

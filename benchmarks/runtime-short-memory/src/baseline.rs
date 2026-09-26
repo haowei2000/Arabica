@@ -3,14 +3,14 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::{Deserialize, Serialize};
-use structure_model::{MemoryBatchKind, MemoryLoadState, ShortMemoryEntry, ShortMemoryItem};
-use structure_runtime::{
+use arabica_model::{MemoryBatchKind, MemoryLoadState, ShortMemoryEntry, ShortMemoryItem};
+use arabica_runtime::{
     EventVisibilityDecision, KeyAdmissionDecision, KeyAdmissionPolicy, LongMemoryManager,
     MemoryClass, PointerGcAdmissionObservation, RuntimeCompactionStrategy,
     ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
     project_compaction_for_benchmark,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::ShortMemoryTrace;
 
@@ -281,7 +281,7 @@ impl CompactionProjectionMetrics {
     fn from_projection(
         strategy: RuntimeCompactionStrategy,
         checkpoint_batches: usize,
-        projection: &structure_runtime::DeterministicCompactionProjection,
+        projection: &arabica_runtime::DeterministicCompactionProjection,
     ) -> Self {
         Self {
             strategy,
@@ -378,7 +378,7 @@ fn projection_parts(
 
 fn projection_metadata(
     visibility: &[EventVisibilityDecision],
-    batches: &[structure_runtime::EventBatch],
+    batches: &[arabica_runtime::EventBatch],
 ) -> (Vec<ProjectionVisibility>, Vec<ProjectionBatch>) {
     let visibility = visibility.iter().map(ProjectionVisibility::from).collect();
     let batches = batches

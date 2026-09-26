@@ -13,12 +13,12 @@ default-run = "structure-short-memory-benchmark"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-structure-model = { path = "../../crates/structure-model" }
-structure-provider = { path = "../../crates/structure-provider" }
-structure-protocol = { path = "../../crates/structure-protocol" }
-structure-runner = { path = "../../crates/structure-runner" }
-structure-runtime = { path = "../../crates/structure-runtime" }
-structure-session = { path = "../../crates/structure-session" }
+arabica-model = { path = "../../crates/arabica-model" }
+arabica-provider = { path = "../../crates/arabica-provider" }
+arabica-protocol = { path = "../../crates/arabica-protocol" }
+arabica-runner = { path = "../../crates/arabica-runner" }
+arabica-runtime = { path = "../../crates/arabica-runtime" }
+arabica-session = { path = "../../crates/arabica-session" }
 tokio.workspace = true
 
 [lints]

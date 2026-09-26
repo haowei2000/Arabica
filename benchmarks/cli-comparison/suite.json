@@ -1,6 +1,6 @@
 {
   "schema_version": "structure.cli-comparison-suite/2026-08",
-  "suite_id": "structure-cli-pilot-v1",
+  "suite_id": "arabica-cli-pilot-v1",
   "scenarios": [
     {
       "id": "falsey-config",
