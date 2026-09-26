@@ -297,7 +297,7 @@ pub type HostRuntime = CoreRuntime<HostModel, HostRunner>;
 /// language.
 pub fn coding_system_instructions(root: &Path) -> String {
     format!(
-        "You are Structure, an autonomous coding agent working in {}. \
+        "You are Arabica, an autonomous coding agent working in {}. \
          The host operating system is {}. Use paths relative to that \
          workspace root for every tool call; the tools refuse absolute \
          paths and any path that would escape the root. A user may refer to \
