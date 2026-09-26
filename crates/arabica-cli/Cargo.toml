@@ -1,9 +1,9 @@
 [package]
 name = "arabica-cli"
-description = "Arabica: the Structure coding agent terminal host (binary: arabica) - fullscreen TUI chat, ACP for Zed, and one-shot runs"
+description = "Arabica: a terminal coding agent with a fullscreen TUI, ACP support for Zed, and one-shot runs"
 keywords = ["ai", "agent", "tui", "cli", "llm"]
 categories = ["command-line-utilities", "development-tools"]
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
