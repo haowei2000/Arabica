@@ -130,6 +130,12 @@ fn text_width(text: &str) -> usize {
     text.chars().map(char_width).sum()
 }
 
+fn editor_cursor_column(input: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(input.len());
+    let line_start = input[..cursor].rfind('\n').map_or(0, |index| index + 1);
+    text_width(&input[line_start..cursor])
+}
+
 /// Hard-wraps `text` at display width `width`, keeping style per source
 /// line. Every returned Line is a separate scrollback row.
 fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -623,7 +629,7 @@ struct Search {
     /// Index into the flattened match list the view is anchored to.
     current: usize,
     /// While set, the view stays locked to `current`'s match; scrolling or
-    /// typing releases the lock (n/N re-engages it).
+    /// typing releases the lock (F3/Shift+F3 re-engages it).
     pinned: bool,
 }
 
@@ -932,7 +938,7 @@ impl App {
     }
 
     /// Drops the search's hold on the scroll position without forgetting
-    /// the query, so n/N can re-anchor to the next/previous match later.
+    /// the query, so F3/Shift+F3 can re-anchor to another match later.
     fn release_search_anchor(&mut self) {
         if let Some(search) = self.search.as_mut() {
             search.pinned = false;
@@ -1041,6 +1047,7 @@ impl App {
             })
             .unwrap_or(target_line.len());
         self.cursor = target_start + offset;
+        self.refresh_completion();
     }
 
     fn take_input(&mut self) -> String {
@@ -1482,14 +1489,14 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     }
 
     // ---- input row ----
-    let last_line = app.input[app.input[..app.cursor.min(app.input.len())]
-        .rfind('\n')
-        .map_or(0, |i| i + 1)..]
+    let cursor = app.cursor.min(app.input.len());
+    let line_start = app.input[..cursor].rfind('\n').map_or(0, |i| i + 1);
+    let last_line = app.input[line_start..]
         .split('\n')
         .next()
         .unwrap_or("")
         .to_owned();
-    let before_width = text_width(&last_line);
+    let before_width = editor_cursor_column(&app.input, cursor);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("\u{276f} ".to_owned(), theme::user()),
@@ -1968,6 +1975,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 app.cursor = app.input[..app.cursor.min(app.input.len())]
                     .rfind('\n')
                     .map_or(0, |index| index + 1);
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
@@ -1980,6 +1988,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                     + app.input[cursor..]
                         .find('\n')
                         .unwrap_or(app.input.len() - cursor);
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
@@ -2034,6 +2043,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 app.cursor = before
                     .rfind(char::is_whitespace)
                     .map_or(0, |index| index + 1);
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
@@ -2042,13 +2052,16 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
                 let cursor = app.cursor.min(app.input.len());
-                let after = app.input[cursor..].trim_start();
-                app.cursor = cursor + after.find(char::is_whitespace).unwrap_or(after.len());
+                let after = &app.input[cursor..];
+                let leading = after.len() - after.trim_start().len();
+                let rest = &after[leading..];
+                let word = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                app.cursor = cursor + leading + word;
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
-                code: KeyCode::Up | KeyCode::Left,
-                ..
+                code: KeyCode::Up, ..
             } if app.completion.is_some() => {
                 if let Some(completion) = app.completion.as_mut() {
                     completion.selected = completion.selected.saturating_sub(1);
@@ -2056,7 +2069,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 EditorAction::None
             }
             KeyEvent {
-                code: KeyCode::Down | KeyCode::Right,
+                code: KeyCode::Down,
                 ..
             } if app.completion.is_some() => {
                 if let Some(completion) = app.completion.as_mut() {
@@ -2147,6 +2160,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                         .next_back()
                         .map_or(0, char::len_utf8);
                 }
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
@@ -2156,6 +2170,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 if app.cursor < app.input.len() {
                     app.cursor += app.input[app.cursor..].chars().next().unwrap().len_utf8();
                 }
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
@@ -2163,6 +2178,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 ..
             } => {
                 app.cursor = app.input[..app.cursor].rfind('\n').map_or(0, |i| i + 1);
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
@@ -2171,16 +2187,12 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 app.cursor += app.input[app.cursor..]
                     .find('\n')
                     .unwrap_or(app.input.len() - app.cursor);
+                app.refresh_completion();
                 EditorAction::None
             }
             KeyEvent {
                 code: KeyCode::Esc, ..
-            } => {
-                app.input.clear();
-                app.cursor = 0;
-                app.refresh_completion();
-                EditorAction::None
-            }
+            } => EditorAction::None,
             KeyEvent {
                 code: KeyCode::Char(ch),
                 modifiers,
@@ -2193,6 +2205,16 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
         },
         _ => EditorAction::None,
     }
+}
+
+fn dismiss_temporary_state(app: &mut App) -> bool {
+    if app.completion.take().is_some() {
+        return true;
+    }
+    if app.search.take().is_some() {
+        return true;
+    }
+    app.highlighted.take().is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -2210,12 +2232,12 @@ fn command(
         return true;
     }
     match text {
-        "/find" => {
+        _ if is_find_command(text) => {
             let query = text.trim_start_matches("/find").trim().to_owned();
             if query.is_empty() {
                 print_dim(
                     transcript,
-                    "usage: /find <text>  (n/N jump, Esc exits search)",
+                    "usage: /find <text>  (F3/Shift+F3 jump, Esc exits search)",
                 );
             } else {
                 app.start_search(transcript, query);
@@ -2226,14 +2248,14 @@ fn command(
                     .unwrap_or(0);
                 print_dim(
                     transcript,
-                    &format!("search: {hits} matches (n/N jump, Esc exits)"),
+                    &format!("search: {hits} matches (F3/Shift+F3 jump, Esc exits)"),
                 );
             }
         }
         "/help" => {
             print_dim(
                 transcript,
-                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
+                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+O verbose · Ctrl+T thinking · @path mentions files",
             );
         }
         "/session" => {
@@ -2344,6 +2366,13 @@ fn command(
         }
     }
     false
+}
+
+fn is_find_command(text: &str) -> bool {
+    let Some(suffix) = text.strip_prefix("/find") else {
+        return false;
+    };
+    suffix.is_empty() || suffix.chars().next().is_some_and(char::is_whitespace)
 }
 
 // ---------------------------------------------------------------------------
@@ -2558,18 +2587,15 @@ async fn run_inner(
                 && let InputEvent::Key(key) = &key
                 && key.kind == KeyEventKind::Press
             {
-                // Search jumps work even with text in the editor: n and
-                // N are search-only while a search is active.
-                if app.search.is_some()
-                    && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
-                {
-                    app.step_search(&transcript, key.code == KeyCode::Char('n'));
+                // Search navigation has dedicated keys so every ordinary
+                // character remains available to the draft editor.
+                if app.search.is_some() && key.code == KeyCode::F(3) {
+                    app.step_search(&transcript, !key.modifiers.contains(KeyModifiers::SHIFT));
                     draw(&mut terminal, &app, &transcript)?;
                     continue;
                 }
-                // Esc exits an active search, as /find's hint promises.
-                if app.search.is_some() && key.code == KeyCode::Esc {
-                    app.search = None;
+                // Escape dismisses one transient state at a time.
+                if key.code == KeyCode::Esc && dismiss_temporary_state(&mut app) {
                     draw(&mut terminal, &app, &transcript)?;
                     continue;
                 }
@@ -2805,6 +2831,12 @@ mod tests {
     }
 
     #[test]
+    fn cursor_column_uses_only_text_before_the_cursor_on_its_line() {
+        assert_eq!(editor_cursor_column("hello world", 7), 7);
+        assert_eq!(editor_cursor_column("first\nsecond", 9), 3);
+    }
+
+    #[test]
     fn editor_supports_terminal_shortcuts() {
         let key = |ch| InputEvent::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL));
         let mut app = App::default();
@@ -2895,6 +2927,14 @@ mod tests {
     }
 
     #[test]
+    fn find_command_accepts_a_query_argument_without_matching_prefixes() {
+        assert!(is_find_command("/find"));
+        assert!(is_find_command("/find needle text"));
+        assert!(!is_find_command("/findneedle"));
+        assert!(!is_find_command("/finder"));
+    }
+
+    #[test]
     fn apply_completion_replaces_the_token() {
         let mut app = App {
             models: vec!["alpha".to_owned()],
@@ -2904,6 +2944,102 @@ mod tests {
         assert!(app.completion.is_some());
         app.apply_completion();
         assert_eq!(app.input, "/model alpha");
+    }
+
+    #[test]
+    fn search_letters_remain_editable_and_escape_preserves_the_draft() {
+        let mut app = App {
+            search: Some(Search {
+                query: "match".to_owned(),
+                current: 0,
+                pinned: false,
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "n");
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "nN");
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "nN");
+    }
+
+    #[test]
+    fn escape_dismisses_completion_search_and_history_one_at_a_time() {
+        let mut app = App {
+            input: "keep this".to_owned(),
+            completion: Some(CompletionView {
+                replace_start: 0,
+                replace_end: 4,
+                candidates: vec!["kept".to_owned()],
+                selected: 0,
+            }),
+            search: Some(Search {
+                query: "match".to_owned(),
+                current: 0,
+                pinned: false,
+            }),
+            highlighted: Some(2),
+            ..Default::default()
+        };
+        assert!(dismiss_temporary_state(&mut app));
+        assert!(app.completion.is_none());
+        assert!(app.search.is_some());
+        assert!(app.highlighted.is_some());
+        assert!(dismiss_temporary_state(&mut app));
+        assert!(app.search.is_none());
+        assert!(app.highlighted.is_some());
+        assert!(dismiss_temporary_state(&mut app));
+        assert!(app.highlighted.is_none());
+        assert!(!dismiss_temporary_state(&mut app));
+        assert_eq!(app.input, "keep this");
+    }
+
+    #[test]
+    fn horizontal_cursor_motion_refreshes_completion_range() {
+        let mut app = App {
+            models: vec!["alpha".to_owned(), "alps".to_owned()],
+            ..Default::default()
+        };
+        app.insert("/model alp");
+        assert!(app.completion.is_some());
+        handle_editor(
+            &mut app,
+            InputEvent::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+        );
+        let completion = app.completion.as_ref().unwrap();
+        assert_eq!(completion.replace_end, app.input.len());
+        assert_eq!(completion.candidates, vec!["alpha", "alps"]);
+    }
+
+    #[test]
+    fn control_right_counts_skipped_spaces() {
+        let mut app = App::default();
+        app.insert("word   next");
+        app.cursor = "word".len();
+        handle_editor(
+            &mut app,
+            InputEvent::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL)),
+        );
+        assert_eq!(app.cursor, app.input.len());
     }
 
     #[test]
