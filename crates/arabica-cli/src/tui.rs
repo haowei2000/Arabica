@@ -2043,10 +2043,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
             } if modifiers.contains(KeyModifiers::CONTROL) => {
                 let cursor = app.cursor.min(app.input.len());
                 let after = app.input[cursor..].trim_start();
-                app.cursor = cursor
-                    + after
-                        .find(char::is_whitespace)
-                        .map_or(after.len(), |index| index);
+                app.cursor = cursor + after.find(char::is_whitespace).unwrap_or(after.len());
                 EditorAction::None
             }
             KeyEvent {
