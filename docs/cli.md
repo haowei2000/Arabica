@@ -133,13 +133,20 @@ structure --plain
 In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
 configured choices, and `@` searches workspace file paths (respecting ignore
 rules). Use Up/Down and Tab or Enter to choose a suggestion; enter again to
-send. File suggestions insert a path reference for the agent to inspect with
+send. In a multiline draft, Up/Down move the cursor between lines while keeping
+its display column; with an empty or single-line draft they navigate transcript
+blocks. File suggestions insert a path reference for the agent to inspect with
 its read tool; they do not inline the file contents. The file index refreshes
 after each turn. Enter sends, Shift+Enter inserts a line, Ctrl+T shows or
 hides thinking, and Escape cancels a running turn. The transcript lives in
 the terminal's own scrollback, so it scrolls with the usual terminal keys,
 mouse wheel, and selection -- no mouse capture is used. Ctrl+C cancels a
-running turn and exits at the editor. Messages
+running turn; at the editor it clears a nonempty draft and exits when the
+draft is empty. Ctrl+D deletes the character after the cursor, or exits when
+the draft is empty. Ctrl+A/E move to the current line's start/end, Ctrl+←/→
+move by word, Ctrl+U/K delete from the cursor to the current line's start/end,
+and Ctrl+W or Ctrl+Backspace deletes the word before the cursor. Escape cancels
+the current draft when idle. Messages
 typed during a run are queued for the next turn. `/help` lists commands. `/session` shows the current session and
 model. `/diff` reports the agent's net file changes this session, as unified
 diffs, and marks files that have changed on disk since the agent's last write.

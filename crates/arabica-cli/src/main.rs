@@ -273,8 +273,6 @@ fn describe_configuration(
             .collect::<Vec<_>>()
             .join(", ")
     );
-    println!(
-        "  next: run `arabica` for interactive chat or `arabica -p \"task\"` for scripting"
-    );
+    println!("  next: run `arabica` for interactive chat or `arabica -p \"task\"` for scripting");
     Ok(())
 }
