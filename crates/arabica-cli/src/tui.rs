@@ -1125,6 +1125,7 @@ fn input_events() -> InputEvents {
 enum EditorAction {
     None,
     Submit(String),
+    Exit,
 }
 
 /// Restores the terminal even on early returns and errors.
@@ -1413,7 +1414,7 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     // ---- hints row ----
     frame.render_widget(
         Paragraph::new(Line::styled(
-            " Enter send \u{b7} Shift+Enter newline \u{b7} \u{2191}\u{2193} blocks \u{b7} Enter copies block \u{b7} Ctrl+O verbose \u{b7} /help",
+            " Enter send \u{b7} Shift+Enter newline \u{b7} Ctrl+C clear/exit \u{b7} Ctrl+D delete/exit \u{b7} Ctrl+A/E line \u{b7} Ctrl+\u{2190}/\u{2192} word \u{b7} Ctrl+U/K/W edit \u{b7} /help",
             theme::muted(),
         )),
         sections[4],
@@ -1739,6 +1740,7 @@ async fn run_turn(
                         match handle_editor(app, InputEvent::Key(key)) {
                             EditorAction::Submit(text) => { app.queued.push_back(text); app.status = "Queued".to_owned(); }
                             EditorAction::None => {}
+                            EditorAction::Exit => {}
                         }
                     }
                 }
@@ -1801,6 +1803,119 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
         }
         InputEvent::Key(key) if key.kind == KeyEventKind::Press => match key {
             KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                if app.input.is_empty() {
+                    return EditorAction::Exit;
+                }
+                app.input.clear();
+                app.cursor = 0;
+                app.refresh_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                if app.input.is_empty() {
+                    return EditorAction::Exit;
+                }
+                app.delete();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                app.cursor = app.input[..app.cursor.min(app.input.len())]
+                    .rfind('\n')
+                    .map_or(0, |index| index + 1);
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('e'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                let cursor = app.cursor.min(app.input.len());
+                app.cursor = cursor
+                    + app.input[cursor..]
+                        .find('\n')
+                        .unwrap_or(app.input.len() - cursor);
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('u'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                let cursor = app.cursor.min(app.input.len());
+                let start = app.input[..cursor].rfind('\n').map_or(0, |index| index + 1);
+                app.input.replace_range(start..cursor, "");
+                app.cursor = start;
+                app.refresh_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                let cursor = app.cursor.min(app.input.len());
+                let end = cursor
+                    + app.input[cursor..]
+                        .find('\n')
+                        .unwrap_or(app.input.len() - cursor);
+                app.input.replace_range(cursor..end, "");
+                app.refresh_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('w'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                let cursor = app.cursor.min(app.input.len());
+                let before = &app.input[..cursor];
+                let trimmed = before.trim_end();
+                let start = trimmed
+                    .rfind(char::is_whitespace)
+                    .map_or(0, |index| index + 1);
+                app.input.replace_range(start..cursor, "");
+                app.cursor = start;
+                app.refresh_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Left,
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                let cursor = app.cursor.min(app.input.len());
+                let before = app.input[..cursor].trim_end();
+                app.cursor = before
+                    .rfind(char::is_whitespace)
+                    .map_or(0, |index| index + 1);
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Right,
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                let cursor = app.cursor.min(app.input.len());
+                let after = app.input[cursor..].trim_start();
+                app.cursor = cursor
+                    + after
+                        .find(char::is_whitespace)
+                        .map_or(after.len(), |index| index);
+                EditorAction::None
+            }
+            KeyEvent {
                 code: KeyCode::Up | KeyCode::Left,
                 ..
             } if app.completion.is_some() => {
@@ -1852,9 +1967,14 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 modifiers,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
-                // Clear the whole input line.
-                app.input.clear();
-                app.cursor = 0;
+                let cursor = app.cursor.min(app.input.len());
+                let before = &app.input[..cursor];
+                let trimmed = before.trim_end();
+                let start = trimmed
+                    .rfind(char::is_whitespace)
+                    .map_or(0, |index| index + 1);
+                app.input.replace_range(start..cursor, "");
+                app.cursor = start;
                 app.refresh_completion();
                 EditorAction::None
             }
@@ -1969,7 +2089,7 @@ fn command(
         "/help" => {
             print_dim(
                 transcript,
-                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
+                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
             );
         }
         "/session" => {
@@ -2344,7 +2464,8 @@ async fn run_inner(
                 && let InputEvent::Key(key) = &key
                 && key.kind == KeyEventKind::Press
                 && app.highlighted.is_some()
-                && matches!(key.code, KeyCode::Enter | KeyCode::Char('c'))
+                && (key.code == KeyCode::Enter
+                    || (key.code == KeyCode::Char('c') && key.modifiers.is_empty()))
             {
                 let block = app.highlighted.expect("checked above");
                 let copied = match copy_block_to_clipboard(&transcript, block) {
@@ -2366,6 +2487,7 @@ async fn run_inner(
             match handle_editor(&mut app, key) {
                 EditorAction::None => None,
                 EditorAction::Submit(text) => Some(text),
+                EditorAction::Exit => break,
             }
         };
         if let Some(text) = next {
@@ -2537,6 +2659,55 @@ mod tests {
         app.backspace();
         assert_eq!(app.input, "好\nworl");
         app.cursor = 0;
+    }
+
+    #[test]
+    fn editor_supports_terminal_shortcuts() {
+        let key = |ch| InputEvent::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL));
+        let mut app = App::default();
+        app.insert("hello world");
+        assert!(matches!(
+            handle_editor(&mut app, key('a')),
+            EditorAction::None
+        ));
+        assert_eq!(app.cursor, 0);
+        assert!(matches!(
+            handle_editor(&mut app, key('e')),
+            EditorAction::None
+        ));
+        assert_eq!(app.cursor, app.input.len());
+        assert!(matches!(
+            handle_editor(&mut app, key('w')),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "hello ");
+        assert!(matches!(
+            handle_editor(&mut app, key('k')),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "hello ");
+        app.cursor = 5;
+        assert!(matches!(
+            handle_editor(&mut app, key('u')),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, " ");
+        app.insert("x");
+        app.cursor = 0;
+        assert!(matches!(
+            handle_editor(&mut app, key('d')),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, " ");
+        assert!(matches!(
+            handle_editor(&mut app, key('c')),
+            EditorAction::None
+        ));
+        assert!(app.input.is_empty());
+        assert!(matches!(
+            handle_editor(&mut app, key('d')),
+            EditorAction::Exit
+        ));
     }
 
     #[test]
