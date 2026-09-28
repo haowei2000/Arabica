@@ -133,8 +133,10 @@ structure --plain
 In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
 configured choices, and `@` searches workspace file paths (respecting ignore
 rules). Use Up/Down to select a suggestion; Tab or Enter accepts it. Left/Right
-always move the editor cursor. Enter sends, Shift+Enter inserts a line. A
-multiline draft owns Up/Down for cursor movement; otherwise those keys navigate
+always move the editor cursor. Enter sends, Shift+Enter inserts a line. The
+composer grows with a draft up to one third of the terminal height and eight
+rows, then scrolls internally. Up/Down move by visual row in multiline or
+wrapped drafts while keeping the target column; otherwise they navigate
 transcript blocks. File suggestions insert a path reference for the agent to
 inspect with its read tool; they do not inline the file contents. The file
 index refreshes after each turn. `/find <text>` searches the transcript; F3 and
@@ -142,15 +144,17 @@ Shift+F3 move to the next and previous result, and ordinary letters remain
 available for typing. Escape closes one temporary state at a time (completion,
 search, then history selection) and does nothing when idle without one. During
 a run Escape or Ctrl+C cancels the run; during permission confirmation Escape
-denies that request. The transcript lives in the terminal's own scrollback, so
-it scrolls with the usual terminal keys, mouse wheel, and selection -- no mouse
-capture is used. Ctrl+C clears a nonempty draft and exits when the draft is
-empty. Ctrl+D deletes the character after the cursor, or exits when the draft
-is empty. Ctrl+A/E move to the current line's start/end, Ctrl+←/→ move by
-word, Ctrl+U/K delete from the cursor to the current line's start/end, and
-Ctrl+W or Ctrl+Backspace deletes the word before the cursor. Messages typed
-during a run are queued for the next turn. `/help` lists commands. `/session`
-shows the current session and model. `/diff` reports the agent's net file changes this session, as unified
+denies that request. The history pane reflows source text when the terminal is
+resized. PageUp/PageDown and the mouse wheel scroll it; Ctrl+End returns to the
+latest output. New output is marked while reviewing history, and sending a
+message or queueing one returns to the live end. Copying a user message uses
+its original text and line breaks. Ctrl+C clears a nonempty draft and exits
+when the draft is empty. Ctrl+D deletes the character after the cursor, or
+exits when the draft is empty. Ctrl+A/E move to the current line's start/end,
+Ctrl+←/→ move by word, Ctrl+U/K delete from the cursor to the current line's
+start/end, and Ctrl+W or Ctrl+Backspace deletes the word before the cursor.
+Messages typed during a run are queued for the next turn. `/help` lists
+commands. `/session` shows the current session and model. `/diff` reports the agent's net file changes this session, as unified
 diffs, and marks files that have changed on disk since the agent's last write.
 `/undo` reverts the agent's most recent write call (`write_file`, `edit_files`,
 or `delete_file`; one `edit_files` call counts as one change even when it edits
