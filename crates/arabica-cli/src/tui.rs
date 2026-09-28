@@ -30,7 +30,7 @@ use crossterm::SynchronizedUpdate as _;
 use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame, Terminal};
@@ -104,6 +104,20 @@ mod theme {
 // ---------------------------------------------------------------------------
 // Buffered output helpers
 // ---------------------------------------------------------------------------
+
+/// Copies `line` into an owned `Line`, preserving both span styles and the
+/// line style. `Line::from(spans)` would drop `line.style`, which is where
+/// `wrap_styled`/`Line::styled` put the theme color of most transcript rows.
+fn paint_row(line: &Line) -> Line<'static> {
+    let mut rebuilt = Line::from(
+        line.spans
+            .iter()
+            .map(|span| Span::styled(span.content.to_string(), span.style))
+            .collect::<Vec<_>>(),
+    );
+    rebuilt.style = line.style;
+    rebuilt
+}
 
 /// Display width of one character: CJK and other wide characters count as
 /// two columns. An approximation good enough for wrapping without a
@@ -297,13 +311,49 @@ fn navigate_blocks(transcript: &Transcript, app: &mut App, up: bool) {
     if count == 0 {
         return;
     }
-    app.scroll_pinned = false;
+    let visible_rows = LAST_PANE_ROWS
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .max(3);
     let current = app.highlighted.unwrap_or(count - 1);
-    app.highlighted = Some(if up {
+    let target = if up {
         current.saturating_sub(1)
     } else {
         (current + 1).min(count - 1)
-    });
+    };
+    app.highlighted = Some(target);
+    // Scroll so the target block's first row sits one quarter down the
+    // pane -- the same rule search jumps use, expressed in one place.
+    let (start, _) = transcript.blocks[target];
+    app.scroll_offset_rows = start.saturating_sub(visible_rows / 4);
+    // Navigating to the last block when it already fills the pane means
+    // "follow the bottom" again, the way every chat UI behaves.
+    app.scroll_pinned = target == count - 1 && (start + visible_rows) >= transcript.lines.len();
+}
+
+/// The index of the transcript row shown at the top of the history pane.
+/// `scroll_pinned` follows the bottom; manual scroll, search jumps, and
+/// block navigation all set `scroll_offset_rows`, which only ever needs
+/// clamping here. This is the single source of truth for what "scrolled
+/// to X" means -- the click-to-block mapper uses it too.
+fn first_visible_row(app: &App, transcript: &Transcript, visible_rows: usize) -> usize {
+    let max_scroll = transcript.lines.len().saturating_sub(visible_rows);
+    if app.scroll_pinned {
+        max_scroll
+    } else {
+        app.scroll_offset_rows.min(max_scroll)
+    }
+}
+
+/// Scrolls the history pane by `delta` rows (negative scrolls up). Manual
+/// scrolling releases any search anchor and stops bottom-following; reaching
+/// the bottom re-engages follow so new output resumes auto-scrolling.
+fn scroll_by(app: &mut App, transcript: &Transcript, visible_rows: usize, delta: isize) {
+    let max_scroll = transcript.lines.len().saturating_sub(visible_rows) as isize;
+    let current = first_visible_row(app, transcript, visible_rows) as isize;
+    let next = (current + delta).clamp(0, max_scroll);
+    app.scroll_offset_rows = next as usize;
+    app.scroll_pinned = next >= max_scroll;
+    app.release_search_anchor();
 }
 
 fn print_block(transcript: &mut Transcript, text: &str, style: Style) {
@@ -346,6 +396,10 @@ fn print_error(transcript: &mut Transcript, text: &str) {
 /// Terminal width as of the last draw; wrapping for buffered output uses
 /// this. Defaults to 80 before the first frame.
 static LAST_WIDTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(80);
+
+/// History-pane height as of the last draw, for scroll anchoring between
+/// draws (block navigation, wheel scrolling) where no frame is in hand.
+static LAST_PANE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(18);
 
 /// A user's message, prefixed so it stands out in the scrollback.
 fn print_user(transcript: &mut Transcript, text: &str) {
@@ -568,6 +622,9 @@ struct Search {
     query: String,
     /// Index into the flattened match list the view is anchored to.
     current: usize,
+    /// While set, the view stays locked to `current`'s match; scrolling or
+    /// typing releases the lock (n/N re-engages it).
+    pinned: bool,
 }
 
 /// One match: (line index, byte range within the line's plain text).
@@ -762,6 +819,7 @@ fn permission_details(tool: &str, arguments: &serde_json::Value) -> String {
 struct App {
     input: String,
     cursor: usize,
+    vertical_column: Option<usize>,
     queued: VecDeque<String>,
     busy: bool,
     show_thinking: bool,
@@ -789,7 +847,9 @@ struct App {
     scroll_pinned: bool,
     /// Active history-pane search: the query and the match to keep in view.
     search: Option<Search>,
-    /// Manual scroll offset in rows from the bottom (wheel/PageUp paging).
+    /// Index of the first visible transcript row (0 = top of history).
+    /// Manual scrolling always moves this; `scroll_pinned` short-circuits
+    /// it back to the bottom when new output follows.
     scroll_offset_rows: usize,
     /// Set while a permission decision is pending: the tool label shown in
     /// the viewport chooser.
@@ -813,6 +873,7 @@ impl Default for App {
         Self {
             input: String::new(),
             cursor: 0,
+            vertical_column: None,
             queued: VecDeque::new(),
             busy: false,
             show_thinking: true,
@@ -844,7 +905,11 @@ impl App {
             self.search = None;
             return;
         }
-        self.search = Some(Search { query, current: 0 });
+        self.search = Some(Search {
+            query,
+            current: 0,
+            pinned: true,
+        });
         self.jump_search_to_visible(transcript);
     }
 
@@ -862,7 +927,16 @@ impl App {
         } else {
             search.current.checked_sub(1).unwrap_or(hits.len() - 1)
         };
+        search.pinned = true;
         self.jump_search_to_visible(transcript);
+    }
+
+    /// Drops the search's hold on the scroll position without forgetting
+    /// the query, so n/N can re-anchor to the next/previous match later.
+    fn release_search_anchor(&mut self) {
+        if let Some(search) = self.search.as_mut() {
+            search.pinned = false;
+        }
     }
 
     /// Pins the scroll so the current match's row is on screen.
@@ -874,11 +948,10 @@ impl App {
         let Some(hit) = hits.get(search.current) else {
             return;
         };
-        // Translate the hit's line index into rows-from-bottom so the
-        // render-side offset lands on it.
-        let rows_from_bottom = transcript.lines.len().saturating_sub(hit.line + 1);
+        // Anchor the hit near the top of the pane (one row of context
+        // above it); the renderer's clamp handles the last screenful.
+        self.scroll_offset_rows = hit.line.saturating_sub(1);
         self.scroll_pinned = false;
-        self.scroll_offset_rows = rows_from_bottom.saturating_sub(4);
     }
 
     fn new(session: &InteractiveSession) -> Self {
@@ -918,6 +991,56 @@ impl App {
             self.input.replace_range(cursor..cursor + remove, "");
             self.refresh_completion();
         }
+    }
+
+    fn move_vertical(&mut self, up: bool) {
+        let cursor = self.cursor.min(self.input.len());
+        let line_start = self.input[..cursor]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+        let line_end = line_start
+            + self.input[line_start..]
+                .find('\n')
+                .unwrap_or(self.input.len() - line_start);
+        let column = *self
+            .vertical_column
+            .get_or_insert_with(|| text_width(&self.input[line_start..cursor.min(line_end)]));
+        let target_start = if up {
+            if line_start == 0 {
+                None
+            } else {
+                Some(
+                    self.input[..line_start - 1]
+                        .rfind('\n')
+                        .map_or(0, |previous| previous + 1),
+                )
+            }
+        } else if line_end < self.input.len() {
+            Some(line_end + 1)
+        } else {
+            None
+        };
+        let Some(target_start) = target_start else {
+            return;
+        };
+        let target_end = target_start
+            + self.input[target_start..]
+                .find('\n')
+                .unwrap_or(self.input.len() - target_start);
+        let target_line = &self.input[target_start..target_end];
+        let mut target_column = 0;
+        let offset = target_line
+            .char_indices()
+            .find_map(|(offset, ch)| {
+                if target_column + char_width(ch) > column {
+                    Some(offset)
+                } else {
+                    target_column += char_width(ch);
+                    None
+                }
+            })
+            .unwrap_or(target_line.len());
+        self.cursor = target_start + offset;
     }
 
     fn take_input(&mut self) -> String {
@@ -1137,9 +1260,10 @@ impl Drop for InlineGuard {
         let _ = crossterm::execute!(
             io::stdout(),
             crossterm::event::DisableMouseCapture,
+            crossterm::terminal::LeaveAlternateScreen,
             crossterm::cursor::Show
         );
-        // The transcript lives in the alternate buffer; print the last
+        // The transcript lived in the alternate buffer; print the last
         // status so exiting does not feel like losing the session.
         println!();
     }
@@ -1148,11 +1272,14 @@ impl Drop for InlineGuard {
 /// Draws the bottom viewport: streaming tail, completion hint, input row,
 /// status line.
 fn draw(terminal: &mut DefaultTerminal, app: &App, transcript: &Transcript) -> io::Result<()> {
+    let size = terminal.size().ok();
     LAST_WIDTH.store(
-        terminal
-            .size()
-            .map(|area| area.width as usize)
-            .unwrap_or(80),
+        size.map(|area| area.width as usize).unwrap_or(80),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    LAST_PANE_ROWS.store(
+        size.map(|area| area.height.saturating_sub(6) as usize)
+            .unwrap_or(18),
         std::sync::atomic::Ordering::Relaxed,
     );
     // Fence the frame in a synchronized-update pair (CSI ?2026): the
@@ -1193,33 +1320,11 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
             rows.push((line, highlighted));
         }
     }
-    // Auto-follow the bottom unless the user scrolled away. A manual
-    // wheel/paging offset wins; a search anchor or block highlight pins
-    // the view to its row.
+    // Auto-follow the bottom unless the user scrolled away; every anchor
+    // (search jump, block navigation, click) resolves through the same
+    // first_visible_row so one coordinate system governs the pane.
     let total = rows.len();
-    let max_scroll = total.saturating_sub(visible_rows);
-    let search_anchor_row = app.search.as_ref().and_then(|search| {
-        let hits = search_hits(transcript, &search.query);
-        hits.get(search.current % hits.len().max(1))
-            .map(|hit| total.saturating_sub(hit.line + 1))
-    });
-    let highlight_row = highlight.and_then(|index| {
-        transcript
-            .blocks
-            .get(index)
-            .map(|(start, _)| total.saturating_sub(*start + 1))
-    });
-    let offset = if !app.scroll_pinned && app.search.is_none() && app.highlighted.is_none() {
-        app.scroll_offset_rows.min(max_scroll)
-    } else if app.scroll_pinned && app.search.is_none() {
-        max_scroll
-    } else if let Some(anchor) = search_anchor_row {
-        anchor.saturating_sub(visible_rows / 4).min(max_scroll)
-    } else if let Some(anchor) = highlight_row {
-        anchor.saturating_sub(visible_rows / 4).min(max_scroll)
-    } else {
-        max_scroll
-    };
+    let offset = first_visible_row(app, transcript, visible_rows);
     let shown = &rows[offset.min(total)..(offset + visible_rows).min(total)];
     let search = app.search.as_ref();
     let lines: Vec<Line> = shown
@@ -1262,35 +1367,22 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
                     consumed = *end;
                 }
                 push_plain_spans(&mut spans, &plain[consumed..], line);
-                return Line::from(spans);
+                let mut rebuilt = Line::from(spans);
+                rebuilt.style = line.style;
+                return rebuilt;
             }
             let _ = hit_style;
+            let mut row = paint_row(line);
             if *highlighted {
-                Line::from(
-                    line.spans
-                        .iter()
-                        .map(|span| {
-                            Span::styled(
-                                span.content.to_string(),
-                                span.style.add_modifier(ratatui::style::Modifier::REVERSED),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                Line::from(
-                    line.spans
-                        .iter()
-                        .map(|span| Span::styled(span.content.to_string(), span.style))
-                        .collect::<Vec<_>>(),
-                )
+                row.style = row.style.add_modifier(Modifier::REVERSED);
             }
+            row
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), sections[0]);
 
     // ---- divider ----
-    let divider = "\u{2500}".repeat((sections[1].width as usize).saturating_sub(1).max(1));
+    let divider = "\u{2500}".repeat((sections[1].width as usize).saturating_sub(2).max(1));
     frame.render_widget(
         Paragraph::new(Line::styled(divider, theme::muted())),
         sections[1],
@@ -1412,11 +1504,13 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     }
 
     // ---- hints row ----
+    let hints = if sections[4].width < 100 {
+        " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · /help"
+    } else {
+        " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · /help"
+    };
     frame.render_widget(
-        Paragraph::new(Line::styled(
-            " Enter send \u{b7} Shift+Enter newline \u{b7} Ctrl+C clear/exit \u{b7} Ctrl+D delete/exit \u{b7} Ctrl+A/E line \u{b7} Ctrl+\u{2190}/\u{2192} word \u{b7} Ctrl+U/K/W edit \u{b7} /help",
-            theme::muted(),
-        )),
+        Paragraph::new(Line::styled(hints, theme::muted())),
         sections[4],
     );
 
@@ -1736,12 +1830,46 @@ async fn run_turn(
                     } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL {
                         app.verbose = !app.verbose;
                         app.status = if app.verbose { "Verbose".to_owned() } else { "Working".to_owned() };
+                    } else if key.kind == KeyEventKind::Press && app.completion.is_none()
+                        && matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown)
+                        && app.input.is_empty()
+                    {
+                        // While a run is in flight the editor has nothing to
+                        // do with these keys: they scroll the history pane
+                        // and navigate blocks, exactly as when idle.
+                        match key.code {
+                            KeyCode::Up => navigate_blocks(transcript, app, true),
+                            KeyCode::Down => navigate_blocks(transcript, app, false),
+                            KeyCode::PageUp | KeyCode::PageDown => {
+                                let pane_rows = LAST_PANE_ROWS
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    .max(3);
+                                let delta = if key.code == KeyCode::PageUp {
+                                    -(pane_rows as isize - 1)
+                                } else {
+                                    pane_rows as isize - 1
+                                };
+                                scroll_by(app, transcript, pane_rows, delta);
+                            }
+                            _ => {}
+                        }
                     } else {
                         match handle_editor(app, InputEvent::Key(key)) {
                             EditorAction::Submit(text) => { app.queued.push_back(text); app.status = "Queued".to_owned(); }
                             EditorAction::None => {}
                             EditorAction::Exit => {}
                         }
+                    }
+                } else if let InputEvent::Mouse(mouse) = key {
+                    // The wheel works mid-run too: reading back while the
+                    // model streams is the main use of manual scrolling.
+                    use crossterm::event::MouseEventKind;
+                    if let MouseEventKind::ScrollUp | MouseEventKind::ScrollDown = mouse.kind {
+                        let pane_rows = LAST_PANE_ROWS
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            .max(3);
+                        let delta = if mouse.kind == MouseEventKind::ScrollUp { -3 } else { 3 };
+                        scroll_by(app, transcript, pane_rows, delta);
                     }
                 }
                 draw(terminal, app, transcript)?;
@@ -1784,7 +1912,6 @@ async fn run_turn(
             print_error(transcript, &error.to_string());
         }
     }
-    println!(); // blank line after each turn
     draw(terminal, app, transcript)?;
     Ok(())
 }
@@ -1796,6 +1923,13 @@ impl App {
 }
 
 fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
+    if let InputEvent::Key(key) = &event {
+        if !matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            app.vertical_column = None;
+        }
+    } else {
+        app.vertical_column = None;
+    }
     match event {
         InputEvent::Paste(text) => {
             app.insert(&text);
@@ -1932,6 +2066,19 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                     completion.selected =
                         (completion.selected + 1).min(completion.candidates.len() - 1);
                 }
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } if app.input.contains('\n') => {
+                app.move_vertical(true);
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } if app.input.contains('\n') => {
+                app.move_vertical(false);
                 EditorAction::None
             }
             KeyEvent {
@@ -2326,6 +2473,7 @@ async fn run_inner(
     let _guard = InlineGuard;
     crossterm::execute!(
         io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableMouseCapture
     )?;
@@ -2373,37 +2521,25 @@ async fn run_inner(
                 use crossterm::event::{MouseEvent, MouseEventKind};
                 let MouseEvent { kind, .. } = mouse;
                 let mut dirty = false;
+                let pane_rows = LAST_PANE_ROWS
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .max(3);
                 match kind {
                     MouseEventKind::ScrollUp => {
-                        app.scroll_pinned = false;
-                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_add(3);
+                        scroll_by(&mut app, &transcript, pane_rows, -3);
                         dirty = true;
                     }
                     MouseEventKind::ScrollDown => {
-                        app.scroll_pinned = false;
-                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_sub(3);
+                        scroll_by(&mut app, &transcript, pane_rows, 3);
                         dirty = true;
                     }
                     MouseEventKind::Down(_button) => {
                         // Click a history row: highlight its block. Clicks
                         // elsewhere (e.g. the editor) just restore focus.
-                        let (_, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-                        let pane_rows = rows.saturating_sub(6) as usize;
                         let total = transcript.lines.len();
-                        let visible_rows = pane_rows.min(total);
-                        let max_scroll = total.saturating_sub(visible_rows);
-                        let pinned = app.scroll_pinned || app.scroll_offset_rows > max_scroll;
-                        let offset = if pinned {
-                            max_scroll
-                        } else {
-                            app.scroll_offset_rows.min(max_scroll)
-                        };
-                        if mouse.row < rows.saturating_sub(6) {
-                            // First visible row index = total - visible -
-                            // scroll offset; the click adds its row within
-                            // the pane.
+                        if (mouse.row as usize) < pane_rows && total > 0 {
                             let first_visible =
-                                total.saturating_sub(visible_rows).saturating_sub(offset);
+                                first_visible_row(&app, &transcript, pane_rows.min(total));
                             let clicked_line =
                                 (first_visible + mouse.row as usize).min(total.saturating_sub(1));
                             app.highlighted = transcript.blocks.iter().position(|(start, end)| {
@@ -2434,24 +2570,34 @@ async fn run_inner(
                     draw(&mut terminal, &app, &transcript)?;
                     continue;
                 }
+                // Esc exits an active search, as /find's hint promises.
+                if app.search.is_some() && key.code == KeyCode::Esc {
+                    app.search = None;
+                    draw(&mut terminal, &app, &transcript)?;
+                    continue;
+                }
                 // Wheel-free environments: PageUp/PageDown page the pane.
                 if app.completion.is_none()
                     && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
                 {
-                    let step: usize = 10;
-                    app.scroll_pinned = false;
-                    if key.code == KeyCode::PageUp {
-                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_add(step);
+                    let pane_rows = LAST_PANE_ROWS
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        .max(3);
+                    let delta = if key.code == KeyCode::PageUp {
+                        -(pane_rows as isize - 1)
                     } else {
-                        app.scroll_offset_rows = app.scroll_offset_rows.saturating_sub(step);
-                    }
+                        pane_rows as isize - 1
+                    };
+                    scroll_by(&mut app, &transcript, pane_rows, delta);
                     draw(&mut terminal, &app, &transcript)?;
                     continue;
                 }
                 if matches!(key.code, KeyCode::Up | KeyCode::Down)
-                    && (app.completion.is_none() || app.input.is_empty())
+                    && app.completion.is_none()
+                    && (app.input.is_empty() || !app.input.contains('\n'))
                 {
-                    // Block-granularity scrolling: move one block per press.
+                    // A multiline draft owns Up/Down for cursor movement;
+                    // otherwise they navigate transcript blocks.
                     navigate_blocks(&transcript, &mut app, key.code == KeyCode::Up);
                     draw(&mut terminal, &app, &transcript)?;
                     continue;
@@ -2711,6 +2857,33 @@ mod tests {
     }
 
     #[test]
+    fn multiline_editor_moves_vertically_and_keeps_its_column() {
+        let mut app = App::default();
+        app.insert("first line\nx\nlast line");
+        app.cursor = app.input.len() - 2;
+
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(&app.input[app.cursor..], "\nlast line");
+        assert_eq!(app.input[..app.cursor].rsplit('\n').next(), Some("x"));
+
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(&app.input[app.cursor..], "ne");
+        assert_eq!(app.input[..app.cursor].rsplit('\n').next(), Some("last li"));
+    }
+
+    #[test]
     fn completion_for_slash_and_file_tokens() {
         let files = vec!["src/main.rs".to_owned()];
         let models = vec!["m1".to_owned(), "m2".to_owned()];
@@ -2813,5 +2986,112 @@ mod tests {
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert_eq!(lines[0].spans[0].content, "你好");
         assert_eq!(lines[1].spans[0].content, "世界x");
+    }
+
+    #[test]
+    fn paint_row_keeps_the_line_style_and_highlight_extends_it() {
+        // Transcript rows carry their theme color as a line style (that is
+        // what Line::styled/wrap_styled produce); the renderer must keep it
+        // when rebuilding rows for Paragraph, which reads only spans.
+        let source = Line::styled("plan.".to_owned(), theme::tool());
+        let row = paint_row(&source);
+        assert_eq!(row.style.fg, Some(Color::Yellow));
+
+        let mut highlighted = paint_row(&source);
+        highlighted.style = highlighted.style.add_modifier(Modifier::REVERSED);
+        assert_eq!(
+            highlighted.style.add_modifier,
+            Modifier::REVERSED,
+            "highlight extends, not replaces, the style"
+        );
+        assert_eq!(highlighted.style.fg, Some(Color::Yellow));
+    }
+
+    /// A transcript of `blocks` one-row blocks, pane shows `visible`.
+    fn scrolled_transcript(blocks: usize) -> Transcript {
+        let mut transcript = Transcript::default();
+        for index in 0..blocks {
+            transcript.push_block(vec![Line::raw(format!("row {index}"))]);
+        }
+        transcript
+    }
+
+    #[test]
+    fn scroll_by_moves_from_the_bottom_and_re_engages_follow_at_the_bottom() {
+        // 100 rows, 10 visible: pinned at the bottom (offset 90).
+        let transcript = scrolled_transcript(100);
+        let mut app = App::default();
+        let visible = 10;
+        assert_eq!(first_visible_row(&app, &transcript, visible), 90);
+
+        // One wheel up: three rows up, follow off.
+        scroll_by(&mut app, &transcript, visible, -3);
+        assert_eq!(first_visible_row(&app, &transcript, visible), 87);
+        assert!(!app.scroll_pinned);
+
+        // More up, never past the top.
+        scroll_by(&mut app, &transcript, visible, -1000);
+        assert_eq!(first_visible_row(&app, &transcript, visible), 0);
+        scroll_by(&mut app, &transcript, visible, -3);
+        assert_eq!(first_visible_row(&app, &transcript, visible), 0);
+
+        // Down past the bottom: clamps and re-engages follow.
+        scroll_by(&mut app, &transcript, visible, 1000);
+        assert_eq!(first_visible_row(&app, &transcript, visible), 90);
+        assert!(app.scroll_pinned);
+    }
+
+    #[test]
+    fn navigate_blocks_scrolls_the_target_into_view_and_lands_on_follow() {
+        let transcript = scrolled_transcript(30);
+        let mut app = App::default();
+        // With no highlight, Up starts from the last block (29).
+        navigate_blocks(&transcript, &mut app, true);
+        assert_eq!(app.highlighted, Some(28));
+        // The target block's first row lands one quarter down the pane
+        // (LAST_PANE_ROWS defaults to 18: offset 24), and the renderer's
+        // clamp folds that into the last screenful (offset 12), putting
+        // block 28 in view -- never a mirrored position from the bottom.
+        let visible = 18;
+        assert_eq!(app.scroll_offset_rows, 24);
+        assert_eq!(first_visible_row(&app, &transcript, visible), 12);
+        assert!(!app.scroll_pinned);
+
+        // Walking all the way back down to the last block re-pins follow.
+        for _ in 0..29 {
+            navigate_blocks(&transcript, &mut app, false);
+        }
+        assert_eq!(app.highlighted, Some(29));
+        assert!(app.scroll_pinned);
+    }
+
+    #[test]
+    fn search_anchor_moves_with_the_hit_and_manual_scroll_releases_it() {
+        // Two unique queries so hits are unambiguous across 100 rows.
+        let mut transcript = scrolled_transcript(100);
+        transcript.push_block(vec![Line::raw("needle alpha")]);
+        transcript.push_block(vec![Line::raw("filler")]);
+        transcript.push_block(vec![Line::raw("needle beta")]);
+        let mut app = App::default();
+        app.start_search(&transcript, "needle".to_owned());
+        // First hit is "needle alpha" (line 100); anchored one row above.
+        assert_eq!(app.scroll_offset_rows, 99);
+
+        // n steps to "needle beta" (line 102) and re-anchors there.
+        app.step_search(&transcript, true);
+        assert_eq!(app.scroll_offset_rows, 101);
+        assert!(app.search.as_ref().is_some_and(|search| search.pinned));
+
+        // Wheel scroll releases the anchor; the view moves with the wheel
+        // (the anchor was clamped to the last screenful at 103-10=93).
+        scroll_by(&mut app, &transcript, 10, -3);
+        assert!(app.search.as_ref().is_some_and(|search| !search.pinned));
+        assert_eq!(first_visible_row(&app, &transcript, 10), 90);
+
+        // n re-engages the anchor, wrapping from the last hit back to the
+        // first ("needle alpha", anchored one row above it).
+        app.step_search(&transcript, true);
+        assert_eq!(app.scroll_offset_rows, 99);
+        assert!(app.search.as_ref().is_some_and(|search| search.pinned));
     }
 }
