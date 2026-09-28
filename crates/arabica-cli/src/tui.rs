@@ -29,12 +29,14 @@ use arabica_session::{DispatchControl, EventVisibility, FanOutObserver, SessionE
 use crossterm::SynchronizedUpdate as _;
 use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame, Terminal};
 use similar::{ChangeTag, TextDiff};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::checkpoint::{self, WriteCheckpoint};
 use crate::context;
@@ -119,21 +121,136 @@ fn paint_row(line: &Line) -> Line<'static> {
     rebuilt
 }
 
-/// Display width of one character: CJK and other wide characters count as
-/// two columns. An approximation good enough for wrapping without a
-/// unicode-width dependency.
-fn char_width(ch: char) -> usize {
-    if ch.is_ascii() { 1 } else { 2 }
+struct EditorLayout {
+    rows: Vec<String>,
+    cursor_row: usize,
+    cursor_column: usize,
 }
 
-fn text_width(text: &str) -> usize {
-    text.chars().map(char_width).sum()
-}
-
-fn editor_cursor_column(input: &str, cursor: usize) -> usize {
+fn layout_editor(input: &str, cursor: usize, width: usize) -> EditorLayout {
+    let width = width.max(1);
     let cursor = cursor.min(input.len());
-    let line_start = input[..cursor].rfind('\n').map_or(0, |index| index + 1);
-    text_width(&input[line_start..cursor])
+    let prompt = if width >= 2 { "❯ " } else { "❯" };
+    let indent = " ".repeat(2.min(width));
+    let mut rows = vec![prompt.to_owned()];
+    let mut row = 0;
+    let mut column = UnicodeWidthStr::width(prompt).min(width);
+    let mut byte_offset = 0;
+    let mut cursor_position = (0, column);
+    for grapheme in input.graphemes(true) {
+        if grapheme == "\n" {
+            if cursor == byte_offset {
+                cursor_position = (row, column);
+            }
+            rows.push(indent.clone());
+            row += 1;
+            column = UnicodeWidthStr::width(indent.as_str());
+            byte_offset += grapheme.len();
+            if cursor == byte_offset {
+                cursor_position = (row, column);
+            }
+            continue;
+        }
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        let row_indent = if row == 0 {
+            UnicodeWidthStr::width(prompt)
+        } else {
+            UnicodeWidthStr::width(indent.as_str())
+        };
+        if column + grapheme_width > width && column > row_indent {
+            rows.push(indent.clone());
+            row += 1;
+            column = UnicodeWidthStr::width(indent.as_str());
+        }
+        if cursor == byte_offset {
+            cursor_position = (row, column);
+        }
+        rows[row].push_str(grapheme);
+        column += grapheme_width;
+        byte_offset += grapheme.len();
+        if cursor == byte_offset {
+            cursor_position = (row, column);
+        }
+    }
+    EditorLayout {
+        rows,
+        cursor_row: cursor_position.0,
+        cursor_column: cursor_position.1,
+    }
+}
+
+fn editor_has_multiple_visual_rows(input: &str, cursor: usize, width: usize) -> bool {
+    layout_editor(input, cursor, width).rows.len() > 1
+}
+
+fn composer_height(viewport_height: usize, editor_rows: usize) -> usize {
+    editor_rows.min((viewport_height / 3).clamp(1, 8)).max(1)
+}
+
+fn visual_row_positions(input: &str, width: usize) -> Vec<(usize, usize, usize)> {
+    let width = width.max(1);
+    let prompt = if width >= 2 { "❯ " } else { "❯" };
+    let indent = UnicodeWidthStr::width("  ").min(width);
+    let mut positions = vec![(0, 0, UnicodeWidthStr::width(prompt).min(width))];
+    let mut row = 0;
+    let mut column = UnicodeWidthStr::width(prompt).min(width);
+    let mut byte_offset = 0;
+    for grapheme in input.graphemes(true) {
+        if grapheme == "\n" {
+            byte_offset += 1;
+            row += 1;
+            column = indent;
+            positions.push((byte_offset, row, column));
+            continue;
+        }
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        let row_indent = if row == 0 {
+            UnicodeWidthStr::width(prompt).min(width)
+        } else {
+            indent
+        };
+        if column + grapheme_width > width && column > row_indent {
+            row += 1;
+            column = indent;
+            if positions
+                .last()
+                .is_some_and(|position| position.0 == byte_offset)
+            {
+                *positions.last_mut().expect("checked above") = (byte_offset, row, column);
+            } else {
+                positions.push((byte_offset, row, column));
+            }
+        }
+        byte_offset += grapheme.len();
+        column += grapheme_width;
+        positions.push((byte_offset, row, column));
+    }
+    positions
+}
+
+fn vertical_cursor_move(
+    input: &str,
+    cursor: usize,
+    up: bool,
+    goal_column: Option<usize>,
+    width: usize,
+) -> Option<(usize, usize)> {
+    let positions = visual_row_positions(input, width);
+    let current = positions
+        .iter()
+        .find(|position| position.0 == cursor.min(input.len()))
+        .copied()?;
+    let column = goal_column.unwrap_or(current.2);
+    let target_row = if up {
+        current.1.checked_sub(1)?
+    } else {
+        current.1 + 1
+    };
+    let target = positions
+        .iter()
+        .filter(|position| position.1 == target_row)
+        .min_by_key(|position| (position.2.abs_diff(column), position.2 > column))?;
+    Some((target.0, column))
 }
 
 /// Hard-wraps `text` at display width `width`, keeping style per source
@@ -147,13 +264,13 @@ fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
         }
         let mut current = String::new();
         let mut current_width = 0;
-        for ch in raw.chars() {
-            let w = char_width(ch);
+        for grapheme in raw.graphemes(true) {
+            let w = UnicodeWidthStr::width(grapheme);
             if current_width + w > width && !current.is_empty() {
                 lines.push(Line::styled(std::mem::take(&mut current), style));
                 current_width = 0;
             }
-            current.push(ch);
+            current.push_str(grapheme);
             current_width += w;
         }
         lines.push(Line::styled(current, style));
@@ -167,8 +284,11 @@ fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
 /// copy act on block indices.
 #[derive(Default)]
 struct Transcript {
+    /// Original, unwrapped rows. Layout-dependent wrapping belongs to the
+    /// renderer so resizing never changes copied or searched source text.
     lines: Vec<Line<'static>>,
     blocks: Vec<(usize, usize)>,
+    copy_texts: Vec<Option<String>>,
 }
 
 impl Transcript {
@@ -176,6 +296,12 @@ impl Transcript {
         let start = self.lines.len();
         self.lines.extend(lines);
         self.blocks.push((start, self.lines.len()));
+        self.copy_texts.push(None);
+    }
+
+    fn push_block_with_copy(&mut self, lines: Vec<Line<'static>>, copy_text: String) {
+        self.push_block(lines);
+        *self.copy_texts.last_mut().expect("block just added") = Some(copy_text);
     }
 
     /// Drops every recorded row and block, for `/resume` switching to a
@@ -183,7 +309,99 @@ impl Transcript {
     fn clear(&mut self) {
         self.lines.clear();
         self.blocks.clear();
+        self.copy_texts.clear();
     }
+}
+
+#[derive(Clone)]
+struct DisplayRow {
+    line: Line<'static>,
+    block_index: usize,
+    source_line: usize,
+    byte_offset: usize,
+}
+
+fn wrap_line_for_display(
+    line: &Line<'_>,
+    width: usize,
+    block_index: usize,
+    source_line: usize,
+) -> Vec<DisplayRow> {
+    let width = width.max(1);
+    let plain: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    if plain == "─" {
+        return vec![DisplayRow {
+            line: Line::styled("─".repeat(width), line.style),
+            block_index,
+            source_line,
+            byte_offset: 0,
+        }];
+    }
+    if plain.is_empty() {
+        return vec![DisplayRow {
+            line: paint_row(line),
+            block_index,
+            source_line,
+            byte_offset: 0,
+        }];
+    }
+
+    let mut rows = Vec::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut row_width = 0;
+    let mut byte_offset = 0;
+    let mut row_start = 0;
+    for span in &line.spans {
+        for grapheme in span.content.graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if row_width > 0 && row_width + grapheme_width > width {
+                let mut rendered = Line::from(std::mem::take(&mut spans));
+                rendered.style = line.style;
+                rows.push(DisplayRow {
+                    line: rendered,
+                    block_index,
+                    source_line,
+                    byte_offset: row_start,
+                });
+                row_width = 0;
+                row_start = byte_offset;
+            }
+            match spans.last_mut() {
+                Some(last) if last.style == span.style => last.content.to_mut().push_str(grapheme),
+                _ => spans.push(Span::styled(grapheme.to_owned(), span.style)),
+            }
+            row_width += grapheme_width;
+            byte_offset += grapheme.len();
+        }
+    }
+    let mut rendered = Line::from(spans);
+    rendered.style = line.style;
+    rows.push(DisplayRow {
+        line: rendered,
+        block_index,
+        source_line,
+        byte_offset: row_start,
+    });
+    rows
+}
+
+fn display_rows(transcript: &Transcript, width: usize) -> Vec<DisplayRow> {
+    let mut rows = Vec::new();
+    for (block_index, (start, end)) in transcript.blocks.iter().enumerate() {
+        for source_line in *start..*end {
+            rows.extend(wrap_line_for_display(
+                &transcript.lines[source_line],
+                width,
+                block_index,
+                source_line,
+            ));
+        }
+    }
+    rows
 }
 
 /// Splits `text` into styled spans following the source line's span
@@ -228,6 +446,7 @@ fn flip_tool_line(transcript: &mut Transcript, block: usize, line: Line<'static>
         return false;
     }
     transcript.lines[start] = line;
+    transcript.copy_texts[block] = None;
     true
 }
 
@@ -265,16 +484,23 @@ fn copy_block_to_clipboard(transcript: &Transcript, block: usize) -> std::io::Re
         Some(span) => *span,
         None => return Ok(0),
     };
-    let text = transcript.lines[start..end]
-        .iter()
-        .map(|line| {
-            line.spans
+    let text = transcript
+        .copy_texts
+        .get(block)
+        .and_then(Option::as_ref)
+        .cloned()
+        .unwrap_or_else(|| {
+            transcript.lines[start..end]
                 .iter()
-                .map(|span| span.content.to_string())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .map(|span| span.content.to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
     // OSC 52; terminals that disabled it simply ignore the sequence.
     let _ = write!(
         std::io::stdout(),
@@ -306,7 +532,7 @@ fn copy_block_to_clipboard(transcript: &Transcript, block: usize) -> std::io::Re
         }
         let _ = child.wait();
     }
-    Ok(end - start)
+    Ok(text.lines().count().max(1))
 }
 
 /// Moves the scroll anchor one block up or down. The highlight itself is
@@ -319,7 +545,8 @@ fn navigate_blocks(transcript: &Transcript, app: &mut App, up: bool) {
     }
     let visible_rows = LAST_PANE_ROWS
         .load(std::sync::atomic::Ordering::Relaxed)
-        .max(3);
+        .max(1);
+    let was_pinned = app.scroll_pinned;
     let current = app.highlighted.unwrap_or(count - 1);
     let target = if up {
         current.saturating_sub(1)
@@ -329,11 +556,23 @@ fn navigate_blocks(transcript: &Transcript, app: &mut App, up: bool) {
     app.highlighted = Some(target);
     // Scroll so the target block's first row sits one quarter down the
     // pane -- the same rule search jumps use, expressed in one place.
-    let (start, _) = transcript.blocks[target];
-    app.scroll_offset_rows = start.saturating_sub(visible_rows / 4);
+    let rows = display_rows(
+        transcript,
+        LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1),
+    );
+    let target_row = rows
+        .iter()
+        .position(|row| row.block_index == target)
+        .unwrap_or(0);
+    app.set_scroll_anchor(&rows, target_row.saturating_sub(visible_rows / 4));
     // Navigating to the last block when it already fills the pane means
     // "follow the bottom" again, the way every chat UI behaves.
-    app.scroll_pinned = target == count - 1 && (start + visible_rows) >= transcript.lines.len();
+    app.scroll_pinned = target == count - 1 && (target_row + visible_rows) >= rows.len();
+    if was_pinned && !app.scroll_pinned {
+        app.new_output_baseline = Some(transcript.blocks.len());
+    } else if app.scroll_pinned {
+        app.new_output_baseline = None;
+    }
 }
 
 /// The index of the transcript row shown at the top of the history pane.
@@ -341,12 +580,28 @@ fn navigate_blocks(transcript: &Transcript, app: &mut App, up: bool) {
 /// block navigation all set `scroll_offset_rows`, which only ever needs
 /// clamping here. This is the single source of truth for what "scrolled
 /// to X" means -- the click-to-block mapper uses it too.
-fn first_visible_row(app: &App, transcript: &Transcript, visible_rows: usize) -> usize {
-    let max_scroll = transcript.lines.len().saturating_sub(visible_rows);
+fn first_visible_row(app: &App, rows: &[DisplayRow], visible_rows: usize) -> usize {
+    let max_scroll = rows.len().saturating_sub(visible_rows);
     if app.scroll_pinned {
         max_scroll
     } else {
-        app.scroll_offset_rows.min(max_scroll)
+        let anchored = app.scroll_anchor.and_then(|anchor| {
+            rows.iter().position(|row| {
+                row.block_index == anchor.block_index
+                    && row.source_line == anchor.source_line
+                    && row.byte_offset <= anchor.byte_offset
+                    && anchor.byte_offset
+                        < row.byte_offset
+                            + row
+                                .line
+                                .spans
+                                .iter()
+                                .map(|span| span.content.len())
+                                .sum::<usize>()
+                                .max(1)
+            })
+        });
+        anchored.unwrap_or(app.scroll_offset_rows).min(max_scroll)
     }
 }
 
@@ -354,20 +609,30 @@ fn first_visible_row(app: &App, transcript: &Transcript, visible_rows: usize) ->
 /// scrolling releases any search anchor and stops bottom-following; reaching
 /// the bottom re-engages follow so new output resumes auto-scrolling.
 fn scroll_by(app: &mut App, transcript: &Transcript, visible_rows: usize, delta: isize) {
-    let max_scroll = transcript.lines.len().saturating_sub(visible_rows) as isize;
-    let current = first_visible_row(app, transcript, visible_rows) as isize;
+    let rows = display_rows(
+        transcript,
+        LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1),
+    );
+    let max_scroll = rows.len().saturating_sub(visible_rows) as isize;
+    let current = first_visible_row(app, &rows, visible_rows) as isize;
     let next = (current + delta).clamp(0, max_scroll);
-    app.scroll_offset_rows = next as usize;
+    if app.scroll_pinned && next < max_scroll {
+        app.new_output_baseline = Some(transcript.blocks.len());
+    }
+    app.set_scroll_anchor(&rows, next as usize);
     app.scroll_pinned = next >= max_scroll;
+    if app.scroll_pinned {
+        app.new_output_baseline = None;
+    }
     app.release_search_anchor();
 }
 
 fn print_block(transcript: &mut Transcript, text: &str, style: Style) {
-    let width = LAST_WIDTH
-        .load(std::sync::atomic::Ordering::Relaxed)
-        .max(40);
-    let lines = wrap_styled(text, width, style);
-    transcript.push_block(lines);
+    let lines = text
+        .split('\n')
+        .map(|line| Line::styled(line.to_owned(), style))
+        .collect();
+    transcript.push_block_with_copy(lines, text.to_owned());
 }
 
 /// One assistant text block: no prefix, just the words, terminal width.
@@ -399,41 +664,28 @@ fn print_error(transcript: &mut Transcript, text: &str) {
     print_block(transcript, text, theme::error())
 }
 
-/// Terminal width as of the last draw; wrapping for buffered output uses
-/// this. Defaults to 80 before the first frame.
+/// Terminal width as of the last draw; input movement and history anchors use
+/// it between frames. Defaults to 80 before the first frame.
 static LAST_WIDTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(80);
 
-/// History-pane height as of the last draw, for scroll anchoring between
-/// draws (block navigation, wheel scrolling) where no frame is in hand.
+/// History-pane height as of the last draw, for scrolling between frames.
 static LAST_PANE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(18);
 
 /// A user's message, prefixed so it stands out in the scrollback.
 fn print_user(transcript: &mut Transcript, text: &str) {
     // Claude-style divider above each user message.
-    let width = LAST_WIDTH
-        .load(std::sync::atomic::Ordering::Relaxed)
-        .max(40);
-    transcript.push_block(vec![Line::styled(
-        "\u{2500}".repeat(width.saturating_sub(2)),
-        theme::muted(),
-    )]);
-    let width = width.saturating_sub(2);
+    transcript.push_block(vec![Line::styled("\u{2500}".to_owned(), theme::muted())]);
     let mut lines = Vec::new();
-    for (index, raw) in wrap_styled(text, width.max(1), Style::default())
-        .into_iter()
-        .enumerate()
-    {
+    for (index, raw) in text.split('\n').enumerate() {
         let prefix = if index == 0 { "> " } else { "  " };
-        let mut spans = vec![Span::styled(prefix.to_owned(), theme::user())];
-        spans.extend(
-            raw.spans
-                .into_iter()
-                .map(|span| Span::styled(span.content.into_owned(), Style::default())),
-        );
+        let spans = vec![
+            Span::styled(prefix.to_owned(), theme::user()),
+            Span::raw(raw.to_owned()),
+        ];
         lines.push(Line::from(spans));
     }
     lines.push(Line::raw(String::new()));
-    transcript.push_block(lines);
+    transcript.push_block_with_copy(lines, text.to_owned());
 }
 
 // ---------------------------------------------------------------------------
@@ -641,6 +893,13 @@ struct SearchHit {
     end_byte: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ScrollAnchor {
+    block_index: usize,
+    source_line: usize,
+    byte_offset: usize,
+}
+
 /// Case-insensitive substring matches of `query` within a single line's
 /// plain text (byte offsets, safe on char boundaries for ASCII queries and
 /// computed on char boundaries for any query).
@@ -684,6 +943,37 @@ fn search_hits(transcript: &Transcript, query: &str) -> Vec<SearchHit> {
         }
     }
     hits
+}
+
+fn display_hit_ranges(
+    transcript: &Transcript,
+    row: &DisplayRow,
+    query: &str,
+) -> Vec<(usize, usize)> {
+    let source = &transcript.lines[row.source_line];
+    let source_text: String = source
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    let display_text: String = row
+        .line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    let row_end = row.byte_offset + display_text.len();
+    line_matches(&source_text, query)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let visible_start = start.max(row.byte_offset);
+            let visible_end = end.min(row_end);
+            (visible_start < visible_end).then_some((
+                visible_start - row.byte_offset,
+                visible_end - row.byte_offset,
+            ))
+        })
+        .collect()
 }
 
 const COMMANDS: &[&str] = &[
@@ -857,6 +1147,9 @@ struct App {
     /// Manual scrolling always moves this; `scroll_pinned` short-circuits
     /// it back to the bottom when new output follows.
     scroll_offset_rows: usize,
+    scroll_anchor: Option<ScrollAnchor>,
+    /// Transcript block count when the user began reviewing history.
+    new_output_baseline: Option<usize>,
     /// Set while a permission decision is pending: the tool label shown in
     /// the viewport chooser.
     permission_prompt: Option<String>,
@@ -897,6 +1190,8 @@ impl Default for App {
             scroll_pinned: true,
             search: None,
             scroll_offset_rows: 0,
+            scroll_anchor: None,
+            new_output_baseline: None,
             permission_prompt: None,
             running_tool: None,
         }
@@ -916,6 +1211,9 @@ impl App {
             current: 0,
             pinned: true,
         });
+        if self.scroll_pinned {
+            self.new_output_baseline = Some(transcript.blocks.len());
+        }
         self.jump_search_to_visible(transcript);
     }
 
@@ -955,9 +1253,36 @@ impl App {
             return;
         };
         // Anchor the hit near the top of the pane (one row of context
-        // above it); the renderer's clamp handles the last screenful.
-        self.scroll_offset_rows = hit.line.saturating_sub(1);
+        // above it), retaining the source text location across reflow.
+        let width = LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1);
+        let rows = display_rows(transcript, width);
+        let hit_row = rows
+            .iter()
+            .position(|row| {
+                if row.source_line != hit.line {
+                    return false;
+                }
+                let row_text: String = row
+                    .line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                hit.start_byte >= row.byte_offset
+                    && hit.start_byte < row.byte_offset + row_text.len().max(1)
+            })
+            .unwrap_or(0);
+        self.set_scroll_anchor(&rows, hit_row.saturating_sub(1));
         self.scroll_pinned = false;
+    }
+
+    fn set_scroll_anchor(&mut self, rows: &[DisplayRow], row_index: usize) {
+        self.scroll_offset_rows = row_index;
+        self.scroll_anchor = rows.get(row_index).map(|row| ScrollAnchor {
+            block_index: row.block_index,
+            source_line: row.source_line,
+            byte_offset: row.byte_offset,
+        });
     }
 
     fn new(session: &InteractiveSession) -> Self {
@@ -978,9 +1303,9 @@ impl App {
         if self.cursor > 0 {
             let cursor = self.cursor.min(self.input.len());
             let remove = self.input[..cursor]
-                .chars()
+                .grapheme_indices(true)
                 .next_back()
-                .map_or(0, char::len_utf8);
+                .map_or(0, |(start, _)| cursor - start);
             self.input.replace_range(cursor - remove..cursor, "");
             self.cursor -= remove;
             self.refresh_completion();
@@ -991,9 +1316,9 @@ impl App {
         let cursor = self.cursor.min(self.input.len());
         if cursor < self.input.len() {
             let remove = self.input[cursor..]
-                .chars()
+                .graphemes(true)
                 .next()
-                .map_or(0, char::len_utf8);
+                .map_or(0, str::len);
             self.input.replace_range(cursor..cursor + remove, "");
             self.refresh_completion();
         }
@@ -1001,52 +1326,17 @@ impl App {
 
     fn move_vertical(&mut self, up: bool) {
         let cursor = self.cursor.min(self.input.len());
-        let line_start = self.input[..cursor]
-            .rfind('\n')
-            .map_or(0, |index| index + 1);
-        let line_end = line_start
-            + self.input[line_start..]
-                .find('\n')
-                .unwrap_or(self.input.len() - line_start);
-        let column = *self
-            .vertical_column
-            .get_or_insert_with(|| text_width(&self.input[line_start..cursor.min(line_end)]));
-        let target_start = if up {
-            if line_start == 0 {
-                None
-            } else {
-                Some(
-                    self.input[..line_start - 1]
-                        .rfind('\n')
-                        .map_or(0, |previous| previous + 1),
-                )
-            }
-        } else if line_end < self.input.len() {
-            Some(line_end + 1)
-        } else {
-            None
-        };
-        let Some(target_start) = target_start else {
+        let Some((target_cursor, column)) = vertical_cursor_move(
+            &self.input,
+            cursor,
+            up,
+            self.vertical_column,
+            LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(4),
+        ) else {
             return;
         };
-        let target_end = target_start
-            + self.input[target_start..]
-                .find('\n')
-                .unwrap_or(self.input.len() - target_start);
-        let target_line = &self.input[target_start..target_end];
-        let mut target_column = 0;
-        let offset = target_line
-            .char_indices()
-            .find_map(|(offset, ch)| {
-                if target_column + char_width(ch) > column {
-                    Some(offset)
-                } else {
-                    target_column += char_width(ch);
-                    None
-                }
-            })
-            .unwrap_or(target_line.len());
-        self.cursor = target_start + offset;
+        self.cursor = target_cursor;
+        self.vertical_column = Some(column);
         self.refresh_completion();
     }
 
@@ -1276,17 +1566,76 @@ impl Drop for InlineGuard {
     }
 }
 
+struct FullscreenLayout {
+    sections: Vec<Rect>,
+    editor: EditorLayout,
+    divider_index: Option<usize>,
+    tail_index: Option<usize>,
+    input_index: usize,
+    hints_index: Option<usize>,
+    status_index: Option<usize>,
+}
+
+fn fullscreen_layout(area: Rect, app: &App) -> FullscreenLayout {
+    let editor = layout_editor(&app.input, app.cursor, area.width as usize);
+    let input_height = composer_height(area.height as usize, editor.rows.len());
+    let mut constraints = vec![Constraint::Min(1)];
+    let mut next = 1;
+    let divider_index = if area.height >= 3 {
+        let index = next;
+        constraints.push(Constraint::Length(1));
+        next += 1;
+        Some(index)
+    } else {
+        None
+    };
+    let tail_index = if area.height >= 4 {
+        let index = next;
+        constraints.push(Constraint::Length(1));
+        next += 1;
+        Some(index)
+    } else {
+        None
+    };
+    let input_index = next;
+    constraints.push(Constraint::Length(input_height as u16));
+    next += 1;
+    let hints_index = if area.height as usize > next {
+        let index = next;
+        constraints.push(Constraint::Length(1));
+        next += 1;
+        Some(index)
+    } else {
+        None
+    };
+    let status_index = if area.height as usize > next {
+        let index = next;
+        constraints.push(Constraint::Length(1));
+        Some(index)
+    } else {
+        None
+    };
+    FullscreenLayout {
+        sections: Layout::vertical(constraints).split(area).to_vec(),
+        editor,
+        divider_index,
+        tail_index,
+        input_index,
+        hints_index,
+        status_index,
+    }
+}
+
 /// Draws the bottom viewport: streaming tail, completion hint, input row,
 /// status line.
 fn draw(terminal: &mut DefaultTerminal, app: &App, transcript: &Transcript) -> io::Result<()> {
     let size = terminal.size().ok();
-    LAST_WIDTH.store(
-        size.map(|area| area.width as usize).unwrap_or(80),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    let area = size
+        .map(|size| Rect::new(0, 0, size.width, size.height))
+        .unwrap_or(Rect::new(0, 0, 80, 24));
+    LAST_WIDTH.store(area.width as usize, std::sync::atomic::Ordering::Relaxed);
     LAST_PANE_ROWS.store(
-        size.map(|area| area.height.saturating_sub(6) as usize)
-            .unwrap_or(18),
+        fullscreen_layout(area, app).sections[0].height as usize,
         std::sync::atomic::Ordering::Relaxed,
     );
     // Fence the frame in a synchronized-update pair (CSI ?2026): the
@@ -1305,49 +1654,35 @@ fn draw(terminal: &mut DefaultTerminal, app: &App, transcript: &Transcript) -> i
 /// bottom. The highlight (reverse video) is applied here, at render time.
 fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     let area = frame.area();
-    let sections = Layout::vertical([
-        Constraint::Min(3),    // history pane
-        Constraint::Length(1), // divider
-        Constraint::Length(1), // streaming tail / completion / permission prompt
-        Constraint::Length(1), // input
-        Constraint::Length(1), // hints
-        Constraint::Length(1), // status
-    ])
-    .split(area);
+    let layout = fullscreen_layout(area, app);
+    let sections = &layout.sections;
+    let editor = &layout.editor;
+    let divider_index = layout.divider_index;
+    let tail_index = layout.tail_index;
+    let input_index = layout.input_index;
+    let hints_index = layout.hints_index;
+    let status_index = layout.status_index;
 
     // ---- history pane ----
     let visible_rows = sections[0].height as usize;
-    // Re-wrap nothing: rows were wrapped at commit time with LAST_WIDTH.
-    // Just flatten to (line, highlighted?) pairs.
+    // Reflow source rows for the current width. Transcript storage remains
+    // independent of terminal size.
     let highlight = app.highlighted;
-    let mut rows: Vec<(&Line, bool)> = Vec::new();
-    for (index, (start, end)) in transcript.blocks.iter().enumerate() {
-        let highlighted = highlight.is_some_and(|h| h == index);
-        for line in &transcript.lines[*start..*end] {
-            rows.push((line, highlighted));
-        }
-    }
+    let rows = display_rows(transcript, sections[0].width as usize);
     // Auto-follow the bottom unless the user scrolled away; every anchor
     // (search jump, block navigation, click) resolves through the same
     // first_visible_row so one coordinate system governs the pane.
     let total = rows.len();
-    let offset = first_visible_row(app, transcript, visible_rows);
+    let offset = first_visible_row(app, &rows, visible_rows);
     let shown = &rows[offset.min(total)..(offset + visible_rows).min(total)];
     let search = app.search.as_ref();
     let lines: Vec<Line> = shown
         .iter()
-        .map(|(line, highlighted)| {
+        .map(|display_row| {
+            let line = &display_row.line;
+            let highlighted = highlight.is_some_and(|selected| selected == display_row.block_index);
             let hit_ranges: Vec<(usize, usize)> = search
-                .map(|search| {
-                    line_matches(
-                        &line
-                            .spans
-                            .iter()
-                            .map(|s| s.content.to_string())
-                            .collect::<String>(),
-                        &search.query,
-                    )
-                })
+                .map(|search| display_hit_ranges(transcript, display_row, &search.query))
                 .unwrap_or_default();
             let hit_style = Style::default().fg(Color::Black).bg(Color::Yellow);
             if !hit_ranges.is_empty() {
@@ -1380,7 +1715,7 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
             }
             let _ = hit_style;
             let mut row = paint_row(line);
-            if *highlighted {
+            if highlighted {
                 row.style = row.style.add_modifier(Modifier::REVERSED);
             }
             row
@@ -1389,14 +1724,18 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     frame.render_widget(Paragraph::new(lines), sections[0]);
 
     // ---- divider ----
-    let divider = "\u{2500}".repeat((sections[1].width as usize).saturating_sub(2).max(1));
-    frame.render_widget(
-        Paragraph::new(Line::styled(divider, theme::muted())),
-        sections[1],
-    );
+    if let Some(divider_index) = divider_index {
+        let divider = "\u{2500}".repeat(sections[divider_index].width as usize);
+        frame.render_widget(
+            Paragraph::new(Line::styled(divider, theme::muted())),
+            sections[divider_index],
+        );
+    }
 
     // ---- row: streaming tail / completion / permission prompt ----
-    if let Some(prompt) = &app.permission_prompt {
+    if let Some(tail_index) = tail_index
+        && let Some(prompt) = &app.permission_prompt
+    {
         let mut options: Vec<Span> =
             vec![Span::styled(prompt.clone(), theme::tool()), Span::raw("  ")];
         for (index, label) in PERMISSION_OPTIONS.iter().enumerate() {
@@ -1412,8 +1751,10 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
             };
             options.push(Span::styled(label, style));
         }
-        frame.render_widget(Paragraph::new(Line::from(options)), sections[2]);
-    } else if let Some(completion) = &app.completion {
+        frame.render_widget(Paragraph::new(Line::from(options)), sections[tail_index]);
+    } else if let Some(tail_index) = tail_index
+        && let Some(completion) = &app.completion
+    {
         let candidates = completion
             .candidates
             .iter()
@@ -1432,12 +1773,15 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
                 Span::styled(label, style)
             })
             .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(Line::from(candidates)), sections[2]);
-    } else if app.busy && !app.live.is_empty() {
+        frame.render_widget(Paragraph::new(Line::from(candidates)), sections[tail_index]);
+    } else if let Some(tail_index) = tail_index
+        && app.busy
+        && !app.live.is_empty()
+    {
         // Assistant text streams here; thinking streams inside the
         // history pane below.
         let tail: String = {
-            let width = sections[2].width as usize;
+            let width = sections[tail_index].width as usize;
             app.live
                 .chars()
                 .rev()
@@ -1449,7 +1793,7 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
         };
         frame.render_widget(
             Paragraph::new(Line::styled(tail, theme::base())),
-            sections[2],
+            sections[tail_index],
         );
     }
 
@@ -1489,44 +1833,79 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     }
 
     // ---- input row ----
-    let cursor = app.cursor.min(app.input.len());
-    let line_start = app.input[..cursor].rfind('\n').map_or(0, |i| i + 1);
-    let last_line = app.input[line_start..]
-        .split('\n')
-        .next()
-        .unwrap_or("")
-        .to_owned();
-    let before_width = editor_cursor_column(&app.input, cursor);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("\u{276f} ".to_owned(), theme::user()),
-            Span::raw(last_line),
-        ])),
-        sections[3],
-    );
-    let cursor_x = 2 + before_width as u16;
-    let cursor_x = cursor_x.min(area.width.saturating_sub(1));
-    if !app.busy && app.permission_prompt.is_none() {
-        frame.set_cursor_position((cursor_x, sections[3].y));
+    let input_area = sections[input_index];
+    let editor_start = if input_area.height == 0 {
+        0
+    } else {
+        editor
+            .cursor_row
+            .saturating_add(1)
+            .saturating_sub(input_area.height as usize)
+    };
+    let editor_end = (editor_start + input_area.height as usize).min(editor.rows.len());
+    let editor_lines = editor.rows[editor_start..editor_end]
+        .iter()
+        .map(|row| {
+            if let Some(content) = row.strip_prefix("❯ ") {
+                Line::from(vec![
+                    Span::styled("❯ ".to_owned(), theme::user()),
+                    Span::raw(content.to_owned()),
+                ])
+            } else if let Some(content) = row.strip_prefix('❯') {
+                Line::from(vec![
+                    Span::styled("❯".to_owned(), theme::user()),
+                    Span::raw(content.to_owned()),
+                ])
+            } else {
+                let content = row
+                    .strip_prefix("  ")
+                    .or_else(|| row.strip_prefix(' '))
+                    .unwrap_or(row);
+                Line::from(vec![
+                    Span::styled(row[..row.len() - content.len()].to_owned(), theme::user()),
+                    Span::raw(content.to_owned()),
+                ])
+            }
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(editor_lines), input_area);
+    let cursor_x = (input_area.x as usize + editor.cursor_column)
+        .min(area.width.saturating_sub(1) as usize) as u16;
+    if input_area.height > 0 && !app.busy && app.permission_prompt.is_none() {
+        let cursor_y = input_area.y + (editor.cursor_row - editor_start) as u16;
+        frame.set_cursor_position((cursor_x, cursor_y));
     }
 
     // ---- hints row ----
-    let hints = if sections[4].width < 100 {
-        " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · /help"
-    } else {
-        " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · /help"
-    };
-    frame.render_widget(
-        Paragraph::new(Line::styled(hints, theme::muted())),
-        sections[4],
-    );
+    if let Some(hints_index) = hints_index {
+        let hints = if sections[hints_index].width < 100 {
+            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · /help"
+        } else {
+            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · /help"
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(hints, theme::muted())),
+            sections[hints_index],
+        );
+    }
 
     // ---- status row ----
-    let status = format!(" {}", app.status);
-    frame.render_widget(
-        Paragraph::new(Line::styled(status, theme::muted())),
-        sections[5],
-    );
+    if let Some(status_index) = status_index {
+        let new_blocks = app
+            .new_output_baseline
+            .map(|baseline| transcript.blocks.len().saturating_sub(baseline))
+            .unwrap_or(0);
+        let new_output = if !app.scroll_pinned && new_blocks > 0 {
+            format!(" · ↓ {new_blocks} new")
+        } else {
+            String::new()
+        };
+        let status = format!(" {}{new_output}", app.status);
+        frame.render_widget(
+            Paragraph::new(Line::styled(status, theme::muted())),
+            sections[status_index],
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1831,15 +2210,43 @@ async fn run_turn(
                         }
                     }
                 } else if let InputEvent::Key(key) = key {
-                    if key.kind == KeyEventKind::Press && (key.code == KeyCode::Esc || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)) {
+                    if key.kind == KeyEventKind::Press
+                        && app.search.is_some()
+                        && key.code == KeyCode::F(3)
+                    {
+                        app.step_search(transcript, !key.modifiers.contains(KeyModifiers::SHIFT));
+                    } else if key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::End
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        app.scroll_pinned = true;
+                        app.scroll_anchor = None;
+                        app.new_output_baseline = None;
+                        app.highlighted = None;
+                    } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
+                        if !dismiss_temporary_state(app) {
+                            cancellation.cancel();
+                            app.status = "Cancelling".to_owned();
+                        }
+                    } else if key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('c')
+                        && key.modifiers == KeyModifiers::CONTROL
+                    {
                         cancellation.cancel();
                         app.status = "Cancelling".to_owned();
                     } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL {
                         app.verbose = !app.verbose;
                         app.status = if app.verbose { "Verbose".to_owned() } else { "Working".to_owned() };
                     } else if key.kind == KeyEventKind::Press && app.completion.is_none()
-                        && matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown)
-                        && app.input.is_empty()
+                        && (matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+                            || (matches!(key.code, KeyCode::Up | KeyCode::Down)
+                                && !editor_has_multiple_visual_rows(
+                                    &app.input,
+                                    app.cursor,
+                                    LAST_WIDTH
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                        .max(1),
+                                )))
                     {
                         // While a run is in flight the editor has nothing to
                         // do with these keys: they scroll the history pane
@@ -1850,11 +2257,12 @@ async fn run_turn(
                             KeyCode::PageUp | KeyCode::PageDown => {
                                 let pane_rows = LAST_PANE_ROWS
                                     .load(std::sync::atomic::Ordering::Relaxed)
-                                    .max(3);
+                                    .max(1);
+                                let page_delta = (pane_rows as isize - 1).max(1);
                                 let delta = if key.code == KeyCode::PageUp {
-                                    -(pane_rows as isize - 1)
+                                    -page_delta
                                 } else {
-                                    pane_rows as isize - 1
+                                    page_delta
                                 };
                                 scroll_by(app, transcript, pane_rows, delta);
                             }
@@ -1862,7 +2270,14 @@ async fn run_turn(
                         }
                     } else {
                         match handle_editor(app, InputEvent::Key(key)) {
-                            EditorAction::Submit(text) => { app.queued.push_back(text); app.status = "Queued".to_owned(); }
+                            EditorAction::Submit(text) => {
+                                app.queued.push_back(text);
+                                app.scroll_pinned = true;
+                                app.scroll_anchor = None;
+                                app.new_output_baseline = None;
+                                app.highlighted = None;
+                                app.status = "Queued".to_owned();
+                            }
                             EditorAction::None => {}
                             EditorAction::Exit => {}
                         }
@@ -1874,7 +2289,7 @@ async fn run_turn(
                     if let MouseEventKind::ScrollUp | MouseEventKind::ScrollDown = mouse.kind {
                         let pane_rows = LAST_PANE_ROWS
                             .load(std::sync::atomic::Ordering::Relaxed)
-                            .max(3);
+                            .max(1);
                         let delta = if mouse.kind == MouseEventKind::ScrollUp { -3 } else { 3 };
                         scroll_by(app, transcript, pane_rows, delta);
                     }
@@ -2080,14 +2495,24 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
             }
             KeyEvent {
                 code: KeyCode::Up, ..
-            } if app.input.contains('\n') => {
+            } if editor_has_multiple_visual_rows(
+                &app.input,
+                app.cursor,
+                LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1),
+            ) =>
+            {
                 app.move_vertical(true);
                 EditorAction::None
             }
             KeyEvent {
                 code: KeyCode::Down,
                 ..
-            } if app.input.contains('\n') => {
+            } if editor_has_multiple_visual_rows(
+                &app.input,
+                app.cursor,
+                LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1),
+            ) =>
+            {
                 app.move_vertical(false);
                 EditorAction::None
             }
@@ -2156,9 +2581,9 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 if app.cursor > 0 {
                     let cursor = app.cursor.min(app.input.len());
                     app.cursor -= app.input[..cursor]
-                        .chars()
+                        .grapheme_indices(true)
                         .next_back()
-                        .map_or(0, char::len_utf8);
+                        .map_or(0, |(start, _)| cursor - start);
                 }
                 app.refresh_completion();
                 EditorAction::None
@@ -2168,7 +2593,11 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 ..
             } => {
                 if app.cursor < app.input.len() {
-                    app.cursor += app.input[app.cursor..].chars().next().unwrap().len_utf8();
+                    app.cursor += app.input[app.cursor..]
+                        .graphemes(true)
+                        .next()
+                        .unwrap()
+                        .len();
                 }
                 app.refresh_completion();
                 EditorAction::None
@@ -2549,7 +2978,7 @@ async fn run_inner(
                 let mut dirty = false;
                 let pane_rows = LAST_PANE_ROWS
                     .load(std::sync::atomic::Ordering::Relaxed)
-                    .max(3);
+                    .max(1);
                 match kind {
                     MouseEventKind::ScrollUp => {
                         scroll_by(&mut app, &transcript, pane_rows, -3);
@@ -2562,15 +2991,20 @@ async fn run_inner(
                     MouseEventKind::Down(_button) => {
                         // Click a history row: highlight its block. Clicks
                         // elsewhere (e.g. the editor) just restore focus.
-                        let total = transcript.lines.len();
+                        let rows = display_rows(
+                            &transcript,
+                            LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1),
+                        );
+                        let total = rows.len();
                         if (mouse.row as usize) < pane_rows && total > 0 {
                             let first_visible =
-                                first_visible_row(&app, &transcript, pane_rows.min(total));
+                                first_visible_row(&app, &rows, pane_rows.min(total));
                             let clicked_line =
                                 (first_visible + mouse.row as usize).min(total.saturating_sub(1));
-                            app.highlighted = transcript.blocks.iter().position(|(start, end)| {
-                                clicked_line >= *start && clicked_line < *end
-                            });
+                            app.highlighted = Some(rows[clicked_line].block_index);
+                            if app.scroll_pinned {
+                                app.new_output_baseline = Some(transcript.blocks.len());
+                            }
                             app.scroll_pinned = false;
                             dirty = true;
                         }
@@ -2587,6 +3021,14 @@ async fn run_inner(
                 && let InputEvent::Key(key) = &key
                 && key.kind == KeyEventKind::Press
             {
+                if key.code == KeyCode::End && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.scroll_pinned = true;
+                    app.scroll_anchor = None;
+                    app.highlighted = None;
+                    app.new_output_baseline = None;
+                    draw(&mut terminal, &app, &transcript)?;
+                    continue;
+                }
                 // Search navigation has dedicated keys so every ordinary
                 // character remains available to the draft editor.
                 if app.search.is_some() && key.code == KeyCode::F(3) {
@@ -2605,11 +3047,12 @@ async fn run_inner(
                 {
                     let pane_rows = LAST_PANE_ROWS
                         .load(std::sync::atomic::Ordering::Relaxed)
-                        .max(3);
+                        .max(1);
+                    let page_delta = (pane_rows as isize - 1).max(1);
                     let delta = if key.code == KeyCode::PageUp {
-                        -(pane_rows as isize - 1)
+                        -page_delta
                     } else {
-                        pane_rows as isize - 1
+                        page_delta
                     };
                     scroll_by(&mut app, &transcript, pane_rows, delta);
                     draw(&mut terminal, &app, &transcript)?;
@@ -2617,7 +3060,11 @@ async fn run_inner(
                 }
                 if matches!(key.code, KeyCode::Up | KeyCode::Down)
                     && app.completion.is_none()
-                    && (app.input.is_empty() || !app.input.contains('\n'))
+                    && !editor_has_multiple_visual_rows(
+                        &app.input,
+                        app.cursor,
+                        LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed).max(1),
+                    )
                 {
                     // A multiline draft owns Up/Down for cursor movement;
                     // otherwise they navigate transcript blocks.
@@ -2698,6 +3145,10 @@ async fn run_inner(
                     break;
                 }
             } else if !text.trim().is_empty() {
+                app.scroll_pinned = true;
+                app.scroll_anchor = None;
+                app.new_output_baseline = None;
+                app.highlighted = None;
                 run_turn(
                     &mut session,
                     &mut app,
@@ -2832,8 +3283,8 @@ mod tests {
 
     #[test]
     fn cursor_column_uses_only_text_before_the_cursor_on_its_line() {
-        assert_eq!(editor_cursor_column("hello world", 7), 7);
-        assert_eq!(editor_cursor_column("first\nsecond", 9), 3);
+        assert_eq!(layout_editor("hello world", 7, 40).cursor_column, 9);
+        assert_eq!(layout_editor("first\nsecond", 9, 40).cursor_column, 5);
     }
 
     #[test]
@@ -3122,6 +3573,138 @@ mod tests {
     }
 
     #[test]
+    fn unicode_wrap_keeps_combining_and_emoji_graphemes_intact() {
+        let text = "A界e\u{301}👩\u{200d}💻B";
+        let lines = wrap_styled(text, 4, Style::default());
+        assert!(lines.iter().all(|line| {
+            let plain: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            UnicodeWidthStr::width(plain.as_str()) <= 4
+        }));
+        let rendered: String = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        assert_eq!(rendered, text);
+        assert!(lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("👩\u{200d}💻"))
+        }));
+    }
+
+    #[test]
+    fn editor_expands_and_tracks_cursor_through_wrapped_unicode_text() {
+        let input = "a界bc\ne\u{301}👩\u{200d}💻";
+        let layout = layout_editor(input, input.len(), 6);
+        assert_eq!(layout.rows.len(), 3);
+        assert_eq!(layout.cursor_row, 2);
+        assert_eq!(layout.cursor_column, 5);
+    }
+
+    #[test]
+    fn composer_grows_to_eight_rows_or_one_third_of_the_viewport() {
+        assert_eq!(composer_height(24, 20), 8);
+        assert_eq!(composer_height(9, 20), 3);
+        assert_eq!(composer_height(2, 20), 1);
+        assert_eq!(composer_height(24, 2), 2);
+    }
+
+    #[test]
+    fn fullscreen_render_handles_tiny_and_normal_terminal_sizes() {
+        let mut transcript = Transcript::default();
+        print_text(
+            &mut transcript,
+            "a long history line that must reflow as the terminal changes width",
+        );
+        let app = App {
+            input: "a long draft that wraps over several lines\nwith another line".to_owned(),
+            cursor: 5,
+            ..Default::default()
+        };
+        for (width, height) in [(1, 1), (8, 2), (12, 4), (80, 24)] {
+            let backend = ratatui::backend::TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_fullscreen(frame, &app, &transcript))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn editor_vertical_motion_follows_wrapped_rows_and_keeps_goal_column() {
+        let input = "abcdefghi\nx\n123456789";
+        let (cursor, column) = vertical_cursor_move(input, 3, false, None, 8).unwrap();
+        assert_eq!((cursor, column), (9, 5));
+        let (cursor, column) = vertical_cursor_move(input, cursor, false, Some(column), 8).unwrap();
+        assert_eq!((cursor, column), (11, 5));
+        let (cursor, column) = vertical_cursor_move(input, cursor, false, Some(column), 8).unwrap();
+        assert_eq!((cursor, column), (15, 5));
+    }
+
+    #[test]
+    fn editor_moves_and_deletes_by_grapheme_cluster() {
+        let mut app = App::default();
+        app.insert("e\u{301}👩\u{200d}💻");
+        handle_editor(
+            &mut app,
+            InputEvent::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+        );
+        assert_eq!(&app.input[app.cursor..], "👩\u{200d}💻");
+        app.delete();
+        assert_eq!(app.input, "e\u{301}");
+        app.backspace();
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn resize_reflows_history_without_losing_the_reading_anchor() {
+        let mut transcript = Transcript::default();
+        transcript.push_block(vec![Line::raw("abcdefghijklmnopqrstuvwxyz")]);
+        let narrow = display_rows(&transcript, 10);
+        let wide = display_rows(&transcript, 20);
+        assert_eq!(narrow.len(), 3);
+        assert_eq!(wide.len(), 2);
+        let mut app = App::default();
+        app.set_scroll_anchor(&narrow, 2);
+        app.scroll_pinned = false;
+        let visible = first_visible_row(&app, &wide, 1);
+        assert_eq!(wide[visible].byte_offset, 20);
+    }
+
+    #[test]
+    fn search_highlight_continues_across_reflowed_rows() {
+        let mut transcript = Transcript::default();
+        transcript.push_block(vec![Line::raw("abcdefgh")]);
+        let rows = display_rows(&transcript, 5);
+        assert_eq!(
+            display_hit_ranges(&transcript, &rows[0], "def"),
+            vec![(3, 5)]
+        );
+        assert_eq!(
+            display_hit_ranges(&transcript, &rows[1], "def"),
+            vec![(0, 1)]
+        );
+    }
+
+    #[test]
+    fn user_message_copy_text_keeps_source_newlines_without_display_prefixes() {
+        let mut transcript = Transcript::default();
+        print_user(&mut transcript, "first\nsecond");
+        assert_eq!(transcript.copy_texts[1].as_deref(), Some("first\nsecond"));
+        assert_eq!(transcript.lines[1].spans[0].content, "> ");
+        assert_eq!(transcript.lines[2].spans[0].content, "  ");
+    }
+
+    #[test]
     fn paint_row_keeps_the_line_style_and_highlight_extends_it() {
         // Transcript rows carry their theme color as a line style (that is
         // what Line::styled/wrap_styled produce); the renderer must keep it
@@ -3153,30 +3736,32 @@ mod tests {
     fn scroll_by_moves_from_the_bottom_and_re_engages_follow_at_the_bottom() {
         // 100 rows, 10 visible: pinned at the bottom (offset 90).
         let transcript = scrolled_transcript(100);
+        let rows = display_rows(&transcript, 80);
         let mut app = App::default();
         let visible = 10;
-        assert_eq!(first_visible_row(&app, &transcript, visible), 90);
+        assert_eq!(first_visible_row(&app, &rows, visible), 90);
 
         // One wheel up: three rows up, follow off.
         scroll_by(&mut app, &transcript, visible, -3);
-        assert_eq!(first_visible_row(&app, &transcript, visible), 87);
+        assert_eq!(first_visible_row(&app, &rows, visible), 87);
         assert!(!app.scroll_pinned);
 
         // More up, never past the top.
         scroll_by(&mut app, &transcript, visible, -1000);
-        assert_eq!(first_visible_row(&app, &transcript, visible), 0);
+        assert_eq!(first_visible_row(&app, &rows, visible), 0);
         scroll_by(&mut app, &transcript, visible, -3);
-        assert_eq!(first_visible_row(&app, &transcript, visible), 0);
+        assert_eq!(first_visible_row(&app, &rows, visible), 0);
 
         // Down past the bottom: clamps and re-engages follow.
         scroll_by(&mut app, &transcript, visible, 1000);
-        assert_eq!(first_visible_row(&app, &transcript, visible), 90);
+        assert_eq!(first_visible_row(&app, &rows, visible), 90);
         assert!(app.scroll_pinned);
     }
 
     #[test]
     fn navigate_blocks_scrolls_the_target_into_view_and_lands_on_follow() {
         let transcript = scrolled_transcript(30);
+        let rows = display_rows(&transcript, 80);
         let mut app = App::default();
         // With no highlight, Up starts from the last block (29).
         navigate_blocks(&transcript, &mut app, true);
@@ -3187,7 +3772,7 @@ mod tests {
         // block 28 in view -- never a mirrored position from the bottom.
         let visible = 18;
         assert_eq!(app.scroll_offset_rows, 24);
-        assert_eq!(first_visible_row(&app, &transcript, visible), 12);
+        assert_eq!(first_visible_row(&app, &rows, visible), 12);
         assert!(!app.scroll_pinned);
 
         // Walking all the way back down to the last block re-pins follow.
@@ -3206,6 +3791,7 @@ mod tests {
         transcript.push_block(vec![Line::raw("filler")]);
         transcript.push_block(vec![Line::raw("needle beta")]);
         let mut app = App::default();
+        let rows = display_rows(&transcript, 80);
         app.start_search(&transcript, "needle".to_owned());
         // First hit is "needle alpha" (line 100); anchored one row above.
         assert_eq!(app.scroll_offset_rows, 99);
@@ -3219,7 +3805,7 @@ mod tests {
         // (the anchor was clamped to the last screenful at 103-10=93).
         scroll_by(&mut app, &transcript, 10, -3);
         assert!(app.search.as_ref().is_some_and(|search| !search.pinned));
-        assert_eq!(first_visible_row(&app, &transcript, 10), 90);
+        assert_eq!(first_visible_row(&app, &rows, 10), 90);
 
         // n re-engages the anchor, wrapping from the last hit back to the
         // first ("needle alpha", anchored one row above it).
