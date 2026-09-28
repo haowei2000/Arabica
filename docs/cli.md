@@ -174,10 +174,17 @@ Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
 and `high`. The model name must be supported by the configured endpoint.
 
 Read-only tools run without a prompt. File changes require a terminal
-approval (`y` once, `a` for the session, `n` once, or `v` for the session).
-The approval prompt shows what the call targets -- the write path with a
-content preview for `write_file`, old → new strings for `edit_files` -- right
-above the y/a/n/v question.
+approval. The chooser defaults to **Allow once**; Enter confirms the selected
+option. Use the arrow keys and Enter, or `y` (allow once), `a` (allow this
+session), `n` (deny once), and `v` (deny this session). Escape denies only the
+current request; Ctrl+C cancels the run. The labels state whether the decision
+applies once or for the session. On narrow terminals the choices are shown
+vertically and remain visible while PageUp/PageDown or the mouse wheel scrolls
+the tool details in the history pane. The prompt shows what the call targets --
+the write path with a content preview for `write_file`, old → new strings for
+`edit_files` -- above the choices. In full-screen mode, click a history block
+and press Enter or `c` to copy it; the mouse wheel scrolls history, and
+Ctrl+End returns to the latest output.
 `memory_search` and `memory_read` are read-only recovery tools.
 Shell is available only with `--allow-shell` and also requires approval.
 `--read-only` excludes mutating tools and cannot be combined with

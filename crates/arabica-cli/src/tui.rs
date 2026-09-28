@@ -1162,9 +1162,9 @@ struct App {
 /// The permission chooser's options, in navigation order.
 const PERMISSION_OPTIONS: [&str; 4] = [
     "Allow once",
-    "Allow always",
+    "Allow this session",
     "Deny once",
-    "Deny for session",
+    "Deny this session",
 ];
 
 impl Default for App {
@@ -1576,12 +1576,90 @@ struct FullscreenLayout {
     status_index: Option<usize>,
 }
 
+fn permission_lines(prompt: &str, selected: usize, width: usize) -> (bool, Vec<Line<'static>>) {
+    let width = width.max(1);
+    let option_width = PERMISSION_OPTIONS
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let label = if index == selected {
+                format!(" [{label}] ")
+            } else {
+                format!("  {label}  ")
+            };
+            UnicodeWidthStr::width(label.as_str())
+        })
+        .sum::<usize>();
+    let horizontal_width = UnicodeWidthStr::width(prompt) + 2 + option_width;
+    if horizontal_width <= width {
+        let mut spans = vec![
+            Span::styled(prompt.to_owned(), theme::tool()),
+            Span::raw("  "),
+        ];
+        spans.extend(PERMISSION_OPTIONS.iter().enumerate().map(|(index, label)| {
+            let label = if index == selected {
+                format!(" [{label}] ")
+            } else {
+                format!("  {label}  ")
+            };
+            let style = if index == selected {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                theme::muted()
+            };
+            Span::styled(label, style)
+        }));
+        return (false, vec![Line::from(spans)]);
+    }
+
+    let mut lines = wrap_styled(prompt, width, theme::tool());
+    for (index, label) in PERMISSION_OPTIONS.iter().enumerate() {
+        let selected = index == selected;
+        let marker = if selected { "> " } else { "  " };
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            theme::muted()
+        };
+        let option_lines = wrap_styled(label, width.saturating_sub(2).max(1), style);
+        for (row, line) in option_lines.into_iter().enumerate() {
+            let prefix = if row == 0 { marker } else { "  " };
+            let mut spans = vec![Span::styled(prefix.to_owned(), style)];
+            spans.extend(line.spans);
+            lines.push(Line::from(spans));
+        }
+    }
+    lines.extend(wrap_styled(
+        "↑↓ choose · Enter · y/a/n/v · Esc · Ctrl+C",
+        width,
+        theme::muted(),
+    ));
+    (true, lines)
+}
+
 fn fullscreen_layout(area: Rect, app: &App) -> FullscreenLayout {
     let editor = layout_editor(&app.input, app.cursor, area.width as usize);
-    let input_height = composer_height(area.height as usize, editor.rows.len());
+    let permission = app
+        .permission_prompt
+        .as_ref()
+        .map(|prompt| permission_lines(prompt, app.permission_choice, area.width as usize));
+    let permission_vertical = permission.as_ref().is_some_and(|(vertical, _)| *vertical);
+    let permission_rows = permission
+        .as_ref()
+        .map(|(_, lines)| lines.len())
+        .unwrap_or(1);
+    let mut input_height = composer_height(area.height as usize, editor.rows.len());
+    if permission_vertical {
+        input_height = input_height.min(
+            (area.height as usize)
+                .saturating_sub(permission_rows)
+                .max(1),
+        );
+    }
     let mut constraints = vec![Constraint::Min(1)];
     let mut next = 1;
-    let divider_index = if area.height >= 3 {
+    let has_permission = permission.is_some();
+    let divider_index = if !permission_vertical && area.height >= 3 {
         let index = next;
         constraints.push(Constraint::Length(1));
         next += 1;
@@ -1589,9 +1667,13 @@ fn fullscreen_layout(area: Rect, app: &App) -> FullscreenLayout {
     } else {
         None
     };
-    let tail_index = if area.height >= 4 {
+    let tail_index = if has_permission || area.height >= 4 {
         let index = next;
-        constraints.push(Constraint::Length(1));
+        constraints.push(Constraint::Length(if permission_vertical {
+            permission_rows.min(area.height.saturating_sub(1) as usize) as u16
+        } else {
+            1
+        }));
         next += 1;
         Some(index)
     } else {
@@ -1600,7 +1682,7 @@ fn fullscreen_layout(area: Rect, app: &App) -> FullscreenLayout {
     let input_index = next;
     constraints.push(Constraint::Length(input_height as u16));
     next += 1;
-    let hints_index = if area.height as usize > next {
+    let hints_index = if !permission_vertical && area.height as usize > next {
         let index = next;
         constraints.push(Constraint::Length(1));
         next += 1;
@@ -1608,7 +1690,7 @@ fn fullscreen_layout(area: Rect, app: &App) -> FullscreenLayout {
     } else {
         None
     };
-    let status_index = if area.height as usize > next {
+    let status_index = if !permission_vertical && area.height as usize > next {
         let index = next;
         constraints.push(Constraint::Length(1));
         Some(index)
@@ -1736,22 +1818,12 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     if let Some(tail_index) = tail_index
         && let Some(prompt) = &app.permission_prompt
     {
-        let mut options: Vec<Span> =
-            vec![Span::styled(prompt.clone(), theme::tool()), Span::raw("  ")];
-        for (index, label) in PERMISSION_OPTIONS.iter().enumerate() {
-            let label = if index == app.permission_choice {
-                format!(" [{label}] ")
-            } else {
-                format!("  {label}  ")
-            };
-            let style = if index == app.permission_choice {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                theme::muted()
-            };
-            options.push(Span::styled(label, style));
-        }
-        frame.render_widget(Paragraph::new(Line::from(options)), sections[tail_index]);
+        let (_, lines) = permission_lines(
+            prompt,
+            app.permission_choice,
+            sections[tail_index].width as usize,
+        );
+        frame.render_widget(Paragraph::new(lines), sections[tail_index]);
     } else if let Some(tail_index) = tail_index
         && let Some(completion) = &app.completion
     {
@@ -1878,10 +1950,25 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
 
     // ---- hints row ----
     if let Some(hints_index) = hints_index {
-        let hints = if sections[hints_index].width < 100 {
-            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · /help"
+        let width = sections[hints_index].width;
+        let hints = if app.permission_prompt.is_some() {
+            if width < 60 {
+                " ↑↓ choose · Enter confirm · Esc deny · Ctrl+C cancel"
+            } else {
+                " ↑↓ choose · Enter confirm · y once · a session · n deny · v deny session · Esc deny · Ctrl+C cancel"
+            }
+        } else if app.completion.is_some() {
+            " ↑↓ choose · Tab/Enter accept · Esc close"
+        } else if app.search.is_some() {
+            " F3 next · Shift+F3 previous · Esc close"
+        } else if app.highlighted.is_some() && !app.busy {
+            " ↑↓ block · Enter/c copy · Ctrl+End latest · Esc close"
+        } else if app.busy {
+            " Esc/Ctrl+C cancel · type to queue · Ctrl+End latest"
+        } else if width < 100 {
+            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+End latest"
         } else {
-            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · /help"
+            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · Ctrl+End latest · /help"
         };
         frame.render_widget(
             Paragraph::new(Line::styled(hints, theme::muted())),
@@ -1900,7 +1987,26 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
         } else {
             String::new()
         };
-        let status = format!(" {}{new_output}", app.status);
+        let search_status = app
+            .search
+            .as_ref()
+            .and_then(|search| {
+                let hits = search_hits(transcript, &search.query);
+                (!hits.is_empty()).then(|| {
+                    format!(
+                        " · {}/{}",
+                        search.current.min(hits.len().saturating_sub(1)) + 1,
+                        hits.len()
+                    )
+                })
+            })
+            .unwrap_or_default();
+        let queued_status = if app.queued.is_empty() {
+            String::new()
+        } else {
+            format!(" · {} queued", app.queued.len())
+        };
+        let status = format!(" {}{search_status}{queued_status}{new_output}", app.status);
         frame.render_widget(
             Paragraph::new(Line::styled(status, theme::muted())),
             sections[status_index],
@@ -2166,7 +2272,7 @@ async fn run_turn(
                 }
                 app.status = "Waiting for permission".to_owned();
                 app.permission_choice = 0;
-                app.permission_prompt = Some(format!("Allow {}?", request.call.name));
+                app.permission_prompt = Some(format!("Permission for {}", request.call.name));
                 pending = Some(request);
                 draw(terminal, app, transcript)?;
             }
@@ -2175,6 +2281,25 @@ async fn run_turn(
                 if pending.is_some() {
                     if let InputEvent::Key(key) = key && key.kind == KeyEventKind::Press {
                         let decision = match key.code {
+                            KeyCode::PageUp | KeyCode::PageDown => {
+                                let pane_rows = LAST_PANE_ROWS
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    .max(1);
+                                let page_delta = (pane_rows as isize - 1).max(1);
+                                let delta = if key.code == KeyCode::PageUp {
+                                    -page_delta
+                                } else {
+                                    page_delta
+                                };
+                                scroll_by(app, transcript, pane_rows, delta);
+                                None
+                            }
+                            KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.scroll_pinned = true;
+                                app.scroll_anchor = None;
+                                app.new_output_baseline = None;
+                                None
+                            }
                             KeyCode::Up => {
                                 app.permission_choice =
                                     (app.permission_choice + PERMISSION_OPTIONS.len() - 1)
@@ -2207,6 +2332,15 @@ async fn run_turn(
                             let _ = pending.take().expect("permission pending").reply.send(PermissionDecision::deny_once());
                             app.permission_prompt = None;
                             cancellation.cancel();
+                        }
+                    } else if let InputEvent::Mouse(mouse) = key {
+                        use crossterm::event::MouseEventKind;
+                        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
+                            let pane_rows = LAST_PANE_ROWS
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                                .max(1);
+                            let delta = if mouse.kind == MouseEventKind::ScrollUp { -3 } else { 3 };
+                            scroll_by(app, transcript, pane_rows, delta);
                         }
                     }
                 } else if let InputEvent::Key(key) = key {
@@ -2684,7 +2818,7 @@ fn command(
         "/help" => {
             print_dim(
                 transcript,
-                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+O verbose · Ctrl+T thinking · @path mentions files",
+                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+End latest · Ctrl+O verbose · Ctrl+T thinking · @path mentions files\nHistory: PageUp/PageDown or mouse wheel scroll · click a block then Enter/c copies it · sending or queueing returns to latest\nPermission: Enter allows once by default · ↑↓ select · y/a allow once/session · n/v deny once/session · Esc denies once · Ctrl+C cancels the run",
             );
         }
         "/session" => {
@@ -3233,6 +3367,98 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].line, 0);
         assert_eq!(hits[1].line, 1);
+    }
+
+    #[test]
+    fn permission_choices_name_their_scope_and_default_to_allow_once() {
+        let app = App::default();
+        assert_eq!(app.permission_choice, 0);
+        assert_eq!(
+            PERMISSION_OPTIONS,
+            [
+                "Allow once",
+                "Allow this session",
+                "Deny once",
+                "Deny this session",
+            ]
+        );
+
+        let cases = [
+            (
+                KeyCode::Char('y'),
+                ToolPermissionOutcome::Allowed,
+                ToolPermissionScope::Once,
+            ),
+            (
+                KeyCode::Char('a'),
+                ToolPermissionOutcome::Allowed,
+                ToolPermissionScope::Session,
+            ),
+            (
+                KeyCode::Char('n'),
+                ToolPermissionOutcome::Denied,
+                ToolPermissionScope::Once,
+            ),
+            (
+                KeyCode::Esc,
+                ToolPermissionOutcome::Denied,
+                ToolPermissionScope::Once,
+            ),
+            (
+                KeyCode::Char('v'),
+                ToolPermissionOutcome::Denied,
+                ToolPermissionScope::Session,
+            ),
+        ];
+        for (code, outcome, scope) in cases {
+            let decision = permission_decision(KeyEvent::new(code, KeyModifiers::NONE)).unwrap();
+            assert_eq!(decision.outcome, outcome);
+            assert_eq!(decision.scope, scope);
+        }
+    }
+
+    #[test]
+    fn permission_choices_stack_on_narrow_terminals_and_stay_visible() {
+        let prompt = "Permission for write_file";
+        let (vertical, lines) = permission_lines(prompt, 0, 28);
+        assert!(vertical);
+        let content = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let joined = content.join("\n");
+        for label in [
+            prompt,
+            "Allow once",
+            "Allow this session",
+            "Deny once",
+            "Deny this session",
+            "Enter",
+            "Ctrl+C",
+        ] {
+            assert!(joined.contains(label), "missing {label:?} in {joined:?}");
+        }
+
+        let app = App {
+            permission_prompt: Some(prompt.to_owned()),
+            ..Default::default()
+        };
+        let layout = fullscreen_layout(Rect::new(0, 0, 28, 18), &app);
+        let tail = layout
+            .tail_index
+            .expect("permission chooser has a fixed area");
+        assert_eq!(layout.sections[tail].height as usize, lines.len());
+        let backend = ratatui::backend::TestBackend::new(28, 18);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let transcript = Transcript::default();
+        terminal
+            .draw(|frame| render_fullscreen(frame, &app, &transcript))
+            .unwrap();
     }
 
     #[test]
