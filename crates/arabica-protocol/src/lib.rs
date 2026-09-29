@@ -266,6 +266,27 @@ pub enum Event {
     RunStarted,
     #[serde(rename = "message.accepted")]
     MessageAccepted { content: String },
+    /// Model selected for one call, recorded before provider invocation.
+    /// Contains only a public model identifier and bounded routing metadata.
+    #[serde(rename = "model.route.selected")]
+    ModelRouteSelected {
+        model_step: usize,
+        decision_id: String,
+        policy_id: String,
+        policy_version: u64,
+        model_alias: Option<String>,
+        reason: String,
+    },
+    /// Immediate call-level measurement. Run quality is evaluated separately
+    /// after downstream tool outcomes or terminal task evidence are available.
+    #[serde(rename = "model.call.observed")]
+    ModelCallObserved {
+        model_step: usize,
+        decision_id: String,
+        elapsed_ms: u64,
+        provider_succeeded: bool,
+        usage: Option<RuntimeUsage>,
+    },
     /// Exact provider-neutral request immediately before wire encoding.
     #[serde(rename = "model.request.prepared")]
     ModelRequestPrepared {
@@ -408,6 +429,8 @@ impl Event {
         !matches!(
             self,
             Self::ModelRequestPrepared { .. }
+                | Self::ModelRouteSelected { .. }
+                | Self::ModelCallObserved { .. }
                 | Self::ModelResponseItem { .. }
                 | Self::ModelResponseCompleted { .. }
                 | Self::ModelResponseRejected { .. }

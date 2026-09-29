@@ -135,6 +135,20 @@ pub enum HostModel {
 }
 
 impl ModelProvider for HostModel {
+    fn model_id(&self) -> Option<&str> {
+        match self {
+            Self::Api(model) | Self::StreamingApi(model, _) => model.model_id(),
+            Self::Scripted(model) => model.model_id(),
+        }
+    }
+
+    fn supports_model_alias(&self, alias: &str) -> bool {
+        match self {
+            Self::Api(model) | Self::StreamingApi(model, _) => model.supports_model_alias(alias),
+            Self::Scripted(model) => model.supports_model_alias(alias),
+        }
+    }
+
     async fn complete(
         &mut self,
         request: ModelRunRequest,

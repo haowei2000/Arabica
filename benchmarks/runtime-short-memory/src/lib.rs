@@ -15,8 +15,8 @@ mod schema;
 mod tier_b;
 
 pub use baseline::{
-    Baseline, BaselineError, BenchmarkProjection, CompactionProjectionMetrics, ProjectionBatch,
-    ProjectionVisibility,
+    Baseline, BaselineError, BenchmarkCompactionTimings, BenchmarkProjection,
+    CompactionProjectionMetrics, ProjectionBatch, ProjectionVisibility,
 };
 pub use cli_comparison::{
     CLI_COMPARISON_MANIFEST_SCHEMA, CLI_COMPARISON_REPORT_SCHEMA, CLI_COMPARISON_SUITE_SCHEMA,

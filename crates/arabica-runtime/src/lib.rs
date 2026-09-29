@@ -15,6 +15,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use arabica_model::{
     ContentBlock, FinishReason, MemoryBatchKind, MemoryLoadState, MemoryPointer, MessageItem,
@@ -321,6 +322,152 @@ pub struct AutoHydrationObservation {
     pub hydrated_bytes: usize,
 }
 
+/// Deterministic per-run routing rules. Each configured alias must exist in
+/// the ModelProvider supplied to this runtime.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendRoutingPolicy {
+    pub policy_id: String,
+    pub version: u64,
+    pub default_model: String,
+    pub after_tool_success: Option<String>,
+    pub after_tool_error: Option<String>,
+    pub recovery_model: Option<String>,
+    pub recovery_after_no_progress_steps: usize,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendModelEvaluation {
+    pub selected_calls: u64,
+    pub observed_calls: u64,
+    pub provider_failures: u64,
+    pub elapsed_ms_total: u64,
+    pub usage_reported_calls: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub downstream_tool_successes: u64,
+    pub downstream_tool_errors: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendPolicyEvaluation {
+    pub runs_completed: u64,
+    pub runs_failed: u64,
+    pub runs_cancelled: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendEvaluationReport {
+    /// Metrics are direct observations for calls made by this alias. Tool
+    /// outcomes are downstream associations, not causal proof.
+    pub models: std::collections::BTreeMap<String, BlendModelEvaluation>,
+    /// End-to-end run outcomes are grouped by the pinned policy version.
+    pub policies: std::collections::BTreeMap<String, BlendPolicyEvaluation>,
+}
+
+/// Rebuild call and trajectory measurements from canonical persisted events.
+pub fn evaluate_blend_history(events: &[EventEnvelope]) -> BlendEvaluationReport {
+    let mut report = BlendEvaluationReport::default();
+    let mut selected_by_step = HashMap::<(RunId, usize), String>::new();
+    let mut policy_by_run = HashMap::<RunId, String>::new();
+    let mut latest_model_by_run = HashMap::<RunId, String>::new();
+
+    for envelope in events {
+        let Some(run_id) = envelope.run_id.as_ref() else {
+            continue;
+        };
+        match &envelope.event {
+            Event::ModelRouteSelected {
+                model_step,
+                policy_id,
+                policy_version,
+                model_alias,
+                ..
+            } => {
+                let alias = model_alias
+                    .clone()
+                    .unwrap_or_else(|| "unreported".to_owned());
+                report
+                    .models
+                    .entry(alias.clone())
+                    .or_default()
+                    .selected_calls += 1;
+                selected_by_step.insert((run_id.clone(), *model_step), alias.clone());
+                latest_model_by_run.insert(run_id.clone(), alias);
+                policy_by_run.insert(run_id.clone(), format!("{policy_id}@{policy_version}"));
+            }
+            Event::ModelCallObserved {
+                model_step,
+                elapsed_ms,
+                provider_succeeded,
+                usage,
+                ..
+            } => {
+                let Some(alias) = selected_by_step.get(&(run_id.clone(), *model_step)) else {
+                    continue;
+                };
+                let metrics = report.models.entry(alias.clone()).or_default();
+                metrics.observed_calls += 1;
+                metrics.provider_failures += u64::from(!provider_succeeded);
+                metrics.elapsed_ms_total = metrics.elapsed_ms_total.saturating_add(*elapsed_ms);
+                if let Some(usage) = usage {
+                    metrics.usage_reported_calls += 1;
+                    metrics.input_tokens = metrics.input_tokens.saturating_add(usage.input_tokens);
+                    metrics.output_tokens =
+                        metrics.output_tokens.saturating_add(usage.output_tokens);
+                }
+            }
+            Event::ToolCallCompleted { is_error, .. } => {
+                if let Some(alias) = latest_model_by_run.get(run_id) {
+                    let metrics = report.models.entry(alias.clone()).or_default();
+                    if *is_error {
+                        metrics.downstream_tool_errors += 1;
+                    } else {
+                        metrics.downstream_tool_successes += 1;
+                    }
+                }
+            }
+            Event::RunCompleted { .. } => {
+                if let Some(policy) = policy_by_run.get(run_id) {
+                    report
+                        .policies
+                        .entry(policy.clone())
+                        .or_default()
+                        .runs_completed += 1;
+                }
+            }
+            Event::RunFailed { .. } => {
+                if let Some(policy) = policy_by_run.get(run_id) {
+                    report
+                        .policies
+                        .entry(policy.clone())
+                        .or_default()
+                        .runs_failed += 1;
+                }
+            }
+            Event::RunCancelled => {
+                if let Some(policy) = policy_by_run.get(run_id) {
+                    report
+                        .policies
+                        .entry(policy.clone())
+                        .or_default()
+                        .runs_cancelled += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    report
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BlendRouteReason {
+    Default,
+    AfterToolSuccess,
+    AfterToolError,
+    NoProgressRecovery,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum RuntimeArchiveStore {
     #[default]
@@ -374,6 +521,7 @@ pub struct CoreRuntime<M, R> {
     archive_store: RuntimeArchiveStore,
     history_projection: HistoryProjection,
     system_instructions: Vec<String>,
+    blend_policy: Option<BlendRoutingPolicy>,
     model: M,
     runner: R,
 }
@@ -405,6 +553,7 @@ impl<M, R> CoreRuntime<M, R> {
             archive_store: RuntimeArchiveStore::Memory,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
+            blend_policy: None,
             model,
             runner,
         }
@@ -440,6 +589,7 @@ impl<M, R> CoreRuntime<M, R> {
             archive_store: RuntimeArchiveStore::Memory,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
+            blend_policy: None,
             model,
             runner,
         }
@@ -481,6 +631,7 @@ impl<M, R> CoreRuntime<M, R> {
             archive_store,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
+            blend_policy: None,
             model,
             runner,
         }
@@ -856,6 +1007,78 @@ fn permission_denied_result(tool: &str, source: ToolPermissionSource) -> String 
     }
 }
 
+fn choose_blend_model(
+    policy: &BlendRoutingPolicy,
+    history: &[EventEnvelope],
+    run_id: &RunId,
+    consecutive_no_progress_steps: usize,
+    model_step: usize,
+) -> (String, BlendRouteReason) {
+    if consecutive_no_progress_steps >= policy.recovery_after_no_progress_steps
+        && let Some(alias) = policy.recovery_model.as_ref()
+    {
+        return (alias.clone(), BlendRouteReason::NoProgressRecovery);
+    }
+
+    let previous_route = history.iter().rposition(|envelope| {
+        envelope.run_id.as_ref() == Some(run_id)
+            && matches!(
+                envelope.event,
+                Event::ModelRouteSelected { model_step: previous_step, .. }
+                    if previous_step < model_step
+            )
+    });
+    let previous_step_events = previous_route.map_or(history, |index| &history[index + 1..]);
+    let previous_tool_error = previous_step_events.iter().rev().find_map(|envelope| {
+        if envelope.run_id.as_ref() != Some(run_id) {
+            return None;
+        }
+        match envelope.event {
+            Event::ToolCallCompleted { is_error, .. } => Some(is_error),
+            _ => None,
+        }
+    });
+
+    match previous_tool_error {
+        Some(true) if policy.after_tool_error.is_some() => (
+            policy.after_tool_error.clone().expect("checked above"),
+            BlendRouteReason::AfterToolError,
+        ),
+        Some(false) if policy.after_tool_success.is_some() => (
+            policy.after_tool_success.clone().expect("checked above"),
+            BlendRouteReason::AfterToolSuccess,
+        ),
+        _ => (policy.default_model.clone(), BlendRouteReason::Default),
+    }
+}
+
+impl<M: ModelProvider, R> CoreRuntime<M, R> {
+    pub fn set_blend_policy(
+        &mut self,
+        policy: Option<BlendRoutingPolicy>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(policy) = policy.as_ref() {
+            let mut aliases = std::iter::once(policy.default_model.as_str())
+                .chain(policy.after_tool_success.as_deref())
+                .chain(policy.after_tool_error.as_deref())
+                .chain(policy.recovery_model.as_deref());
+            if policy.policy_id.trim().is_empty()
+                || policy.version == 0
+                || policy.recovery_after_no_progress_steps == 0
+                || aliases.clone().any(str::is_empty)
+                || aliases.any(|alias| !self.model.supports_model_alias(alias))
+            {
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidConfiguration,
+                    "Blend policy has an invalid version, threshold, or model alias",
+                ));
+            }
+        }
+        self.blend_policy = policy;
+        Ok(())
+    }
+}
+
 impl<M: ModelProvider, R: RunnerEnvironment> CoreRuntime<M, R> {
     /// End a run the host cancelled while it executed.
     ///
@@ -1204,15 +1427,56 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         system_instructions: self.system_instructions.clone(),
                     };
                     let request_bytes = model_run_request_bytes(&request);
+                    let decision_id = format!("{}:{model_step}", run_id);
+                    let route = self.blend_policy.as_ref().map(|policy| {
+                        choose_blend_model(
+                            policy,
+                            &history,
+                            run_id,
+                            consecutive_no_progress_steps,
+                            model_step,
+                        )
+                    });
+                    event_log.append(Event::ModelRouteSelected {
+                        model_step,
+                        decision_id: decision_id.clone(),
+                        policy_id: self.blend_policy.as_ref().map_or_else(
+                            || "single_model".to_owned(),
+                            |policy| policy.policy_id.clone(),
+                        ),
+                        policy_version: self
+                            .blend_policy
+                            .as_ref()
+                            .map_or(1, |policy| policy.version),
+                        model_alias: route
+                            .as_ref()
+                            .map(|(alias, _)| alias.clone())
+                            .or_else(|| self.model.model_id().map(str::to_owned)),
+                        reason: route.as_ref().map_or_else(
+                            || "configured_single_model".to_owned(),
+                            |(_, reason)| format!("{reason:?}").to_ascii_lowercase(),
+                        ),
+                    });
+                    let model_call_started = Instant::now();
                     let result = match control.cancellation.as_ref() {
                         // Without a cancellation handle the call is awaited
                         // exactly as it was before control existed.
-                        None => self.model.complete(request).await,
+                        None => match route.as_ref() {
+                            Some((alias, _)) => {
+                                self.model.complete_with_model(request, alias).await
+                            }
+                            None => self.model.complete(request).await,
+                        },
                         Some(cancellation) => {
                             let outcome = tokio::select! {
                                 biased;
                                 () = cancellation.cancelled() => None,
-                                result = self.model.complete(request) => Some(result),
+                                result = async {
+                                    match route.as_ref() {
+                                        Some((alias, _)) => self.model.complete_with_model(request, alias).await,
+                                        None => self.model.complete(request).await,
+                                    }
+                                } => Some(result),
                             };
                             match outcome {
                                 Some(result) => result,
@@ -1230,6 +1494,14 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     request: request.clone(),
                                 });
                             }
+                            event_log.append(Event::ModelCallObserved {
+                                model_step,
+                                decision_id: decision_id.clone(),
+                                elapsed_ms: u64::try_from(model_call_started.elapsed().as_millis())
+                                    .unwrap_or(u64::MAX),
+                                provider_succeeded: false,
+                                usage: None,
+                            });
                             if self.terminal_controller_policy.is_typed() {
                                 event_log.append(Event::TerminalControlTransition {
                                     model_step,
@@ -1275,6 +1547,17 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 .event_id,
                         );
                     }
+                    event_log.append(Event::ModelCallObserved {
+                        model_step,
+                        decision_id,
+                        elapsed_ms: u64::try_from(model_call_started.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        provider_succeeded: true,
+                        usage: result
+                            .response
+                            .as_ref()
+                            .map(|response| response.usage.clone()),
+                    });
                     pointer_gc_economics.observe(request_bytes, &result);
                     let response_items = result
                         .response
@@ -2332,6 +2615,20 @@ pub struct DeterministicCompactionProjection {
     pub archive_idempotent: bool,
     pub exact_continuation_bytes: usize,
     pub projected_continuation_bytes: usize,
+    pub timing: DeterministicCompactionTiming,
+}
+
+/// Timings for the benchmark-only deterministic compaction audit path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeterministicCompactionTiming {
+    pub first_model_step_ns: u64,
+    pub idempotence_model_step_ns: u64,
+    pub diagnostic_materialization_ns: u64,
+    pub archive_put_ns: u64,
+    pub archive_get_ns: u64,
+    pub archive_count_ns: u64,
+    pub archive_put_calls: u64,
+    pub archive_get_calls: u64,
 }
 
 pub fn project_compaction_for_benchmark(
@@ -2340,7 +2637,7 @@ pub fn project_compaction_for_benchmark(
     policy: &ShortMemoryPolicy,
     strategy: RuntimeCompactionStrategy,
     checkpoint_batches: usize,
-    memory: &mut LongMemoryManager,
+    memory: &mut impl LongMemoryStore,
 ) -> Result<DeterministicCompactionProjection, RuntimeError> {
     if !strategy.enabled() {
         return Err(RuntimeError::new(
@@ -2374,6 +2671,7 @@ pub fn project_compaction_for_benchmark(
         },
     };
     let protected = HashSet::new();
+    let first_started = Instant::now();
     let first = project_model_step(
         history,
         run_id,
@@ -2383,6 +2681,8 @@ pub fn project_compaction_for_benchmark(
         HistoryProjection::Policy,
         memory,
     )?;
+    let first_model_step_ns = first_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+    let idempotence_started = Instant::now();
     let second = project_model_step(
         history,
         run_id,
@@ -2392,6 +2692,10 @@ pub fn project_compaction_for_benchmark(
         HistoryProjection::Policy,
         memory,
     )?;
+    let idempotence_model_step_ns = idempotence_started
+        .elapsed()
+        .as_nanos()
+        .min(u64::MAX as u128) as u64;
     let mut entries = first.short_memory;
     entries.extend(first.run_memory);
     entries.sort_by_key(|entry| entry.sequence);
@@ -2400,6 +2704,7 @@ pub fn project_compaction_for_benchmark(
     repeated_entries.sort_by_key(|entry| entry.sequence);
     let archive_idempotent = entries == repeated_entries;
 
+    let diagnostics_started = Instant::now();
     let effective_policy = if strategy == RuntimeCompactionStrategy::FileBackedGc {
         let mut effective = policy.clone();
         effective.batch_compaction_enabled = false;
@@ -2417,17 +2722,28 @@ pub fn project_compaction_for_benchmark(
         exact_run_continuation(history, run_id, &ContinuationSubstitution::default());
     let projected_continuation =
         exact_run_continuation(history, run_id, &first.continuation_substitution);
+    let archive_count = memory.archive_count().map_err(long_memory_error)?;
+    let diagnostic_materialization_ns = diagnostics_started
+        .elapsed()
+        .as_nanos()
+        .min(u64::MAX as u128) as u64;
     Ok(DeterministicCompactionProjection {
         entries,
         visibility: materialization.visibility,
         batches: materialization.batches,
         admission: first.pointer_gc_admission,
-        archive_count: memory.archive_count().map_err(long_memory_error)?,
+        archive_count,
         archive_idempotent,
         exact_continuation_bytes: serde_json::to_vec(&exact_continuation)
             .map_or(0, |bytes| bytes.len()),
         projected_continuation_bytes: serde_json::to_vec(&projected_continuation)
             .map_or(0, |bytes| bytes.len()),
+        timing: DeterministicCompactionTiming {
+            first_model_step_ns,
+            idempotence_model_step_ns,
+            diagnostic_materialization_ns,
+            ..DeterministicCompactionTiming::default()
+        },
     })
 }
 
@@ -2438,7 +2754,7 @@ fn project_model_step(
     policy: &ShortMemoryPolicy,
     pointer_gc: PointerGcProjectionPolicy<'_>,
     history_projection: HistoryProjection,
-    memory: &mut LongMemoryManager,
+    memory: &mut impl LongMemoryStore,
 ) -> Result<ModelStepProjection, RuntimeError> {
     let file_backed_policy =
         (pointer_gc.strategy == RuntimeCompactionStrategy::FileBackedGc).then(|| {
