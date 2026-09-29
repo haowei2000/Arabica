@@ -7,8 +7,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Baseline, BenchmarkRun, CompactionProjectionMetrics, ProjectionMetrics, SyntheticTraceConfig,
-    SyntheticTraceGenerator,
+    Baseline, BenchmarkCompactionTimings, BenchmarkRun, CompactionProjectionMetrics,
+    ProjectionMetrics, SyntheticTraceConfig, SyntheticTraceGenerator,
 };
 
 /// Configuration for projector-only scaling measurements.
@@ -98,6 +98,8 @@ pub struct ScalingSample {
     /// alive. This is process-wide and intentionally reported separately
     /// from the exact serialized projection size.
     pub peak_observed_process_rss_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_timing_medians: Option<BenchmarkCompactionTimings>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -160,6 +162,7 @@ impl ScalingRunner {
                 }
 
                 let mut elapsed_ns = Vec::with_capacity(config.measured_iterations);
+                let mut compaction_timings = Vec::with_capacity(config.measured_iterations);
                 let mut peak_serialized_projection_bytes = 0usize;
                 let mut peak_observed_process_rss_bytes = None;
                 for _ in 0..config.measured_iterations {
@@ -168,6 +171,13 @@ impl ScalingRunner {
                         .project_prevalidated(black_box(&trace))
                         .map_err(|error| ScalingError::new(error.to_string()))?;
                     let elapsed = started.elapsed().as_nanos();
+                    if let Some(timing) = projection
+                        .compaction
+                        .as_ref()
+                        .and_then(|compaction| compaction.timing)
+                    {
+                        compaction_timings.push(timing);
+                    }
                     peak_serialized_projection_bytes = peak_serialized_projection_bytes
                         .max(serde_json::to_vec(&projection).map_or(0, |bytes| bytes.len()));
                     if let Some(rss) = current_process_rss_bytes() {
@@ -199,12 +209,13 @@ impl ScalingRunner {
                         / trace.events.len().max(1) as u64,
                     peak_serialized_projection_bytes,
                     peak_observed_process_rss_bytes,
+                    compaction_timing_medians: median_compaction_timing(&compaction_timings),
                 });
             }
         }
 
         Ok(ScalingReport {
-            schema_version: "structure.short-memory.scaling/v4".to_owned(),
+            schema_version: "structure.short-memory.scaling/v5".to_owned(),
             environment: ScalingEnvironment {
                 release_mode: !cfg!(debug_assertions),
                 target_arch: std::env::consts::ARCH.to_owned(),
@@ -219,6 +230,33 @@ impl ScalingRunner {
             samples,
         })
     }
+}
+
+fn median_compaction_timing(
+    samples: &[BenchmarkCompactionTimings],
+) -> Option<BenchmarkCompactionTimings> {
+    if samples.is_empty() {
+        return None;
+    }
+    let median = |field: fn(&BenchmarkCompactionTimings) -> u64| {
+        let mut values = samples.iter().map(field).collect::<Vec<_>>();
+        values.sort_unstable();
+        percentile(&values, 50)
+    };
+    Some(BenchmarkCompactionTimings {
+        archive_open_ns: median(|sample| sample.archive_open_ns),
+        first_model_step_ns: median(|sample| sample.first_model_step_ns),
+        idempotence_model_step_ns: median(|sample| sample.idempotence_model_step_ns),
+        diagnostic_materialization_ns: median(|sample| sample.diagnostic_materialization_ns),
+        metadata_assembly_ns: median(|sample| sample.metadata_assembly_ns),
+        archive_put_ns: median(|sample| sample.archive_put_ns),
+        archive_get_ns: median(|sample| sample.archive_get_ns),
+        archive_count_ns: median(|sample| sample.archive_count_ns),
+        archive_put_calls: median(|sample| sample.archive_put_calls),
+        archive_get_calls: median(|sample| sample.archive_get_calls),
+        archive_reopen_count_ns: median(|sample| sample.archive_reopen_count_ns),
+        cleanup_ns: median(|sample| sample.cleanup_ns),
+    })
 }
 
 const fn default_adaptive_chunking() -> bool {
