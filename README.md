@@ -1,6 +1,6 @@
 # Arabica
 
-[Website](https://haowei2000.github.io/Arabica/) · [Apache-2.0 license](LICENSE)
+[Website](https://haowei2000.github.io/Arabica/) · [Configuration](https://haowei2000.github.io/Arabica/configuration.html) · [Apache-2.0 license](LICENSE)
 
 <p align="center">
   <img src="static/arabica-icon.svg" width="120" alt="Arabica icon: roasted coffee beans">
@@ -10,7 +10,7 @@ Arabica is a headless AI-agent runtime written in Rust. The project defines a
 canonical command/event protocol, session lifecycle, model-provider boundary,
 tool runner, memory policies, and an HTTP/SSE host.
 
-> Status: active development (`0.1.0`). There is no GUI in this repository;
+> Status: active development (`0.1.1`). There is no GUI in this repository;
 > `arabica-cli` (below) is the only client-facing surface.
 
 ## Architecture
@@ -49,7 +49,35 @@ The server listens on `127.0.0.1:4096` by default.
 ## Requirements
 
 - Rust 1.88 or newer
-- An OpenAI-compatible model endpoint when running the HTTP server or the CLI
+- A supported model-provider endpoint when running the HTTP server or the CLI
+
+## Install the CLI
+
+On macOS or Linux, download the latest release with curl. The installer selects
+the matching CPU architecture, verifies the published SHA-256 checksum, and
+installs `arabica` to `~/.local/bin` by default:
+
+```bash
+curl -fsSL https://haowei2000.github.io/Arabica/install.sh -o install-arabica.sh
+sh install-arabica.sh
+~/.local/bin/arabica --help
+```
+
+Set `ARABICA_INSTALL_DIR` to choose another directory or
+`ARABICA_VERSION=v0.1.1` to pin a release. Windows ZIP archives are on
+[GitHub Releases](https://github.com/haowei2000/Arabica/releases).
+
+With Rust 1.88 or newer, install the published package from crates.io:
+
+```bash
+cargo install arabica-cli --locked
+arabica --help
+```
+
+The package is named `arabica-cli`; its executable is `arabica`. See the
+[configuration guide](https://haowei2000.github.io/Arabica/configuration.html)
+for provider credentials, precedence, Blend routing, MCP tools, and server
+settings.
 
 ## Build and Test
 
@@ -146,9 +174,9 @@ not selected by either executable.
 
 ## Run the CLI
 
-`arabica-cli` builds a `structure` binary with two entry points: `structure
-acp` (Agent Client Protocol v1 over stdio, for editors like Zed) and
-`structure -p "task"` (one-shot execution). Both read the same environment
+`arabica-cli` builds an `arabica` binary with interactive chat, `arabica acp`
+(Agent Client Protocol v1 over stdio, for editors like Zed), and
+`arabica -p "task"` (one-shot execution). These read the same environment
 variables as the server above. See [`docs/cli.md`](docs/cli.md) for flags,
 exit codes, and a Zed configuration snippet.
 

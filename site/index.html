@@ -19,7 +19,7 @@
   <header class="site-header">
     <nav class="nav wrap" aria-label="Main navigation">
       <a class="brand" href="#top" aria-label="Arabica home"><img src="./arabica-icon.svg" alt="" width="27" height="27"><span>Arabica</span></a>
-      <div class="nav-links"><a href="#approach">Approach</a><a href="#architecture">Architecture</a><a href="#get-started">Get started</a></div>
+      <div class="nav-links"><a href="#approach">Approach</a><a href="#architecture">Architecture</a><a href="#get-started">Install</a><a href="./configuration.html">Configuration</a></div>
       <a class="nav-github" href="https://github.com/haowei2000/Arabica">View on GitHub <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
@@ -29,7 +29,7 @@
         <p class="small-note">Open source · Apache-2.0 · Rust 1.88</p>
         <h1 id="hero-title">An agent runtime,<br>roasted down to<br>its core<span class="period">.</span></h1>
         <p class="hero-lede">Arabica is a headless AI coding agent built around one command and event protocol. Use it in your terminal, connect an editor through ACP, or bring your own client to its HTTP host.</p>
-        <div class="hero-actions"><a class="button button-primary" href="#get-started">Start with the CLI</a><a class="button button-text" href="https://github.com/haowei2000/Arabica">Explore the source <span aria-hidden="true">↗</span></a></div>
+        <div class="hero-actions"><a class="button button-primary" href="#get-started">Install Arabica</a><a class="button button-text" href="https://github.com/haowei2000/Arabica">Explore the source <span aria-hidden="true">↗</span></a></div>
       </div>
       <div class="hero-visual" role="img" aria-label="A terminal command enters the Arabica runtime and emits ordered events">
         <div class="visual-top"><span class="visual-mark">A</span><span>Arabica / runtime</span><span class="visual-status"><i></i> running</span></div>
@@ -66,22 +66,30 @@
       </div>
     </div></section>
     <section class="section wrap start-section" id="get-started" aria-labelledby="start-title">
-      <div class="section-heading"><h2 id="start-title">Get started</h2><p>Build from source with Rust 1.88 or newer. Configure an OpenAI-compatible endpoint before your first run.</p></div>
-      <div class="start-grid">
-        <div class="start-instructions"><h3>From clone to first prompt</h3><p>Arabica is in active development. The source is the most direct way to try it and inspect how it works.</p><ol><li>Clone the repository.</li><li>Build the CLI in release mode.</li><li>Set the provider environment variables, then run a prompt.</li></ol><a class="text-link" href="https://github.com/haowei2000/Arabica/blob/main/README.md#run-the-cli">Full setup in the README <span aria-hidden="true">↗</span></a></div>
-        <pre class="code-block"><code><span class="code-comment"># Build</span>
-git clone https://github.com/haowei2000/Arabica.git
-cd Arabica
-cargo build --release -p arabica-cli
-
-<span class="code-comment"># Configure your provider locally</span>
-export OPENAI__API_KEY=<span class="code-string">"your-key"</span>
-export OPENAI__BASE_URL=<span class="code-string">"https://api.openai.com/v1"</span>
-export OPENAI__MODEL=<span class="code-string">"your-model"</span>
-
-<span class="code-comment"># Run a one-shot task</span>
-./target/release/arabica -p <span class="code-string">"Explain this workspace"</span></code></pre>
+      <div class="section-heading"><h2 id="start-title">Install Arabica</h2><p>Choose a verified release download or build the published Rust package. Both install the <code>arabica</code> command.</p></div>
+      <div class="install-grid">
+        <article class="install-method"><p class="small-note">macOS + Linux</p><h3>Download with curl</h3><p>The installer detects your CPU, checks the release SHA-256 file, and places the binary in <code>~/.local/bin</code>.</p>
+          <pre class="code-block"><code>curl -fsSL https://haowei2000.github.io/Arabica/install.sh \
+  -o install-arabica.sh
+sh install-arabica.sh
+~/.local/bin/arabica --help</code></pre>
+          <p class="install-note">Set <code>ARABICA_INSTALL_DIR</code> for another directory or <code>ARABICA_VERSION=v0.1.1</code> to pin a release. <a href="https://github.com/haowei2000/Arabica/releases">Windows archives are on GitHub Releases ↗</a></p>
+        </article>
+        <article class="install-method"><p class="small-note">Rust 1.88+</p><h3>Install with Cargo</h3><p>Build <code>arabica-cli</code> from crates.io. Cargo puts the <code>arabica</code> binary in <code>~/.cargo/bin</code>.</p>
+          <pre class="code-block"><code>cargo install arabica-cli --locked
+arabica --help</code></pre>
+          <p class="install-note">Prefer the repository source? <a href="https://github.com/haowei2000/Arabica#run-the-cli">Build the workspace with Cargo ↗</a></p>
+        </article>
       </div>
+      <div class="first-run"><div><h3>Then configure a provider</h3><p>The CLI needs a model endpoint, model ID, and API key. Save the endpoint and model in <code>~/.arabica/config.toml</code>; enter the key separately with <code>arabica auth login</code>.</p><a class="text-link" href="./configuration.html">Understand every setting <span aria-hidden="true">↗</span></a></div><pre class="code-block"><code>mkdir -p ~/.arabica
+cat &gt; ~/.arabica/config.toml &lt;&lt;'EOF'
+[provider]
+base_url = "https://api.openai.com/v1"
+model = "your-model"
+EOF
+arabica auth login
+arabica config
+arabica -p "Explain this workspace"</code></pre></div>
     </section>
   </main>
   <footer class="footer"><div class="wrap footer-inner"><div><a class="footer-brand" href="#top"><img src="./arabica-icon.svg" alt="" width="24" height="24"> Arabica</a><p>Open-source agent infrastructure, brewed in Rust.</p></div><div class="footer-links"><a href="https://github.com/haowei2000/Arabica">GitHub</a><a href="https://github.com/haowei2000/Arabica/blob/main/LICENSE">Apache-2.0 license</a><a href="https://github.com/haowei2000/Arabica/blob/main/CONTRIBUTING.md">Contribute</a></div></div></footer>

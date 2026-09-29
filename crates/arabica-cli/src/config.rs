@@ -242,8 +242,8 @@ pub fn user_config_mcp(home: &Path) -> Result<Vec<McpServer>, Box<dyn std::error
 
 /// Resolve CLI settings. Explicit flags win, then saved workspace choices,
 /// then environment variables, then user defaults. The API key comes from
-/// `OPENAI__API_KEY`, the user config, or the user-owned auth file. ACP keeps its existing
-/// environment-only behavior.
+/// `OPENAI__API_KEY`, the user config, or the user-owned auth file. ACP uses
+/// the same resolved provider settings.
 pub fn resolve_cli_config(
     args: &HostConfigArgs,
     home: &Path,

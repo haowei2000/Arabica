@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Configure Arabica providers, credentials, model routing, MCP tools, and the HTTP server.">
+  <link rel="canonical" href="https://haowei2000.github.io/Arabica/configuration.html">
+  <link rel="icon" type="image/svg+xml" href="./arabica-icon.svg"><link rel="stylesheet" href="./style.css">
+  <title>Configuration — Arabica</title>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><nav class="nav wrap" aria-label="Main navigation"><a class="brand" href="./"><img src="./arabica-icon.svg" alt="" width="27" height="27"><span>Arabica</span></a><div class="nav-links"><a href="./#approach">Approach</a><a href="./#architecture">Architecture</a><a href="./#get-started">Install</a><a href="./configuration.html" aria-current="page">Configuration</a></div><a class="nav-github" href="https://github.com/haowei2000/Arabica">View on GitHub <span aria-hidden="true">↗</span></a></nav></header>
+<main id="main">
+  <div class="docs-hero wrap"><p class="small-note">Configuration guide</p><h1>Make Arabica yours<span class="period">.</span></h1><p>Start with a provider and model. Then choose how the CLI, tools, model routing, and HTTP host should behave.</p></div>
+  <div class="docs-layout wrap"><nav class="docs-toc" aria-label="On this page"><a href="#first-run">First run</a><a href="#provider">Provider</a><a href="#precedence">Priority and paths</a><a href="#cli">CLI options</a><a href="#blend">Model routing</a><a href="#mcp">MCP tools</a><a href="#server">HTTP server</a><a href="#installer">Installer</a></nav><div class="docs-content">
+    <section class="docs-section" id="first-run"><h2>First run</h2><p>The CLI reads <code>$ARABICA_HOME/config.toml</code>, defaulting to <code>~/.arabica/config.toml</code>. A single-model setup needs an endpoint, model ID, and API key.</p>
+<pre class="code-block"><code>mkdir -p ~/.arabica
+cat &gt; ~/.arabica/config.toml &lt;&lt;'EOF'
+[provider]
+api_type = "open_ai_chat_completions"
+base_url = "https://api.openai.com/v1"
+model = "your-model"
+EOF
+arabica auth login
+arabica config
+arabica -p "Explain this workspace"</code></pre>
+<p><code>arabica auth login</code> prompts without echoing the key and saves it in <code>~/.arabica/auth.json</code>. <code>arabica config</code> shows the effective endpoint, model, paths, and tools without printing the key. Run <code>arabica</code> for interactive chat or <code>arabica acp</code> for an editor.</p></section>
+    <section class="docs-section" id="provider"><h2>Provider settings</h2><p>These keys belong under <code>[provider]</code> in the user config. The historical <code>OPENAI__*</code> variable names also work with other providers when you choose a matching API type and endpoint.</p>
+<div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Key</th><th>Meaning</th><th>Override</th></tr></thead><tbody>
+<tr><td>api_type</td><td>Wire protocol; default <code>open_ai_chat_completions</code>. Implemented: <code>open_ai_chat_completions</code>, <code>open_ai_responses</code>, <code>anthropic_messages</code>, <code>gemini_generate_content</code>. <code>gemini_interactions</code> is declared but not implemented.</td><td><code>--api-type</code>, <code>ARABICA__API_TYPE</code></td></tr>
+<tr><td>base_url</td><td>Provider API root, such as <code>https://api.openai.com/v1</code>.</td><td><code>--base-url</code>, <code>OPENAI__BASE_URL</code></td></tr>
+<tr><td>model</td><td>Provider model ID. In a Blend setup, the default alias can supply this value.</td><td><code>--model</code>, <code>OPENAI__MODEL</code></td></tr>
+<tr><td>api_key</td><td>Key stored in this file. Prefer saved auth or an environment variable.</td><td><code>OPENAI__API_KEY</code>, <code>arabica auth login</code></td></tr>
+<tr><td>thinking</td><td><code>off</code> for any API type; <code>on</code> for Chat Completions; <code>low</code>, <code>medium</code>, or <code>high</code> for Responses.</td><td>Saved workspace choice</td></tr>
+</tbody></table></div>
+<div class="docs-callout"><p>If <code>config.toml</code> includes <code>api_key</code> or MCP credentials, run <code>chmod 600 ~/.arabica/config.toml</code> on macOS/Linux. Arabica rejects credential-bearing files that are world-readable or symlinks. Never put a key in a CLI flag.</p></div></section>
+    <section class="docs-section" id="precedence"><h2>Priority and paths</h2><p>The CLI deliberately ignores project-local <code>.env</code> files. <code>ARABICA_HOME</code> changes the user config, saved-key, session, and memory location; the default is <code>~/.arabica</code>. Saved workspace model and thinking choices are under <code>$ARABICA_HOME/workspaces/&lt;workspace-id&gt;/config.toml</code>; <code>arabica config</code> prints the exact path.</p>
+<div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Setting</th><th>Priority, highest first</th></tr></thead><tbody>
+<tr><td>model</td><td><code>--model</code> → workspace choice → <code>OPENAI__MODEL</code> → <code>[provider].model</code> → Blend default alias</td></tr>
+<tr><td>base_url / api_type</td><td>CLI flag → environment variable → user <code>[provider]</code></td></tr>
+<tr><td>API key</td><td><code>OPENAI__API_KEY</code> → user <code>[provider].api_key</code> → saved <code>auth.json</code></td></tr>
+<tr><td>thinking</td><td>Workspace choice → user <code>[provider].thinking</code> → off</td></tr>
+</tbody></table></div><p><code>ARABICA__MODELS</code> adds comma-separated model IDs to the terminal and ACP selectors; it does not configure Blend routing.</p></section>
+    <section class="docs-section" id="cli"><h2>CLI options</h2><p>These affect one invocation and do not edit the user config.</p>
+<div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Option</th><th>Effect</th></tr></thead><tbody>
+<tr><td>arabica</td><td>Interactive terminal chat in the current directory.</td></tr><tr><td>-p "task"</td><td>Run one task and exit; <code>-p -</code> reads stdin.</td></tr><tr><td>--output-format jsonl</td><td>With <code>-p</code>, stream JSON events rather than only the final answer.</td></tr>
+<tr><td>--model / --base-url / --api-type</td><td>Override provider choices for this run.</td></tr><tr><td>--allow-shell</td><td>Enable shell commands. Chat asks first; one-shot <code>-p</code> runs them without a terminal prompt.</td></tr><tr><td>--read-only / --plain</td><td>Restrict tools to reads, or use the line-based terminal.</td></tr><tr><td>--continue / --resume ID</td><td>Continue the newest workspace session or select one by ID.</td></tr><tr><td>auth / config / sessions</td><td>Manage saved auth, inspect resolved settings, or list sessions.</td></tr>
+</tbody></table></div></section>
+    <section class="docs-section" id="blend"><h2>Model routing with Blend</h2><p>Define aliases under <code>[models.&lt;alias&gt;]</code> and an explicit <code>[blend]</code>. All models share the provider API type, base URL, and key. Routing applies in chat, <code>-p</code>, and ACP.</p>
+<pre class="code-block"><code>[provider]
+base_url = "https://api.openai.com/v1"
+
+[models.fast]
+model_id = "your-fast-model"
+[models.strong]
+model_id = "your-strong-model"
+
+[blend]
+policy_id = "coding"
+version = 1
+default_model = "strong"
+after_tool_success = "fast"
+after_tool_error = "strong"
+recovery_model = "strong"
+recovery_after_no_progress_steps = 2
+minimum_model_dwell_steps = 2
+tool_call_capable_models = ["fast", "strong"]
+typed_completion_capable_models = ["strong"]</code></pre>
+<div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Key</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>model_id</td><td>Provider model ID behind each alias.</td></tr><tr><td>policy_id / version</td><td>Route identity; defaults <code>cli-config</code> and <code>1</code>.</td></tr><tr><td>default_model</td><td>Required starting alias.</td></tr><tr><td>after_tool_success / after_tool_error</td><td>Optional next-call aliases after a tool succeeds or fails.</td></tr><tr><td>recovery_model</td><td>Optional alias for repeated no-progress steps.</td></tr><tr><td>recovery_after_no_progress_steps</td><td>Positive recovery threshold; default <code>2</code>.</td></tr><tr><td>minimum_model_dwell_steps</td><td>Calls before an ordinary switch; default <code>1</code>. Error and recovery routes may switch sooner.</td></tr><tr><td>tool_call_capable_models</td><td>Aliases certified for tool calling.</td></tr><tr><td>typed_completion_capable_models</td><td>Aliases certified for typed terminal completion.</td></tr>
+</tbody></table></div><p>Every referenced alias must exist. Run <code>arabica config</code> to inspect the effective mapping.</p></section>
+    <section class="docs-section" id="mcp"><h2>MCP tools</h2><p>Put <code>[[mcp]]</code> entries in the user config for chat and <code>-p</code>. Each server chooses exactly one transport: an absolute local <code>command</code> or a streamable HTTP <code>url</code>.</p>
+<pre class="code-block"><code>[[mcp]]
+name = "local-docs"
+command = "/absolute/path/to/docs-mcp"
+args = ["--verbose"]
+[mcp.env]
+DOCS_TOKEN = "your-token"
+
+[[mcp]]
+name = "remote-search"
+url = "https://mcp.example.test/mcp"
+[mcp.headers]
+Authorization = "Bearer your-token"</code></pre>
+<p><code>name</code> identifies a server; <code>args</code> passes stdio arguments; <code>env</code> adds local environment variables; <code>headers</code> goes to the HTTP server. Keep credentials owner-only. An ACP client can supply servers and its entry wins when names match. Tool calls still pass through permission handling.</p></section>
+    <section class="docs-section" id="server"><h2>HTTP server settings</h2><p>Start with <code>cargo run -p arabica-server</code>. The server reads <code>OPENAI__API_KEY</code> and <code>OPENAI__BASE_URL</code>, plus <code>OPENAI__MODEL</code> for a single-model run. <code>ARABICA__BLEND_MODELS</code> supplies models instead when Blend is enabled.</p>
+<div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Variable</th><th>Meaning / default</th></tr></thead><tbody>
+<tr><td>ARABICA__API_TYPE</td><td>Provider wire protocol; default Chat Completions.</td></tr><tr><td>ARABICA__PORT</td><td>Loopback HTTP port; default <code>4096</code>.</td></tr><tr><td>ARABICA__TOOL_ROOT</td><td>Root given to the local runner; default current directory. Choose this boundary carefully.</td></tr>
+<tr><td>ARABICA__BLEND_MODELS</td><td>Comma-separated <code>alias=model-id</code> entries.</td></tr><tr><td>ARABICA__BLEND_DEFAULT</td><td>Starting alias; default first entry.</td></tr><tr><td>ARABICA__BLEND_AFTER_TOOL_SUCCESS / ARABICA__BLEND_AFTER_TOOL_ERROR</td><td>Alias after tool success or failure.</td></tr><tr><td>ARABICA__BLEND_RECOVERY_MODEL / ARABICA__BLEND_RECOVERY_AFTER_NO_PROGRESS_STEPS</td><td>Recovery alias and step threshold; default threshold <code>2</code>.</td></tr><tr><td>ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS</td><td>Ordinary route hold; default <code>1</code>.</td></tr><tr><td>ARABICA__BLEND_TOOL_CALL_MODELS / ARABICA__BLEND_TYPED_COMPLETION_MODELS</td><td>Comma-separated certified aliases.</td></tr><tr><td>ARABICA__BLEND_POLICY_ID / ARABICA__BLEND_POLICY_VERSION</td><td>Route identity; defaults <code>env-rules</code> and <code>1</code>.</td></tr>
+<tr><td>ARABICA__COMPACTION_STRATEGY</td><td><code>file_backed_gc</code> (default), <code>pointer_gc</code>, or <code>disabled</code>.</td></tr><tr><td>ARABICA__ARCHIVE_ROOT</td><td>File archive directory; default <code>target/arabica-runtime-memory</code>.</td></tr><tr><td>COMPACTION_EFFORT / PGC_EFFORT</td><td>Positive cost threshold; default <code>1</code>. <code>PGC_EFFORT</code> is a legacy fallback.</td></tr><tr><td>PGC_CONTINUATION_PROBABILITY_BPS</td><td>Pointer-GC estimate in basis points, <code>0</code>–<code>10000</code>; default <code>7500</code>.</td></tr>
+</tbody></table></div><p>The server loads a local <code>.env</code> file, unlike the CLI, and listens on <code>127.0.0.1</code>. Its endpoints are <code>/health</code>, <code>/v1/schema</code>, <code>/v1/commands</code>, and <code>/v1/events</code>.</p></section>
+    <section class="docs-section" id="installer"><h2>Installer options</h2><p>The curl installer supports macOS and Linux on x86_64 and ARM64 and verifies the archive SHA-256 before installing. Windows ZIPs and checksum files are on <a href="https://github.com/haowei2000/Arabica/releases">GitHub Releases</a>.</p><div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Variable</th><th>Meaning / default</th></tr></thead><tbody><tr><td>ARABICA_INSTALL_DIR</td><td>Destination; default <code>~/.local/bin</code>. Add it to <code>PATH</code> if needed.</td></tr><tr><td>ARABICA_VERSION</td><td>Release tag such as <code>v0.1.1</code>; default latest.</td></tr></tbody></table></div><a class="text-link" href="./#get-started">Both installation commands <span aria-hidden="true">↗</span></a></section>
+  </div></div>
+</main>
+<footer class="footer"><div class="wrap footer-inner"><div><a class="footer-brand" href="./"><img src="./arabica-icon.svg" alt="" width="24" height="24"> Arabica</a><p>Open-source agent infrastructure, brewed in Rust.</p></div><div class="footer-links"><a href="https://github.com/haowei2000/Arabica">GitHub</a><a href="https://github.com/haowei2000/Arabica/blob/main/LICENSE">Apache-2.0 license</a><a href="https://github.com/haowei2000/Arabica/blob/main/CONTRIBUTING.md">Contribute</a></div></div></footer>
+</body></html>
