@@ -491,6 +491,19 @@ enum BlendRouteReason {
     CapabilityFallback,
 }
 
+impl BlendRouteReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AfterToolSuccess => "after_tool_success",
+            Self::AfterToolError => "after_tool_error",
+            Self::NoProgressRecovery => "no_progress_recovery",
+            Self::MinimumDwell => "minimum_model_dwell",
+            Self::CapabilityFallback => "capability_fallback",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum RuntimeArchiveStore {
     #[default]
@@ -1534,10 +1547,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     };
                     let request_bytes = model_run_request_bytes(&request);
                     let decision_id = format!("{}:{model_step}", run_id);
-                    let requires_tool_calling = request
-                        .tools
-                        .iter()
-                        .any(|tool| tool.name != RUNTIME_COMPLETE_TOOL_NAME);
+                    let requires_tool_calling = !request.tools.is_empty();
                     let requires_typed_completion = matches!(
                         &request.tool_choice,
                         ToolChoice::Specific { name } if name == RUNTIME_COMPLETE_TOOL_NAME
@@ -1594,7 +1604,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             .or_else(|| self.model.model_id().map(str::to_owned)),
                         reason: route.as_ref().map_or_else(
                             || "configured_single_model".to_owned(),
-                            |(_, reason)| format!("{reason:?}").to_ascii_lowercase(),
+                            |(_, reason)| reason.as_str().to_owned(),
                         ),
                     });
                     let model_call_started = Instant::now();
