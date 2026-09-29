@@ -74,9 +74,49 @@ Then start the host:
 cargo run -p arabica-server
 ```
 
+### CLI model blend
+
+The CLI reads `~/.arabica/config.toml`. Define each alias under `[models.<alias>]` and reference aliases in `[blend]`; the provider settings are shared by all models. The selected default alias supplies `OPENAI__MODEL` when no default model environment variable is set.
+
+```toml
+[provider]
+base_url = "https://api.openai.com/v1"
+
+[models.fast]
+model_id = "gpt-4.1-mini"
+
+[models.balanced]
+model_id = "gpt-4.1"
+
+[models.strong]
+model_id = "gpt-4.1"
+
+[blend]
+policy_id = "coding"
+version = 1
+default_model = "balanced"
+after_tool_success = "fast"
+after_tool_error = "strong"
+recovery_after_no_progress_steps = 2
+recovery_model = "strong"
+```
+
+Set the key with `arabica auth login` or `OPENAI__API_KEY`. The CLI validates every referenced alias at startup. Blend routing is active in interactive chat and `arabica -p`; ACP continues to expose its existing single-model session configuration.
+
 Optional configuration:
 
 - `ARABICA__PORT`: listening port, default `4096`
+- `ARABICA__BLEND_MODELS`: optional comma-separated `alias=model-id` entries;
+  candidates share the API type, base URL, and key above
+- `ARABICA__BLEND_DEFAULT`: default alias, defaults to the first candidate
+- `ARABICA__BLEND_AFTER_TOOL_SUCCESS`: optional alias for the next call after
+  a successful tool result
+- `ARABICA__BLEND_AFTER_TOOL_ERROR`: optional alias after a tool error
+- `ARABICA__BLEND_RECOVERY_MODEL`: optional alias after repeated no-progress
+  steps (threshold defaults to 2 and is set by
+  `ARABICA__BLEND_RECOVERY_AFTER_NO_PROGRESS_STEPS`)
+- `ARABICA__BLEND_POLICY_ID` and `ARABICA__BLEND_POLICY_VERSION`: immutable
+  policy identity recorded with each route
 - `ARABICA__API_TYPE`: provider API dialect, default
   `open_ai_chat_completions`; `open_ai_responses` enables stateless Responses
   replay with exact reasoning/output-item retention

@@ -913,6 +913,7 @@ fn handle_prompt(
             }
         }
         HostModel::StreamingApi(_, sink) => *sink = progress,
+        HostModel::Blend(_) => {}
         HostModel::Scripted(_) => {}
     }
     let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![

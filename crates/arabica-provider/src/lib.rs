@@ -3,7 +3,7 @@
 //! This crate owns provider-neutral model turns and bidirectional API wire
 //! mappings. It does not execute tools or own sessions, memory, or UI concerns.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -145,9 +145,147 @@ impl Error for ProviderError {}
 
 #[allow(async_fn_in_trait)]
 pub trait ModelProvider {
+    /// Stable non-secret model identifier for routing and audit metadata.
+    /// Providers that cannot report a concrete identifier may return `None`.
+    fn model_id(&self) -> Option<&str> {
+        None
+    }
+
+    fn supports_model_alias(&self, alias: &str) -> bool {
+        self.model_id() == Some(alias)
+    }
+
     async fn complete(&mut self, request: ModelRunRequest)
     -> Result<ModelRunResult, ProviderError>;
+
+    /// Complete using a selected model alias. Single-model providers accept
+    /// only their configured model identifier; model pools override this.
+    async fn complete_with_model(
+        &mut self,
+        request: ModelRunRequest,
+        model_alias: &str,
+    ) -> Result<ModelRunResult, ProviderError> {
+        if self.model_id() == Some(model_alias) {
+            self.complete(request).await
+        } else {
+            Err(ProviderError::new(format!(
+                "model provider does not contain selected model alias {model_alias:?}"
+            )))
+        }
+    }
+
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError>;
+}
+
+/// A named set of API providers for per-call model selection.
+#[derive(Debug)]
+pub struct BlendProvider {
+    candidates: BTreeMap<String, ApiModelProvider>,
+    default_alias: String,
+    active_runs: HashMap<RunId, String>,
+}
+
+impl BlendProvider {
+    pub fn from_shared_config(
+        base_config: ApiProviderConfig,
+        default_alias: impl Into<String>,
+        candidates: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<Self, ProviderError> {
+        let providers = candidates
+            .into_iter()
+            .map(|(alias, model_id)| {
+                let mut config = base_config.clone();
+                config.model = model_id;
+                ApiModelProvider::new(config).map(|provider| (alias, provider))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(default_alias, providers)
+    }
+
+    pub fn new(
+        default_alias: impl Into<String>,
+        candidates: impl IntoIterator<Item = (String, ApiModelProvider)>,
+    ) -> Result<Self, ProviderError> {
+        let default_alias = default_alias.into();
+        if default_alias.trim().is_empty() {
+            return Err(ProviderError::new("Blend default alias must not be empty"));
+        }
+        let mut registry = BTreeMap::new();
+        for (alias, provider) in candidates {
+            if alias.trim().is_empty() {
+                return Err(ProviderError::new("Blend model alias must not be empty"));
+            }
+            if registry.insert(alias.clone(), provider).is_some() {
+                return Err(ProviderError::new(format!(
+                    "duplicate Blend model alias {alias:?}"
+                )));
+            }
+        }
+        if registry.is_empty() {
+            return Err(ProviderError::new("Blend requires at least one model"));
+        }
+        if !registry.contains_key(&default_alias) {
+            return Err(ProviderError::new(format!(
+                "Blend default alias {default_alias:?} is not registered"
+            )));
+        }
+        Ok(Self {
+            candidates: registry,
+            default_alias,
+            active_runs: HashMap::new(),
+        })
+    }
+
+    pub fn aliases(&self) -> impl Iterator<Item = &str> {
+        self.candidates.keys().map(String::as_str)
+    }
+}
+
+impl ModelProvider for BlendProvider {
+    fn model_id(&self) -> Option<&str> {
+        self.candidates
+            .get(&self.default_alias)
+            .and_then(ModelProvider::model_id)
+    }
+
+    fn supports_model_alias(&self, alias: &str) -> bool {
+        self.candidates.contains_key(alias)
+    }
+
+    async fn complete(
+        &mut self,
+        request: ModelRunRequest,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let alias = self.default_alias.clone();
+        self.complete_with_model(request, &alias).await
+    }
+
+    async fn complete_with_model(
+        &mut self,
+        request: ModelRunRequest,
+        model_alias: &str,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let provider = self.candidates.get_mut(model_alias).ok_or_else(|| {
+            ProviderError::new(format!("unknown Blend model alias {model_alias:?}"))
+        })?;
+        let run_id = request.run_id.clone();
+        self.active_runs
+            .insert(run_id.clone(), model_alias.to_owned());
+        let result = provider.complete(request).await;
+        self.active_runs.remove(&run_id);
+        result
+    }
+
+    async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
+        let Some(alias) = self.active_runs.remove(run_id) else {
+            return Ok(false);
+        };
+        self.candidates
+            .get_mut(&alias)
+            .expect("active Blend aliases always name registered providers")
+            .cancel(run_id)
+            .await
+    }
 }
 
 /// Provider API dialect selected at the model-provider boundary.
@@ -379,6 +517,15 @@ impl ApiModelProvider {
 }
 
 impl ModelProvider for ApiModelProvider {
+    fn model_id(&self) -> Option<&str> {
+        Some(match self {
+            Self::OpenAiChatCompletions(adapter) => &adapter.config.model,
+            Self::OpenAiResponses(adapter) => &adapter.config.model,
+            Self::AnthropicMessages(adapter) => &adapter.config.model,
+            Self::GeminiGenerateContent(adapter) => &adapter.config.model,
+        })
+    }
+
     async fn complete(
         &mut self,
         request: ModelRunRequest,
@@ -3380,6 +3527,10 @@ pub struct EchoModel {
 }
 
 impl ModelProvider for EchoModel {
+    fn model_id(&self) -> Option<&str> {
+        Some("echo")
+    }
+
     async fn complete(
         &mut self,
         request: ModelRunRequest,

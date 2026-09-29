@@ -22,14 +22,12 @@ use arabica_protocol::{
 };
 use arabica_provider::{ApiModelProvider, ApiProviderConfig};
 use arabica_runner::LocalTool;
-use arabica_runtime::{RunCancellation, RunControl};
+use arabica_runtime::{BlendRoutingPolicy, RunCancellation, RunControl};
 use arabica_session::{
     DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver, SessionManager,
 };
 
-use crate::host::{
-    HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_mcp, workspace_id_for,
-};
+use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, workspace_id_for};
 
 /// stdout's shape in `-p` mode.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -174,17 +172,25 @@ fn jsonl_line(envelope: &EventEnvelope) -> Option<Result<String, serde_json::Err
 /// listener on a *second* interrupt, since there is no value to return from
 /// mid-run at that point.
 pub async fn run(provider_config: ApiProviderConfig, options: PrintOptions) -> i32 {
+    let model = match ApiModelProvider::new(provider_config.clone()) {
+        Ok(model) => HostModel::Api(model),
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+    run_with_model(model, None, options).await
+}
+
+pub async fn run_with_model(
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    options: PrintOptions,
+) -> i32 {
     let policy = match tool_policy(options.allow_shell, options.read_only) {
         Ok(policy) => policy,
         Err(message) => {
             eprintln!("error: {message}");
-            return EXIT_CONFIG_ERROR;
-        }
-    };
-    let model = match ApiModelProvider::new(provider_config) {
-        Ok(model) => HostModel::Api(model),
-        Err(error) => {
-            eprintln!("error: {error}");
             return EXIT_CONFIG_ERROR;
         }
     };
@@ -235,6 +241,7 @@ pub async fn run(provider_config: ApiProviderConfig, options: PrintOptions) -> i
 
     match run_task(
         model,
+        blend_policy,
         &runner_root,
         policy,
         options,
@@ -287,6 +294,7 @@ pub(crate) fn resolve_resume(
 #[allow(clippy::too_many_arguments)]
 async fn run_task(
     model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
     runner_root: &Path,
     policy: LocalRunnerPolicy,
     options: PrintOptions,
@@ -295,8 +303,14 @@ async fn run_task(
     resumed: Option<StoredSession>,
     mcp: crate::mcp::McpTools,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
-    let runtime: HostRuntime =
-        build_host_runtime_with_mcp(model, runner_root, policy, &arabica_home, mcp);
+    let runtime: HostRuntime = crate::host::build_host_runtime_with_blend(
+        model,
+        runner_root,
+        policy,
+        &arabica_home,
+        mcp,
+        blend_policy,
+    )?;
     let mut manager = SessionManager::with_ids(runtime, Box::new(crate::host::UuidIds));
     let instructions_sha256 = crate::instructions::sha256(manager.runtime().system_instructions());
 

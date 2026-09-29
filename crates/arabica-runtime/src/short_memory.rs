@@ -709,6 +709,11 @@ fn batch_identity(
             format!("run:{run}:model-request:{model_step}"),
             MemoryBatchKind::Transient,
         ),
+        Event::ModelRouteSelected { model_step, .. }
+        | Event::ModelCallObserved { model_step, .. } => (
+            format!("run:{run}:model-routing:{model_step}"),
+            MemoryBatchKind::Transient,
+        ),
         Event::ToolCallRequested { call_id, .. } => {
             active_tool_by_run.insert(run.clone(), call_id.clone());
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
@@ -962,6 +967,8 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::SessionClosed
         | Event::RunScheduled
         | Event::RunStarted
+        | Event::ModelRouteSelected { .. }
+        | Event::ModelCallObserved { .. }
         | Event::ModelRequestPrepared { .. }
         | Event::ModelResponseItem { .. }
         | Event::ModelResponseCompleted { .. }
@@ -1107,7 +1114,9 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         | Event::ModelResponseCompleted { .. }
         | Event::ModelResponseRejected { .. }
         | Event::ModelResponseNormalized { .. } => (MemoryClass::Control, None, false),
-        Event::ModelRequestPrepared { .. } => (MemoryClass::Control, None, false),
+        Event::ModelRequestPrepared { .. }
+        | Event::ModelRouteSelected { .. }
+        | Event::ModelCallObserved { .. } => (MemoryClass::Control, None, false),
         Event::ToolCallRequested { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
         }
@@ -1174,6 +1183,8 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::RunScheduled => "run.scheduled",
         Event::RunStarted => "run.started",
         Event::MessageAccepted { .. } => "message.accepted",
+        Event::ModelRouteSelected { .. } => "model.route.selected",
+        Event::ModelCallObserved { .. } => "model.call.observed",
         Event::ModelRequestPrepared { .. } => "model.request.prepared",
         Event::ModelResponseItem { .. } => "model.response.item",
         Event::ModelResponseCompleted { .. } => "model.response.completed",
@@ -1296,6 +1307,7 @@ fn build_key_content(batch: &EventBatch, content_budget_bytes: usize) -> String 
 fn event_semantic_key(event: &Event) -> Option<String> {
     match event {
         Event::MessageAccepted { content } => Some(compact_user_message(content)),
+        Event::ModelRouteSelected { .. } | Event::ModelCallObserved { .. } => None,
         Event::ModelResponseItem {
             model_step,
             item_index,

@@ -13,6 +13,7 @@ use arabica_protocol::{
 };
 use arabica_provider::{ApiModelProvider, ApiProviderConfig, ModelProgress, ModelProgressSink};
 use arabica_runner::LocalTool;
+use arabica_runtime::BlendRoutingPolicy;
 use arabica_runtime::{
     PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
     ToolPermissionPolicy, ToolPermissionRule,
@@ -23,8 +24,8 @@ use arabica_session::{
 
 use crate::config::{save_workspace_settings, set_thinking};
 use crate::host::{
-    HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds, build_host_runtime_with_mcp,
-    workspace_id_for,
+    HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds,
+    build_host_runtime_with_blend, workspace_id_for,
 };
 use crate::print::{self, Resume};
 
@@ -225,6 +226,7 @@ pub(crate) fn set_progress(model: &mut HostModel, sink: ModelProgressSink) {
             }
         }
         HostModel::StreamingApi(_, progress) => *progress = sink,
+        HostModel::Blend(_) => {}
         HostModel::Scripted(_) => {}
     }
 }
@@ -245,11 +247,20 @@ impl InteractiveSession {
         config: ApiProviderConfig,
         options: InteractiveOptions,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let model = HostModel::Api(ApiModelProvider::new(config.clone())?);
+        Self::open_with_model(config, model, None, options).await
+    }
+
+    pub(crate) async fn open_with_model(
+        config: ApiProviderConfig,
+        model: HostModel,
+        blend_policy: Option<BlendRoutingPolicy>,
+        options: InteractiveOptions,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let runner_root = std::env::current_dir()?;
         let arabica_home = arabica_adapters::default_arabica_home()?;
         let workspace_id = workspace_id_for(&runner_root);
         let resumed = print::resolve_resume(&options.resume, &arabica_home, &workspace_id)?;
-        let model = HostModel::Api(ApiModelProvider::new(config.clone())?);
         let mut tool_policy = if options.read_only {
             LocalRunnerPolicy::read_only()
         } else {
@@ -268,7 +279,14 @@ impl InteractiveSession {
             eprintln!("structure: {diagnostic}");
         }
         let mut manager = SessionManager::with_ids(
-            build_host_runtime_with_mcp(model, &runner_root, tool_policy, &arabica_home, mcp),
+            build_host_runtime_with_blend(
+                model,
+                &runner_root,
+                tool_policy,
+                &arabica_home,
+                mcp,
+                blend_policy,
+            )?,
             Box::new(UuidIds),
         );
         let instructions_sha256 =
@@ -568,17 +586,34 @@ impl InteractiveSession {
 }
 
 pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 {
-    if options.allow_shell && options.read_only {
-        eprintln!("error: --allow-shell and --read-only are mutually exclusive");
-        return 2;
-    }
-    let mut session = match InteractiveSession::open(config, options).await {
-        Ok(session) => session,
+    let model = match ApiModelProvider::new(config.clone()) {
+        Ok(model) => HostModel::Api(model),
         Err(error) => {
             eprintln!("error: {error}");
             return 2;
         }
     };
+    run_with_model(config, model, None, options).await
+}
+
+pub async fn run_with_model(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    options: InteractiveOptions,
+) -> i32 {
+    if options.allow_shell && options.read_only {
+        eprintln!("error: --allow-shell and --read-only are mutually exclusive");
+        return 2;
+    }
+    let mut session =
+        match InteractiveSession::open_with_model(config, model, blend_policy, options).await {
+            Ok(session) => session,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return 2;
+            }
+        };
     eprintln!(
         "Arabica session {}. Type /help for commands.",
         session.session_id

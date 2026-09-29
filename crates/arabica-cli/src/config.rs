@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use agent_client_protocol::schema::v1::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
 };
-use arabica_provider::{ApiProviderConfig, ApiType};
+use arabica_provider::{ApiProviderConfig, ApiType, BlendProvider};
+use arabica_runtime::BlendRoutingPolicy;
 use serde::{Deserialize, Serialize};
 
 use crate::host::{HostConfigArgs, resolve_provider_config, workspace_id_for};
@@ -21,6 +22,58 @@ struct UserConfig {
     provider: UserProvider,
     #[serde(default)]
     mcp: Vec<UserMcpServer>,
+    #[serde(default)]
+    models: BTreeMap<String, UserModel>,
+    #[serde(default)]
+    blend: Option<UserBlend>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserModel {
+    model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserBlend {
+    policy_id: Option<String>,
+    version: Option<u64>,
+    default_model: String,
+    after_tool_success: Option<String>,
+    after_tool_error: Option<String>,
+    recovery_model: Option<String>,
+    #[serde(default = "default_recovery_threshold")]
+    recovery_after_no_progress_steps: usize,
+}
+
+fn default_recovery_threshold() -> usize {
+    2
+}
+
+#[derive(Debug)]
+pub struct ResolvedCliConfig {
+    pub provider: ApiProviderConfig,
+    pub blend_policy: Option<BlendRoutingPolicy>,
+    pub models: BTreeMap<String, String>,
+}
+
+impl ResolvedCliConfig {
+    pub fn build_model(&self) -> Result<crate::host::HostModel, Box<dyn std::error::Error>> {
+        if self.models.is_empty() {
+            return Ok(crate::host::HostModel::Api(
+                arabica_provider::ApiModelProvider::new(self.provider.clone())?,
+            ));
+        }
+        let default = self
+            .blend_policy
+            .as_ref()
+            .map(|p| p.default_model.as_str())
+            .unwrap_or_else(|| self.models.keys().next().expect("non-empty"));
+        Ok(crate::host::HostModel::Blend(
+            BlendProvider::from_shared_config(self.provider.clone(), default, self.models.clone())?,
+        ))
+    }
 }
 
 /// One MCP server declared in the user config file as an `[[mcp]]` table.
@@ -191,6 +244,15 @@ pub fn resolve_cli_config(
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<ApiProviderConfig, Box<dyn std::error::Error>> {
+    Ok(resolve_cli_runtime_config(args, home, cwd, lookup)?.provider)
+}
+
+pub fn resolve_cli_runtime_config(
+    args: &HostConfigArgs,
+    home: &Path,
+    cwd: &Path,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<ResolvedCliConfig, Box<dyn std::error::Error>> {
     let user = read_user_config(home)?;
     let workspace: WorkspaceSettings = read_toml(&workspace_config_path(home, cwd))?;
     let selected = HostConfigArgs {
@@ -199,7 +261,13 @@ pub fn resolve_cli_config(
             .clone()
             .or(workspace.model)
             .or_else(|| lookup("OPENAI__MODEL"))
-            .or(user.provider.model),
+            .or(user.provider.model)
+            .or_else(|| {
+                user.blend
+                    .as_ref()
+                    .and_then(|blend| user.models.get(&blend.default_model))
+                    .map(|model| model.model_id.clone())
+            }),
         api_type: args
             .api_type
             .clone()
@@ -236,7 +304,58 @@ pub fn resolve_cli_config(
     if let Some(thinking) = workspace.thinking.or(user.provider.thinking) {
         set_thinking(&mut config, &thinking)?;
     }
-    Ok(config)
+    if user.models.is_empty() && user.blend.is_some() {
+        return Err("[blend] requires at least one [models.<alias>] entry".into());
+    }
+    if !user.models.is_empty() && user.blend.is_none() {
+        return Err("[models] requires a [blend] table with an explicit default_model".into());
+    }
+    let models = user
+        .models
+        .iter()
+        .map(|(alias, model)| {
+            if alias.trim().is_empty() || model.model_id.trim().is_empty() {
+                return Err(format!(
+                    "model alias and model_id must not be empty ({alias:?})"
+                ));
+            }
+            Ok((alias.clone(), model.model_id.clone()))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let blend_policy = user
+        .blend
+        .map(|blend| {
+            let policy = BlendRoutingPolicy {
+                policy_id: blend.policy_id.unwrap_or_else(|| "cli-config".to_owned()),
+                version: blend.version.unwrap_or(1),
+                default_model: blend.default_model,
+                after_tool_success: blend.after_tool_success,
+                after_tool_error: blend.after_tool_error,
+                recovery_model: blend.recovery_model,
+                recovery_after_no_progress_steps: blend.recovery_after_no_progress_steps,
+            };
+            let aliases = std::iter::once(policy.default_model.as_str())
+                .chain(policy.after_tool_success.as_deref())
+                .chain(policy.after_tool_error.as_deref())
+                .chain(policy.recovery_model.as_deref());
+            if policy.policy_id.trim().is_empty()
+                || policy.version == 0
+                || policy.recovery_after_no_progress_steps == 0
+                || aliases.into_iter().any(|alias| !models.contains_key(alias))
+            {
+                return Err(
+                    "[blend] contains an invalid value or references an undefined model alias"
+                        .to_owned(),
+                );
+            }
+            Ok(policy)
+        })
+        .transpose()?;
+    Ok(ResolvedCliConfig {
+        provider: config,
+        blend_policy,
+        models,
+    })
 }
 
 pub fn set_thinking(config: &mut ApiProviderConfig, value: &str) -> Result<(), String> {
@@ -347,6 +466,47 @@ mod tests {
                 .unwrap()
                 .contains("secret")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_aliases_and_blend_policy_resolve_from_user_toml() {
+        let root =
+            std::env::temp_dir().join(format!("structure-blend-config-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(
+            user_config_path(&home),
+            r#"
+[provider]
+base_url = "https://example.test/v1"
+
+[models.fast]
+model_id = "model-mini"
+
+[models.strong]
+model_id = "model-pro"
+
+[blend]
+policy_id = "coding"
+version = 3
+default_model = "fast"
+after_tool_error = "strong"
+recovery_model = "strong"
+recovery_after_no_progress_steps = 2
+"#,
+        )
+        .unwrap();
+        let resolved =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, |name| {
+                (name == "OPENAI__API_KEY").then(|| "test-key".to_owned())
+            })
+            .unwrap();
+        assert_eq!(resolved.provider.model, "model-mini");
+        assert_eq!(resolved.models["strong"], "model-pro");
+        assert_eq!(resolved.blend_policy.as_ref().unwrap().version, 3);
         fs::remove_dir_all(root).unwrap();
     }
 

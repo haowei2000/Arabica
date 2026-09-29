@@ -379,6 +379,8 @@ pub(super) fn updates_for(
         | Event::RunStarted
         | Event::MessageAccepted { .. }
         | Event::ModelRequestPrepared { .. }
+        | Event::ModelRouteSelected { .. }
+        | Event::ModelCallObserved { .. }
         | Event::ModelResponseCompleted { .. }
         | Event::ModelResponseRejected { .. }
         | Event::ModelResponseNormalized { .. }
