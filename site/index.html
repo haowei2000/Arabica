@@ -1,130 +1,89 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="arabica-icon.svg">
-<title>Arabica — a headless AI coding agent in Rust</title>
-<meta name="description" content="Arabica is a protocol-first, headless AI coding agent written in Rust: canonical command/event protocol, file-backed sessions, terminal TUI, ACP support for Zed.">
-<style>
-  :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #79c0ff;
-    --green: #7ee787;
-    --yellow: #e3b341;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  body { background: var(--bg); color: var(--text); line-height: 1.6; }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
-  header { padding: 72px 0 48px; border-bottom: 1px solid var(--border); }
-  h1 { font-size: 2.6rem; letter-spacing: -0.02em; }
-  h1 .accent { color: var(--accent); }
-  .tagline { font-size: 1.25rem; color: var(--muted); margin-top: 12px; }
-  .badges { margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
-  .badge { border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; font-size: 0.85rem; color: var(--muted); }
-  section { padding: 48px 0; border-bottom: 1px solid var(--border); }
-  h2 { font-size: 1.4rem; margin-bottom: 20px; }
-  h2 .dash { color: var(--green); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
-  .card h3 { font-size: 1rem; margin-bottom: 8px; color: var(--accent); }
-  .card p { font-size: 0.9rem; color: var(--muted); }
-  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
-  code { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
-  .inline { background: var(--panel); border-radius: 4px; padding: 2px 6px; font-size: 0.85em; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: top; }
-  td:first-child { color: var(--accent); white-space: nowrap; }
-  footer { padding: 32px 0 64px; color: var(--muted); font-size: 0.85rem; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .cta { display: inline-block; background: var(--accent); color: var(--bg); font-weight: 600; border-radius: 8px; padding: 10px 20px; margin-right: 12px; margin-top: 8px; }
-  .cta:hover { text-decoration: none; filter: brightness(1.1); }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1b1511">
+  <meta name="description" content="Arabica is an open-source, headless AI coding agent in Rust. Run it in your terminal, from scripts, through ACP, or over HTTP and SSE.">
+  <meta property="og:title" content="Arabica — a headless AI coding agent in Rust">
+  <meta property="og:description" content="One Rust core. A terminal agent, an ACP host, and an HTTP/SSE protocol.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://haowei2000.github.io/Arabica/">
+  <link rel="canonical" href="https://haowei2000.github.io/Arabica/">
+  <link rel="icon" type="image/svg+xml" href="./arabica-icon.svg">
+  <link rel="stylesheet" href="./style.css">
+  <title>Arabica — a headless AI coding agent in Rust</title>
 </head>
 <body>
-<header class="wrap">
-  <h1>Arabica<span class="accent">_</span></h1>
-  <p class="tagline">A headless AI coding agent, protocol-first, in Rust.</p>
-  <div class="badges">
-    <span class="badge">Rust 1.88 · edition 2024</span>
-    <span class="badge">unsafe forbidden</span>
-    <span class="badge">Apache-2.0</span>
-  </div>
-  <div style="margin-top: 28px">
-    <a class="cta" href="#install">Get started</a>
-    <a class="cta" style="background: var(--panel); color: var(--accent); border: 1px solid var(--border)" href="https://github.com/haowei2000/Arabica">Source</a>
-  </div>
-</header>
-
-<section class="wrap">
-  <h2><span class="dash">──</span> What is Structure</h2>
-  <p>
-    Structure runs a coding agent as a <strong>canonical command/event protocol</strong>:
-    clients submit <span class="inline">CommandEnvelope</span>s, the session layer sequences them,
-    and the runtime emits <span class="inline">EventEnvelope</span>s. Three surfaces share one core —
-    a fullscreen terminal TUI, one-shot <span class="inline">arabica -p</span> for scripts,
-    and <span class="inline">arabica acp</span> for editors like Zed. There is no frontend
-    and no server-side state to leak; sessions are append-only JSONL you own.
-  </p>
-</section>
-
-<section class="wrap">
-  <h2><span class="dash">──</span> Highlights</h2>
-  <div class="grid">
-    <div class="card"><h3>Fullscreen TUI</h3><p>Scrolling history pane, Claude-style divider, pinned editor. Tool calls fold to one line and flip ✓/✗ in place; file edits render as colored diffs. ↑/↓ walks blocks, Enter copies them.</p></div>
-    <div class="card"><h3>Workspace instructions</h3><p>An AGENTS.md in the workspace root becomes a standing system instruction — re-read every turn, layered deepest-first when nested.</p></div>
-    <div class="card"><h3>Write checkpoints</h3><p>/diff shows the agent's net file changes; /undo reverts its last write call — all-or-nothing, never touching your own edits.</p></div>
-    <div class="card"><h3>MCP servers</h3><p>Declare stdio or streamable-HTTP servers in ~/.arabica/config.toml or per-session from an ACP client. Credentials never reach the session log.</p></div>
-    <div class="card"><h3>Session memory</h3><p>File-backed compaction archives older context losslessly; memory_search/memory_read recover it on demand. /context shows exactly what the next request carries.</p></div>
-    <div class="card"><h3>Multi-provider</h3><p>OpenAI Chat Completions, OpenAI Responses, Anthropic Messages — with true streaming. Gemini dialects are next.</p></div>
-  </div>
-</section>
-
-<section class="wrap" id="install">
-  <h2><span class="dash">──</span> Install</h2>
-  <p>Grab a binary from <a href="https://github.com/haowei2000/Arabica/releases">GitHub Releases</a>, or build from source:</p>
-<pre><code>git clone https://github.com/haowei2000/Arabica
-cd Structure
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <nav class="nav wrap" aria-label="Main navigation">
+      <a class="brand" href="#top" aria-label="Arabica home"><img src="./arabica-icon.svg" alt="" width="27" height="27"><span>Arabica</span></a>
+      <div class="nav-links"><a href="#approach">Approach</a><a href="#architecture">Architecture</a><a href="#get-started">Get started</a></div>
+      <a class="nav-github" href="https://github.com/haowei2000/Arabica">View on GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="small-note">Open source · Apache-2.0 · Rust 1.88</p>
+        <h1 id="hero-title">An agent runtime,<br>roasted down to<br>its core<span class="period">.</span></h1>
+        <p class="hero-lede">Arabica is a headless AI coding agent built around one command and event protocol. Use it in your terminal, connect an editor through ACP, or bring your own client to its HTTP host.</p>
+        <div class="hero-actions"><a class="button button-primary" href="#get-started">Start with the CLI</a><a class="button button-text" href="https://github.com/haowei2000/Arabica">Explore the source <span aria-hidden="true">↗</span></a></div>
+      </div>
+      <div class="hero-visual" role="img" aria-label="A terminal command enters the Arabica runtime and emits ordered events">
+        <div class="visual-top"><span class="visual-mark">A</span><span>Arabica / runtime</span><span class="visual-status"><i></i> running</span></div>
+        <div class="visual-body">
+          <div class="visual-command"><span class="prompt">$</span> arabica -p <span class="string">"Explain this workspace"</span></div>
+          <div class="visual-rule"></div>
+          <div class="visual-event"><span class="event-index">01</span><span class="event-name">CommandEnvelope</span><span class="event-state">accepted</span></div>
+          <div class="visual-event"><span class="event-index">02</span><span class="event-name">session</span><span class="event-state">sequenced</span></div>
+          <div class="visual-event"><span class="event-index">03</span><span class="event-name">runtime</span><span class="event-state">executing</span></div>
+          <div class="visual-event last"><span class="event-index">04</span><span class="event-name">EventEnvelope</span><span class="event-state">emitted</span></div>
+        </div>
+        <div class="visual-bottom"><span>One core</span><span>terminal / ACP / HTTP + SSE</span></div>
+      </div>
+    </section>
+    <section class="intro-band" id="approach" aria-labelledby="approach-title"><div class="wrap intro-grid">
+      <h2 id="approach-title">A small surface.<br>A clear contract.</h2>
+      <div><p>Clients submit typed commands. The session layer validates and sequences each run. The runtime orchestrates model calls and tools, then emits canonical events. Every host shares that same contract.</p><a class="text-link" href="https://github.com/haowei2000/Arabica/blob/main/docs/README.md">Read the documentation <span aria-hidden="true">↗</span></a></div>
+    </div></section>
+    <section class="section wrap" aria-labelledby="surfaces-title">
+      <div class="section-heading"><h2 id="surfaces-title">Choose your surface</h2><p>The runtime stays headless. You decide where it meets your work.</p></div>
+      <div class="surface-grid">
+        <article class="surface"><span class="surface-symbol" aria-hidden="true">⌘</span><h3>Terminal</h3><p>Work in the fullscreen TUI, or run a single prompt with <code>arabica -p</code> in a script.</p><a href="https://github.com/haowei2000/Arabica/blob/main/docs/cli.md">CLI guide <span aria-hidden="true">↗</span></a></article>
+        <article class="surface"><span class="surface-symbol" aria-hidden="true">◈</span><h3>Editor</h3><p>Connect an ACP client, including Zed, through <code>arabica acp</code> over stdio.</p><a href="https://github.com/haowei2000/Arabica/blob/main/docs/cli.md">ACP setup <span aria-hidden="true">↗</span></a></article>
+        <article class="surface"><span class="surface-symbol" aria-hidden="true">⇄</span><h3>HTTP host</h3><p>Submit commands and subscribe to events through an Axum HTTP and SSE server.</p><a href="https://github.com/haowei2000/Arabica#http-api">API overview <span aria-hidden="true">↗</span></a></article>
+      </div>
+    </section>
+    <section class="architecture-section" id="architecture" aria-labelledby="architecture-title"><div class="wrap architecture-grid">
+      <div class="architecture-copy"><p class="small-note">Inside the roast</p><h2 id="architecture-title">Boundaries that keep the runtime honest.</h2><p>Protocol types, session sequencing, provider adapters, and tool execution each have their own crate. Unsafe Rust is forbidden across the workspace.</p><a class="text-link" href="https://github.com/haowei2000/Arabica#architecture">Explore the architecture <span aria-hidden="true">↗</span></a></div>
+      <div class="architecture-flow" aria-label="The runtime path from client command to emitted events">
+        <div class="flow-row"><span class="flow-role">Input</span><strong>CommandEnvelope</strong><span class="flow-crate">arabica-protocol</span></div>
+        <div class="flow-row"><span class="flow-role">Sequence</span><strong>Session lifecycle</strong><span class="flow-crate">arabica-session</span></div>
+        <div class="flow-row"><span class="flow-role">Execute</span><strong>Provider + tools</strong><span class="flow-crate">arabica-runtime</span></div>
+        <div class="flow-row"><span class="flow-role">Output</span><strong>EventEnvelope</strong><span class="flow-crate">arabica-protocol</span></div>
+      </div>
+    </div></section>
+    <section class="section wrap start-section" id="get-started" aria-labelledby="start-title">
+      <div class="section-heading"><h2 id="start-title">Get started</h2><p>Build from source with Rust 1.88 or newer. Configure an OpenAI-compatible endpoint before your first run.</p></div>
+      <div class="start-grid">
+        <div class="start-instructions"><h3>From clone to first prompt</h3><p>Arabica is in active development. The source is the most direct way to try it and inspect how it works.</p><ol><li>Clone the repository.</li><li>Build the CLI in release mode.</li><li>Set the provider environment variables, then run a prompt.</li></ol><a class="text-link" href="https://github.com/haowei2000/Arabica/blob/main/README.md#run-the-cli">Full setup in the README <span aria-hidden="true">↗</span></a></div>
+        <pre class="code-block"><code><span class="code-comment"># Build</span>
+git clone https://github.com/haowei2000/Arabica.git
+cd Arabica
 cargo build --release -p arabica-cli
-./target/release/arabica --help</code></pre>
-  <p style="margin-top: 16px">Configure a provider (OpenAI-compatible endpoint works out of the box):</p>
-<pre><code>mkdir -p ~/.arabica
-cat > ~/.arabica/config.toml &lt;&lt;'EOF'
-[provider]
-api_type = "open_ai_chat_completions"
-api_key  = "sk-..."                 # keep the file chmod 600
-base_url = "https://api.openai.com/v1"
-model    = "gpt-4.1"
-EOF
-chmod 600 ~/.arabica/config.toml</code></pre>
-  <p style="margin-top: 16px">Then drop an <span class="inline">AGENTS.md</span> in your project and start:</p>
-<pre><code>cd your-project
-arabica               # fullscreen TUI
-arabica -p "..."      # one-shot, for scripts</code></pre>
-</section>
 
-<section class="wrap">
-  <h2><span class="dash">──</span> Architecture</h2>
-  <table>
-    <tr><td>arabica-protocol</td><td>Canonical commands, events, ids; the contract everything speaks</td></tr>
-    <tr><td>arabica-runtime</td><td>Agent loop, short-memory projection, file-backed GC</td></tr>
-    <tr><td>arabica-session</td><td>Session lifecycle, sequencing, per-session event ordering</td></tr>
-    <tr><td>arabica-provider</td><td>Model-provider boundary and API adapters</td></tr>
-    <tr><td>arabica-runner</td><td>Confined local tools (read/write/edit/shell) behind one trait</td></tr>
-    <tr><td>arabica-adapters</td><td>JSONL session store and persistence adapters</td></tr>
-    <tr><td>arabica-cli</td><td>Terminal chat, ACP host, one-shot runner</td></tr>
-    <tr><td>arabica-server</td><td>Axum HTTP/SSE host for the same protocol</td></tr>
-  </table>
-</section>
+<span class="code-comment"># Configure your provider locally</span>
+export OPENAI__API_KEY=<span class="code-string">"your-key"</span>
+export OPENAI__BASE_URL=<span class="code-string">"https://api.openai.com/v1"</span>
+export OPENAI__MODEL=<span class="code-string">"your-model"</span>
 
-<footer class="wrap">
-  Licensed under Apache-2.0 · <a href="https://github.com/haowei2000/Arabica">GitHub</a> · <a href="https://github.com/haowei2000/Arabica/releases">Releases</a>
-</footer>
+<span class="code-comment"># Run a one-shot task</span>
+./target/release/arabica -p <span class="code-string">"Explain this workspace"</span></code></pre>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="wrap footer-inner"><div><a class="footer-brand" href="#top"><img src="./arabica-icon.svg" alt="" width="24" height="24"> Arabica</a><p>Open-source agent infrastructure, brewed in Rust.</p></div><div class="footer-links"><a href="https://github.com/haowei2000/Arabica">GitHub</a><a href="https://github.com/haowei2000/Arabica/blob/main/LICENSE">Apache-2.0 license</a><a href="https://github.com/haowei2000/Arabica/blob/main/CONTRIBUTING.md">Contribute</a></div></div></footer>
 </body>
 </html>

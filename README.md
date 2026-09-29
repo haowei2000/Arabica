@@ -1,5 +1,7 @@
 # Arabica
 
+[Website](https://haowei2000.github.io/Arabica/) · [Apache-2.0 license](LICENSE)
+
 <p align="center">
   <img src="static/arabica-icon.svg" width="120" alt="Arabica icon: roasted coffee beans">
 </p>
@@ -136,4 +138,6 @@ No browser UI, React application, or other frontend is currently maintained.
 
 ## License
 
-Licensed under the Apache License 2.0. See `LICENSE` and `NOTICE`.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE). Contributions are accepted under the same license unless
+explicitly stated otherwise.
