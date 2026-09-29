@@ -1029,17 +1029,20 @@ fn choose_blend_model(
             )
     });
     let previous_step_events = previous_route.map_or(history, |index| &history[index + 1..]);
-    let previous_tool_error = previous_step_events.iter().rev().find_map(|envelope| {
-        if envelope.run_id.as_ref() != Some(run_id) {
-            return None;
-        }
-        match envelope.event {
+    // Route from the whole completed tool batch. A later successful call must
+    // not erase an earlier failure from the same model step.
+    let previous_tool_outcome = previous_step_events
+        .iter()
+        .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+        .filter_map(|envelope| match envelope.event {
             Event::ToolCallCompleted { is_error, .. } => Some(is_error),
             _ => None,
-        }
-    });
+        })
+        .fold(None, |outcome, is_error| {
+            Some(outcome.unwrap_or(false) || is_error)
+        });
 
-    match previous_tool_error {
+    match previous_tool_outcome {
         Some(true) if policy.after_tool_error.is_some() => (
             policy.after_tool_error.clone().expect("checked above"),
             BlendRouteReason::AfterToolError,
@@ -4099,6 +4102,56 @@ mod tests {
             },
             event,
         )
+    }
+
+    #[test]
+    fn blend_routes_to_error_model_when_any_tool_in_previous_step_failed() {
+        let run_id = RunId::new("prior-run");
+        let policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "balanced".to_owned(),
+            after_tool_success: Some("fast".to_owned()),
+            after_tool_error: Some("strong".to_owned()),
+            recovery_model: None,
+            recovery_after_no_progress_steps: 2,
+        };
+        let history = vec![
+            history_event(
+                1,
+                Event::ModelRouteSelected {
+                    model_step: 1,
+                    decision_id: "prior-run:1".to_owned(),
+                    policy_id: "test".to_owned(),
+                    policy_version: 1,
+                    model_alias: Some("balanced".to_owned()),
+                    reason: "default".to_owned(),
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "failed".to_owned(),
+                    name: "test".to_owned(),
+                    result: "failed".to_owned(),
+                    is_error: true,
+                },
+            ),
+            history_event(
+                3,
+                Event::ToolCallCompleted {
+                    call_id: "succeeded".to_owned(),
+                    name: "test".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+
+        assert_eq!(
+            choose_blend_model(&policy, &history, &run_id, 0, 2),
+            ("strong".to_owned(), BlendRouteReason::AfterToolError)
+        );
     }
 
     fn pointer_gc_policy(

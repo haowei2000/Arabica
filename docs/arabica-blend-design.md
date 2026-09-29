@@ -1,8 +1,9 @@
 # Arabica Blend: Adaptive Model Routing Design
 
-Status: proposal, 2026-09-29. This document specifies a staged implementation;
-the first runtime slice is now implemented. Related papers and source links are
-in [the reading list](blend-reading-list.md).
+Status: active implementation, 2026-09-29. The measurement baseline and static
+multi-model routing are implemented; the first routing correctness refinement
+is in progress. Related papers and source links are in
+[the reading list](blend-reading-list.md).
 
 ## Implemented slice
 
@@ -19,11 +20,20 @@ calls, not causal estimates.
 `BlendProvider` holds named `ApiModelProvider` candidates and routes by alias.
 `BlendRoutingPolicy` supports a default model, next-call model after successful
 or failed tools, and recovery after a configured no-progress threshold. The
+next-call tool outcome is aggregated across the completed tool batch: any
+failed tool selects the error route, even when another tool in that batch
+succeeded. The
 server can configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
 named aliases and model IDs from `~/.arabica/config.toml`. All candidates
 currently share one API type, base URL, and key. Terminal chat, one-shot runs,
 and ACP sessions use the same policy and provider pool; ACP exposes aliases in
 its model selector and treats the selected alias as that session's default.
+
+The evaluator reports run completion states, not verified task correctness.
+It does not yet record an observation for a provider call interrupted by
+cancellation. Policy identity is currently the configured ID and version; it
+does not hash the full policy and model registry snapshot. ACP model selection
+changes the session's default alias while retaining the other routes.
 
 This slice does not automatically retrain or promote policy versions. It
 provides auditable outcomes and deterministic rules that can be revised by
@@ -361,5 +371,28 @@ changes. Protocol changes also need serialization/schema and restore tests.
 - Which task cohorts have a trustworthy success oracle. Do not optimize
   quality from run completion alone.
 
-The recommended first PR is Increment A. It turns the existing event log into
-measured decision evidence before Blend starts changing which model runs.
+## Immediate implementation plan
+
+1. **Route from complete step outcomes.** Aggregate all tool results in a
+   completed model step, distinguish error classes, and define Blend progress
+   signals without changing the runtime's existing hard-stop semantics.
+2. **Pin reproducible policy state.** Record a policy content hash, model
+   registry snapshot, and explicit per-run model override semantics. ACP
+   changes to a session default must receive a distinct policy identity.
+3. **Complete call observations.** Record cancellation and missing usage as
+   explicit observation states, and keep task success separate from run
+   completion.
+4. **Filter and stabilize routes.** Validate required model capabilities,
+   context limits, and hard constraints before selection; then add bounded
+   switching behavior with explicit recovery exceptions.
+5. **Run controlled Blend experiments.** Compare fixed strong, fixed
+   inexpensive, fixed stage-based, and state-aware routing on frozen tasks.
+   Report verified success, cost per successful task, latency, recovery, and
+   uncertainty before proposing policy tuning.
+6. **Test memory-aware routing.** First vary memory evidence while holding
+   routing fixed; only combine memory and routing policies after an isolated
+   experiment shows a measurable benefit.
+
+Each behavior change needs focused tests. Protocol changes also need
+serialization/schema and restore coverage. Automatic policy learning and
+promotion remain gated on mature evaluations and controlled canary evidence.
