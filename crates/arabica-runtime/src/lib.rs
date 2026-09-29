@@ -24,7 +24,7 @@ use arabica_model::{
 };
 use arabica_protocol::{
     AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, Event, EventEnvelope,
-    EventId, ModelResponseRejectionReason, OutputStream, RunId, SessionId,
+    EventId, ModelCallOutcome, ModelResponseRejectionReason, OutputStream, RunId, SessionId,
     TerminalControllerPolicy, TerminalControllerState, TerminalControllerTransitionReason,
     ToolInteractionKind, ToolPermissionOutcome, ToolPermissionScope, ToolPermissionSource,
     WorkspaceId,
@@ -340,6 +340,8 @@ pub struct BlendModelEvaluation {
     pub selected_calls: u64,
     pub observed_calls: u64,
     pub provider_failures: u64,
+    pub cancelled_calls: u64,
+    pub calls_with_unknown_outcome: u64,
     pub elapsed_ms_total: u64,
     pub usage_reported_calls: u64,
     pub input_tokens: u64,
@@ -399,6 +401,7 @@ pub fn evaluate_blend_history(events: &[EventEnvelope]) -> BlendEvaluationReport
                 model_step,
                 elapsed_ms,
                 provider_succeeded,
+                outcome,
                 usage,
                 ..
             } => {
@@ -407,7 +410,15 @@ pub fn evaluate_blend_history(events: &[EventEnvelope]) -> BlendEvaluationReport
                 };
                 let metrics = report.models.entry(alias.clone()).or_default();
                 metrics.observed_calls += 1;
-                metrics.provider_failures += u64::from(!provider_succeeded);
+                match outcome {
+                    ModelCallOutcome::Failed => metrics.provider_failures += 1,
+                    ModelCallOutcome::Cancelled => metrics.cancelled_calls += 1,
+                    ModelCallOutcome::Unknown => {
+                        metrics.calls_with_unknown_outcome += 1;
+                        metrics.provider_failures += u64::from(!provider_succeeded);
+                    }
+                    ModelCallOutcome::Succeeded => {}
+                }
                 metrics.elapsed_ms_total = metrics.elapsed_ms_total.saturating_add(*elapsed_ms);
                 if let Some(usage) = usage {
                     metrics.usage_reported_calls += 1;
@@ -1495,7 +1506,20 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             match outcome {
                                 Some(result) => result,
                                 // Dropping the call aborts the provider request.
-                                None => return self.finish_cancelled(run_id, event_log).await,
+                                None => {
+                                    event_log.append(Event::ModelCallObserved {
+                                        model_step,
+                                        decision_id: decision_id.clone(),
+                                        elapsed_ms: u64::try_from(
+                                            model_call_started.elapsed().as_millis(),
+                                        )
+                                        .unwrap_or(u64::MAX),
+                                        provider_succeeded: false,
+                                        outcome: ModelCallOutcome::Cancelled,
+                                        usage: None,
+                                    });
+                                    return self.finish_cancelled(run_id, event_log).await;
+                                }
                             }
                         }
                     };
@@ -1514,6 +1538,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 elapsed_ms: u64::try_from(model_call_started.elapsed().as_millis())
                                     .unwrap_or(u64::MAX),
                                 provider_succeeded: false,
+                                outcome: ModelCallOutcome::Failed,
                                 usage: None,
                             });
                             if self.terminal_controller_policy.is_typed() {
@@ -1567,6 +1592,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         elapsed_ms: u64::try_from(model_call_started.elapsed().as_millis())
                             .unwrap_or(u64::MAX),
                         provider_succeeded: true,
+                        outcome: ModelCallOutcome::Succeeded,
                         usage: result
                             .response
                             .as_ref()
@@ -5066,6 +5092,14 @@ mod tests {
         .await;
 
         assert!(matches!(events.last(), Some(Event::RunCancelled)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelCallObserved {
+                outcome: ModelCallOutcome::Cancelled,
+                usage: None,
+                ..
+            }
+        )));
         assert!(
             runtime.model().cancelled,
             "the provider is told to clean up"

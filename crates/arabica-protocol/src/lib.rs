@@ -291,6 +291,8 @@ pub enum Event {
         decision_id: String,
         elapsed_ms: u64,
         provider_succeeded: bool,
+        #[serde(default)]
+        outcome: ModelCallOutcome,
         usage: Option<RuntimeUsage>,
     },
     /// Exact provider-neutral request immediately before wire encoding.
@@ -425,6 +427,16 @@ pub enum Event {
     ContextDisclosureSet { level: DisclosureLevel },
     #[serde(rename = "error")]
     Error { code: ErrorCode, message: String },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallOutcome {
+    Succeeded,
+    Failed,
+    Cancelled,
+    #[default]
+    Unknown,
 }
 
 impl Event {

@@ -8,7 +8,9 @@ is in progress. Related papers and source links are in
 ## Implemented slice
 
 The current branch records an internal `model.route.selected` event before
-each provider call and a `model.call.observed` event after success or failure.
+each provider call and a `model.call.observed` event after success, failure, or
+cancellation. Outcome is typed; absent token usage remains unknown rather than
+zero.
 These events include a stable decision ID, policy identity/version, selected
 alias (or model ID for the legacy single-model path), a policy content
 fingerprint, a non-secret alias/model-ID registry snapshot, elapsed time,
@@ -33,8 +35,7 @@ and ACP sessions use the same policy and provider pool; ACP exposes aliases in
 its model selector and treats the selected alias as that session's default.
 
 The evaluator reports run completion states, not verified task correctness.
-It does not yet record an observation for a provider call interrupted by
-cancellation. ACP model selection changes the session's default alias while
+ACP model selection changes the session's default alias while
 retaining the other routes; the content fingerprint distinguishes that
 effective policy change.
 
