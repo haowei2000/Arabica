@@ -58,8 +58,8 @@ mod env {
 }
 
 /// Model selection, deliberately not the credential. A `--api-key` flag would
-/// put the key in shell history and process listings. ACP reads the key from
-/// the environment; terminal chat and print mode can also use saved auth.
+/// put the key in shell history and process listings. The CLI resolver accepts
+/// an environment key, user config key, or saved auth for all host modes.
 #[derive(Args, Clone, Debug, Default)]
 pub struct HostConfigArgs {
     /// Override OPENAI__MODEL.

@@ -1,8 +1,8 @@
 # `arabica-cli`
 
-`arabica-cli` builds one binary, `structure`, with three ways to drive the
-same coding agent: `structure` (interactive terminal chat), `structure acp`
-(Agent Client Protocol v1 over stdio, for editors), and `structure -p`
+`arabica-cli` builds one binary, `arabica`, with three ways to drive the
+same coding agent: `arabica` (interactive terminal chat), `arabica acp`
+(Agent Client Protocol v1 over stdio, for editors), and `arabica -p`
 (one-shot execution, for scripts and CI). All three
 bind the same canonical protocol (`docs/protocol.md`) to the same
 `CoreRuntime`/`LocalRunner` composition (`crates/arabica-cli/src/host.rs`);
@@ -15,7 +15,7 @@ neither is a second implementation of the agent. See
 cargo build -p arabica-cli --release
 ```
 
-The binary is at `target/release/structure`.
+The binary is at `target/release/arabica`.
 
 ## Configuration
 
@@ -23,10 +23,10 @@ The CLI and ACP share `arabica-server`'s environment variable names:
 
 | Variable | Flag override | Required | Purpose |
 |---|---|---|---|
-| `OPENAI__API_KEY` | *(none)* | yes for ACP; CLI can use saved auth | Credential. Deliberately has no flag: a `--api-key` argument would put the key in shell history and process listings. |
-| `OPENAI__BASE_URL` | `--base-url` | yes | Provider endpoint, e.g. `https://api.openai.com/v1`. |
-| `OPENAI__MODEL` | `--model` | yes | Model name. |
-| `ARABICA__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`, `gemini_interactions`. |
+| `OPENAI__API_KEY` | *(none)* | yes unless saved auth or user config supplies it | Credential. Deliberately has no flag: a `--api-key` argument would put the key in shell history and process listings. |
+| `OPENAI__BASE_URL` | `--base-url` | yes unless the flag or user config supplies it | Provider endpoint, e.g. `https://api.openai.com/v1`. |
+| `OPENAI__MODEL` | `--model` | yes unless the flag, user config, or Blend default supplies it | Model name. |
+| `ARABICA__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | Implemented: `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`. `gemini_interactions` is declared but not implemented. |
 | `ARABICA__MODELS` | *(none)* | no | Comma-separated model names offered in the ACP selector. The current `OPENAI__MODEL` is always included. |
 
 A flag always overrides its matching variable. Terminal chat and `-p` also
@@ -34,7 +34,7 @@ load `$ARABICA_HOME/config.toml` (default `~/.arabica/config.toml`) and a
 workspace settings file under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml`.
 For the model, resolution is flag → saved workspace choice → environment →
 user config. For endpoint and API type, it is flag → environment → user
-config. Thinking is saved workspace choice → user config → off. `structure
+config. Thinking is saved workspace choice → user config → off. `arabica
 config` prints the resolved values and both file paths.
 
 Example user config:
@@ -50,22 +50,23 @@ thinking = "off"
 
 If `config.toml` contains `api_key`, restrict it to your account with
 `chmod 600 ~/.arabica/config.toml`; the CLI refuses to read a key from a
-more permissive file or a symlink. Alternatively, run `structure auth login`
+more permissive file or a symlink. Alternatively, run `arabica auth login`
 once to enter the key without echoing it. The key is then saved in `$ARABICA_HOME/auth.json`
 (default `~/.arabica/auth.json`) with owner-only file permissions. Run
-`structure auth status` to see which credential source is active, or
-`structure auth logout` to remove the separately saved key. Credential
-priority is `OPENAI__API_KEY` → user `config.toml` → `auth.json`. ACP still requires its environment
-variable, so editor clients keep their existing credential configuration.
+`arabica auth status` to see which credential source is active, or
+`arabica auth logout` to remove the separately saved key. Credential
+priority is `OPENAI__API_KEY` → user `config.toml` → `auth.json`. For editor
+launches, passing the key through the editor environment is usually the most
+predictable choice.
 
-Workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.arabica` directory
-in the project: a malicious repository could otherwise redirect model calls
-and capture the real API key. ACP retains its environment-and-flag resolution
-and its per-session model and thinking controls.
+Workspace config files reject an `api_key` field. Nothing is read from a `.env`
+or `.arabica` directory in the project: a malicious repository could otherwise
+redirect model calls and capture the real API key. ACP uses the same resolved
+provider settings and keeps its per-session model and thinking controls.
 
 ## Project instructions
 
-Every surface (terminal chat, `structure acp`, `structure -p`) sends the
+Every surface (terminal chat, `arabica acp`, `arabica -p`) sends the
 same project instructions to the model. An `AGENTS.md` file in the workspace
 root is loaded as a standing system instruction, annotated with its source
 path so the model request records where the text came from. When the session
@@ -91,7 +92,7 @@ completion and print the answer once it is complete.
 
 ## Interactive terminal
 
-Run `structure` (or `structure chat`) in a project directory to start a
+Run `arabica` (or `arabica chat`) in a project directory to start a
 continuous conversation. In a terminal, the chat runs inline, Claude-Code
 style: the transcript is printed straight into the terminal's native
 scrollback -- normal scrolling, selection, and search keep working -- while a
@@ -103,7 +104,7 @@ interface remains available. `--plain`
 selects that interface explicitly. Each prompt uses the same session and event
 log; `/exit` or `/quit` ends the terminal process. `--continue` restores the most
 recent session in the current directory, and `--resume <ID>` restores a
-specific one (`structure sessions list` shows IDs). Inside a running terminal
+specific one (`arabica sessions list` shows IDs). Inside a running terminal
 chat, `/sessions` lists this workspace's stored sessions and `/resume <id>`
 switches to one in place: the new session opens first (an unknown id leaves
 the current session untouched), the previous one is suspended, and the next
@@ -124,10 +125,10 @@ Archival is subject to the runtime's cost gate, so a short conversation may
 produce no archive files.
 
 ```bash
-structure
-structure --continue
-structure --allow-shell
-structure --plain
+arabica
+arabica --continue
+arabica --allow-shell
+arabica --plain
 ```
 
 In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
@@ -190,7 +191,7 @@ Shell is available only with `--allow-shell` and also requires approval.
 `--read-only` excludes mutating tools and cannot be combined with
 `--allow-shell`. Ctrl-C cancels a running turn; at the input prompt it exits.
 
-## `structure acp`
+## `arabica acp`
 
 Speaks [Agent Client Protocol](https://agentclientprotocol.com) v1 over
 stdio. `initialize` always answers protocol version 1 with no auth methods
@@ -206,9 +207,9 @@ Add to Zed's `settings.json`:
 ```json
 {
   "agent_servers": {
-    "Structure": {
+    "Arabica": {
       "type": "custom",
-      "command": "/absolute/path/to/structure",
+      "command": "/absolute/path/to/arabica",
       "args": ["acp"],
       "env": {
         "OPENAI__API_KEY": "<your-api-key>",
@@ -242,7 +243,7 @@ adapters still emit their ACP updates after complete HTTP responses.
 
 ### Tools and permissions
 
-`structure acp` advertises `read_file`, `list_dir`, `grep`, `find_files`,
+`arabica acp` advertises `read_file`, `list_dir`, `grep`, `find_files`,
 `write_file`, `edit_files`, `delete_file`, and `shell`
 (`crates/arabica-cli/src/main.rs`'s `run_acp`). The read-only tools run
 without asking; everything else — including `shell`, which has no path
@@ -315,7 +316,7 @@ is never written to the session log.
 
 ### ACP verification
 
-`cargo test -p arabica-cli` covers a real `structure acp` subprocess with
+`cargo test -p arabica-cli` covers a real `arabica acp` subprocess with
 an ACP client and mock model provider, multi-turn message ordering, permission
 requests, ACP load/resume, and print-mode cross-process session recovery. The
 in-process ACP client test
@@ -325,7 +326,7 @@ MCP test verifies discovery, a client-supplied request header, and a tool
 call. After building the binary, configure Zed as above and verify a new
 session, a tool approval, and reopening the session after restarting Zed.
 
-## `structure -p`
+## `arabica -p`
 
 Runs one task non-interactively and exits. There is no client to ask for
 permission in this mode, so it never wires a permission gate at all: what the
@@ -333,8 +334,8 @@ tool policy admits runs outright, and what it excludes is invisible to the
 model.
 
 ```bash
-structure -p "add a CHANGELOG entry for the last commit"
-echo "summarize open TODOs in src/" | structure -p -
+arabica -p "add a CHANGELOG entry for the last commit"
+echo "summarize open TODOs in src/" | arabica -p -
 ```
 
 ### Flags
@@ -342,15 +343,15 @@ echo "summarize open TODOs in src/" | structure -p -
 | Flag | Effect |
 |---|---|
 | `-p, --print <TASK>` | The task text, or `-` to read it from stdin. |
-| `--output-format text\|jsonl` | `text` (default): stdout is only the final answer (nothing at all if the run didn't complete); progress goes to stderr. `jsonl`: stdout streams one JSON `EventEnvelope` per line, live, for every client-visible Event — the same boundary `structure acp` uses, so no internal model exchange (system prompt, raw reasoning) ever reaches a pipe built for scripting. |
+| `--output-format text\|jsonl` | `text` (default): stdout is only the final answer (nothing at all if the run didn't complete); progress goes to stderr. `jsonl`: stdout streams one JSON `EventEnvelope` per line, live, for every client-visible Event — the same boundary `arabica acp` uses, so no internal model exchange (system prompt, raw reasoning) ever reaches a pipe built for scripting. |
 | `--allow-shell` | Adds `shell` to the tool policy. Off by default. |
 | `--read-only` | Restricts the policy to read-only tools. Mutually exclusive with `--allow-shell` (exit code 2 if both are given): `shell` has no path confinement, so allowing it while also promising nothing changes would make the promise false, not just permissive. |
 | `--continue` | Continue the most recently active session in this workspace. |
-| `--resume <ID>` | Resume a specific session in this workspace; see `structure sessions list`. |
+| `--resume <ID>` | Resume a specific session in this workspace; see `arabica sessions list`. |
 
 Each print-mode run is saved in the same event-log format as ACP. Use
-`structure sessions list` to see sessions for the current workspace, or
-`structure sessions list --all` to see every workspace. Listing does not
+`arabica sessions list` to see sessions for the current workspace, or
+`arabica sessions list --all` to see every workspace. Listing does not
 require model-provider credentials.
 
 ### Exit codes
@@ -362,10 +363,10 @@ require model-provider credentials.
 | `2` | Configuration error: missing credentials, or `--allow-shell` with `--read-only`. |
 | `130` | Cancelled (Ctrl-C). The first Ctrl-C cancels the in-flight run; a second exits immediately. |
 
-### Example: piping structured output
+### Example: piping arabicad output
 
 ```bash
-structure --output-format jsonl -p "run the test suite and report failures" \
+arabica --output-format jsonl -p "run the test suite and report failures" \
   | jq -r 'select(.event.type == "tool.call.completed") | .event.payload.name'
 ```
 
