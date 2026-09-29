@@ -6,7 +6,7 @@ Maintain one experiment package: `structure-short-memory-benchmark`.
 
 ## Development setup
 
-Install Rust 1.85 or newer, then run:
+Install Rust 1.88 or newer, then run:
 
 ```bash
 cargo build --workspace
