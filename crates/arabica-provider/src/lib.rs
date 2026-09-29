@@ -151,6 +151,12 @@ pub trait ModelProvider {
         None
     }
 
+    /// Stable, non-secret description of the configured model candidates.
+    /// Implementations should omit credentials and endpoint values.
+    fn model_registry_snapshot(&self) -> String {
+        self.model_id().unwrap_or("unknown").to_owned()
+    }
+
     fn supports_model_alias(&self, alias: &str) -> bool {
         self.model_id() == Some(alias)
     }
@@ -250,6 +256,16 @@ impl ModelProvider for BlendProvider {
 
     fn supports_model_alias(&self, alias: &str) -> bool {
         self.candidates.contains_key(alias)
+    }
+
+    fn model_registry_snapshot(&self) -> String {
+        self.candidates
+            .iter()
+            .map(|(alias, provider)| {
+                format!("{alias}={}", provider.model_id().unwrap_or("unknown"))
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     async fn complete(

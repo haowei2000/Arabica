@@ -10,8 +10,11 @@ is in progress. Related papers and source links are in
 The current branch records an internal `model.route.selected` event before
 each provider call and a `model.call.observed` event after success or failure.
 These events include a stable decision ID, policy identity/version, selected
-alias (or model ID for the legacy single-model path), elapsed time, provider
-success, and reported token usage. They stay out of client event streams and
+alias (or model ID for the legacy single-model path), a policy content
+fingerprint, a non-secret alias/model-ID registry snapshot, elapsed time,
+provider success, and reported token usage. The policy is copied at run start
+so changes to the session default affect future runs only. These events stay
+out of client event streams and
 short-memory projections. `evaluate_blend_history` rebuilds per-model call and
 downstream tool metrics plus per-policy terminal run counts from canonical
 history. Tool outcomes in the per-model report are associations with subsequent
@@ -31,9 +34,9 @@ its model selector and treats the selected alias as that session's default.
 
 The evaluator reports run completion states, not verified task correctness.
 It does not yet record an observation for a provider call interrupted by
-cancellation. Policy identity is currently the configured ID and version; it
-does not hash the full policy and model registry snapshot. ACP model selection
-changes the session's default alias while retaining the other routes.
+cancellation. ACP model selection changes the session's default alias while
+retaining the other routes; the content fingerprint distinguishes that
+effective policy change.
 
 This slice does not automatically retrain or promote policy versions. It
 provides auditable outcomes and deterministic rules that can be revised by

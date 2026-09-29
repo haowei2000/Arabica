@@ -170,6 +170,14 @@ impl ModelProvider for HostModel {
         }
     }
 
+    fn model_registry_snapshot(&self) -> String {
+        match self {
+            Self::Blend(model) => model.model_registry_snapshot(),
+            Self::Api(model) | Self::StreamingApi(model, _) => model.model_registry_snapshot(),
+            Self::Scripted(model) => model.model_registry_snapshot(),
+        }
+    }
+
     fn supports_model_alias(&self, alias: &str) -> bool {
         match self {
             Self::Api(model) | Self::StreamingApi(model, _) => model.supports_model_alias(alias),

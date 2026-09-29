@@ -40,6 +40,14 @@ impl ModelProvider for ServerModel {
         }
     }
 
+    fn model_registry_snapshot(&self) -> String {
+        match self {
+            Self::Blend(model) => model.model_registry_snapshot(),
+            Self::Echo(model) => model.model_registry_snapshot(),
+            Self::Api(model) => model.model_registry_snapshot(),
+        }
+    }
+
     fn supports_model_alias(&self, alias: &str) -> bool {
         match self {
             Self::Blend(model) => model.supports_model_alias(alias),

@@ -1249,6 +1249,16 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 event_log.append(Event::MessageAccepted {
                     content: content.clone(),
                 });
+                // A run keeps one immutable routing recipe even if the host
+                // changes the session's default model while this run awaits.
+                let pinned_blend_policy = self.blend_policy.clone();
+                let policy_fingerprint = pinned_blend_policy.as_ref().map_or_else(
+                    || "single_model".to_owned(),
+                    |policy| {
+                        let bytes = serde_json::to_vec(policy).unwrap_or_default();
+                        format!("{:x}", Sha256::digest(bytes))
+                    },
+                );
                 let tools = self.tools.clone();
                 let mut protected_event_ids = HashSet::new();
                 let mut pointer_gc_economics = PointerGcRunEconomics::default();
@@ -1431,7 +1441,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     };
                     let request_bytes = model_run_request_bytes(&request);
                     let decision_id = format!("{}:{model_step}", run_id);
-                    let route = self.blend_policy.as_ref().map(|policy| {
+                    let route = pinned_blend_policy.as_ref().map(|policy| {
                         choose_blend_model(
                             policy,
                             &history,
@@ -1443,14 +1453,15 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     event_log.append(Event::ModelRouteSelected {
                         model_step,
                         decision_id: decision_id.clone(),
-                        policy_id: self.blend_policy.as_ref().map_or_else(
+                        policy_id: pinned_blend_policy.as_ref().map_or_else(
                             || "single_model".to_owned(),
                             |policy| policy.policy_id.clone(),
                         ),
-                        policy_version: self
-                            .blend_policy
+                        policy_version: pinned_blend_policy
                             .as_ref()
                             .map_or(1, |policy| policy.version),
+                        policy_fingerprint: policy_fingerprint.clone(),
+                        model_registry_snapshot: self.model.model_registry_snapshot(),
                         model_alias: route
                             .as_ref()
                             .map(|(alias, _)| alias.clone())
@@ -4124,6 +4135,8 @@ mod tests {
                     decision_id: "prior-run:1".to_owned(),
                     policy_id: "test".to_owned(),
                     policy_version: 1,
+                    policy_fingerprint: "test-fingerprint".to_owned(),
+                    model_registry_snapshot: "balanced=balanced".to_owned(),
                     model_alias: Some("balanced".to_owned()),
                     reason: "default".to_owned(),
                 },

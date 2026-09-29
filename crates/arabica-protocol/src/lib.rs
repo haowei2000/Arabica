@@ -274,6 +274,12 @@ pub enum Event {
         decision_id: String,
         policy_id: String,
         policy_version: u64,
+        /// Content hash of the effective policy pinned for this run.
+        #[serde(default)]
+        policy_fingerprint: String,
+        /// Stable aliases and model IDs; excludes credentials and endpoints.
+        #[serde(default)]
+        model_registry_snapshot: String,
         model_alias: Option<String>,
         reason: String,
     },
