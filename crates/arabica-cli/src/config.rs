@@ -45,10 +45,16 @@ struct UserBlend {
     recovery_model: Option<String>,
     #[serde(default = "default_recovery_threshold")]
     recovery_after_no_progress_steps: usize,
+    #[serde(default = "default_model_dwell_steps")]
+    minimum_model_dwell_steps: usize,
 }
 
 fn default_recovery_threshold() -> usize {
     2
+}
+
+fn default_model_dwell_steps() -> usize {
+    1
 }
 
 #[derive(Debug)]
@@ -329,6 +335,7 @@ pub fn resolve_cli_runtime_config(
                 after_tool_error: blend.after_tool_error,
                 recovery_model: blend.recovery_model,
                 recovery_after_no_progress_steps: blend.recovery_after_no_progress_steps,
+                minimum_model_dwell_steps: blend.minimum_model_dwell_steps,
             };
             let aliases = std::iter::once(policy.default_model.as_str())
                 .chain(policy.after_tool_success.as_deref())
@@ -337,6 +344,7 @@ pub fn resolve_cli_runtime_config(
             if policy.policy_id.trim().is_empty()
                 || policy.version == 0
                 || policy.recovery_after_no_progress_steps == 0
+                || policy.minimum_model_dwell_steps == 0
                 || aliases.into_iter().any(|alias| !models.contains_key(alias))
             {
                 return Err(

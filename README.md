@@ -99,6 +99,7 @@ after_tool_success = "fast"
 after_tool_error = "strong"
 recovery_after_no_progress_steps = 2
 recovery_model = "strong"
+minimum_model_dwell_steps = 2
 ```
 
 Set the key with `arabica auth login` or `OPENAI__API_KEY`. The CLI validates every referenced alias at startup. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes the configured aliases as its model selector; changing the selection updates that session's default model while retaining the remaining Blend routes.
@@ -115,6 +116,9 @@ Optional configuration:
 - `ARABICA__BLEND_RECOVERY_MODEL`: optional alias after repeated no-progress
   steps (threshold defaults to 2 and is set by
   `ARABICA__BLEND_RECOVERY_AFTER_NO_PROGRESS_STEPS`)
+- `ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS`: minimum consecutive calls to
+  keep a selected model before ordinary routing can switch; error and recovery
+  routes bypass this hold, default `1`
 - `ARABICA__BLEND_POLICY_ID` and `ARABICA__BLEND_POLICY_VERSION`: immutable
   policy identity recorded with each route
 - `ARABICA__API_TYPE`: provider API dialect, default

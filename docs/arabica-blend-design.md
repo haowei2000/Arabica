@@ -27,8 +27,9 @@ calls, not causal estimates.
 or failed tools, and recovery after a configured no-progress threshold. The
 next-call tool outcome is aggregated across the completed tool batch: any
 failed tool selects the error route, even when another tool in that batch
-succeeded. The
-server can configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
+succeeded. Ordinary default/success routes honor a configurable minimum model
+dwell; tool-error and no-progress recovery routes bypass it. The server can
+configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
 named aliases and model IDs from `~/.arabica/config.toml`. All candidates
 currently share one API type, base URL, and key. Terminal chat, one-shot runs,
 and ACP sessions use the same policy and provider pool; ACP exposes aliases in
@@ -386,9 +387,9 @@ changes. Protocol changes also need serialization/schema and restore tests.
 3. **Complete call observations.** Record cancellation and missing usage as
    explicit observation states, and keep task success separate from run
    completion.
-4. **Filter and stabilize routes.** Validate required model capabilities,
-   context limits, and hard constraints before selection; then add bounded
-   switching behavior with explicit recovery exceptions.
+4. **Filter and stabilize routes.** Add explicit model capability declarations
+   and validate required capabilities and context limits before selection.
+   Minimum model dwell is implemented; capability filtering remains pending.
 5. **Run controlled Blend experiments.** Compare fixed strong, fixed
    inexpensive, fixed stage-based, and state-aware routing on frozen tasks.
    Report verified success, cost per successful task, latency, recovery, and

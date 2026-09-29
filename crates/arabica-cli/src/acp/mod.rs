@@ -1390,6 +1390,7 @@ mod round_trip {
             after_tool_error: Some("strong".to_owned()),
             recovery_model: Some("strong".to_owned()),
             recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
         };
         let factory_config = initial.clone();
         let factory_aliases = aliases.clone();

@@ -193,6 +193,16 @@ impl AppState {
                     after_tool_error: std::env::var("ARABICA__BLEND_AFTER_TOOL_ERROR").ok(),
                     recovery_model: std::env::var("ARABICA__BLEND_RECOVERY_MODEL").ok(),
                     recovery_after_no_progress_steps,
+                    minimum_model_dwell_steps: std::env::var(
+                        "ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS",
+                    )
+                    .unwrap_or_else(|_| "1".to_owned())
+                    .parse::<usize>()
+                    .map_err(|error| {
+                        ProviderError::new(format!(
+                            "invalid ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS: {error}"
+                        ))
+                    })?,
                 };
                 (ServerModel::Blend(provider), Some(policy))
             }

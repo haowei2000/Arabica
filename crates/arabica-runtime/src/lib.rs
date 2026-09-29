@@ -333,6 +333,12 @@ pub struct BlendRoutingPolicy {
     pub after_tool_error: Option<String>,
     pub recovery_model: Option<String>,
     pub recovery_after_no_progress_steps: usize,
+    #[serde(default = "default_blend_model_dwell_steps")]
+    pub minimum_model_dwell_steps: usize,
+}
+
+const fn default_blend_model_dwell_steps() -> usize {
+    1
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -477,6 +483,7 @@ enum BlendRouteReason {
     AfterToolSuccess,
     AfterToolError,
     NoProgressRecovery,
+    MinimumDwell,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1053,7 +1060,7 @@ fn choose_blend_model(
             Some(outcome.unwrap_or(false) || is_error)
         });
 
-    match previous_tool_outcome {
+    let desired = match previous_tool_outcome {
         Some(true) if policy.after_tool_error.is_some() => (
             policy.after_tool_error.clone().expect("checked above"),
             BlendRouteReason::AfterToolError,
@@ -1063,7 +1070,45 @@ fn choose_blend_model(
             BlendRouteReason::AfterToolSuccess,
         ),
         _ => (policy.default_model.clone(), BlendRouteReason::Default),
+    };
+    let previous_alias = history.iter().rev().find_map(|envelope| {
+        if envelope.run_id.as_ref() != Some(run_id) {
+            return None;
+        }
+        match &envelope.event {
+            Event::ModelRouteSelected {
+                model_step: prior,
+                model_alias,
+                ..
+            } if *prior < model_step => model_alias.clone(),
+            _ => None,
+        }
+    });
+    if matches!(
+        desired.1,
+        BlendRouteReason::AfterToolSuccess | BlendRouteReason::Default
+    ) && let Some(previous_alias) = previous_alias
+        && desired.0 != previous_alias
+    {
+        let consecutive_alias_calls = history
+            .iter()
+            .rev()
+            .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+            .filter_map(|envelope| match &envelope.event {
+                Event::ModelRouteSelected {
+                    model_step: prior,
+                    model_alias,
+                    ..
+                } if *prior < model_step => Some(model_alias.as_deref()),
+                _ => None,
+            })
+            .take_while(|alias| *alias == Some(previous_alias.as_str()))
+            .count();
+        if consecutive_alias_calls < policy.minimum_model_dwell_steps {
+            return (previous_alias, BlendRouteReason::MinimumDwell);
+        }
     }
+    desired
 }
 
 impl<M: ModelProvider, R> CoreRuntime<M, R> {
@@ -1079,6 +1124,7 @@ impl<M: ModelProvider, R> CoreRuntime<M, R> {
             if policy.policy_id.trim().is_empty()
                 || policy.version == 0
                 || policy.recovery_after_no_progress_steps == 0
+                || policy.minimum_model_dwell_steps == 0
                 || aliases.clone().any(str::is_empty)
                 || aliases.any(|alias| !self.model.supports_model_alias(alias))
             {
@@ -4152,6 +4198,7 @@ mod tests {
             after_tool_error: Some("strong".to_owned()),
             recovery_model: None,
             recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
         };
         let history = vec![
             history_event(
@@ -4190,6 +4237,77 @@ mod tests {
         assert_eq!(
             choose_blend_model(&policy, &history, &run_id, 0, 2),
             ("strong".to_owned(), BlendRouteReason::AfterToolError)
+        );
+    }
+
+    #[test]
+    fn blend_holds_model_until_minimum_dwell_then_allows_success_route() {
+        let run_id = RunId::new("prior-run");
+        let policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "balanced".to_owned(),
+            after_tool_success: Some("fast".to_owned()),
+            after_tool_error: Some("strong".to_owned()),
+            recovery_model: Some("strong".to_owned()),
+            recovery_after_no_progress_steps: 3,
+            minimum_model_dwell_steps: 2,
+        };
+        let history = vec![
+            history_event(
+                1,
+                Event::ModelRouteSelected {
+                    model_step: 1,
+                    decision_id: "prior-run:1".to_owned(),
+                    policy_id: "test".to_owned(),
+                    policy_version: 1,
+                    policy_fingerprint: "test".to_owned(),
+                    model_registry_snapshot: "balanced=balanced".to_owned(),
+                    model_alias: Some("balanced".to_owned()),
+                    reason: "default".to_owned(),
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "succeeded".to_owned(),
+                    name: "test".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+
+        assert_eq!(
+            choose_blend_model(&policy, &history, &run_id, 0, 2),
+            ("balanced".to_owned(), BlendRouteReason::MinimumDwell)
+        );
+        let mut second_step = history.clone();
+        second_step.push(history_event(
+            3,
+            Event::ModelRouteSelected {
+                model_step: 2,
+                decision_id: "prior-run:2".to_owned(),
+                policy_id: "test".to_owned(),
+                policy_version: 1,
+                policy_fingerprint: "test".to_owned(),
+                model_registry_snapshot: "balanced=balanced".to_owned(),
+                model_alias: Some("balanced".to_owned()),
+                reason: "minimum_dwell".to_owned(),
+            },
+        ));
+        second_step.push(history_event(
+            4,
+            Event::ToolCallCompleted {
+                call_id: "succeeded-2".to_owned(),
+                name: "test".to_owned(),
+                result: "ok".to_owned(),
+                is_error: false,
+            },
+        ));
+        assert_eq!(
+            choose_blend_model(&policy, &second_step, &run_id, 0, 3),
+            ("fast".to_owned(), BlendRouteReason::AfterToolSuccess)
         );
     }
 
