@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use agent_client_protocol::schema::v1::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
@@ -47,6 +47,10 @@ struct UserBlend {
     recovery_after_no_progress_steps: usize,
     #[serde(default = "default_model_dwell_steps")]
     minimum_model_dwell_steps: usize,
+    #[serde(default)]
+    tool_call_capable_models: BTreeSet<String>,
+    #[serde(default)]
+    typed_completion_capable_models: BTreeSet<String>,
 }
 
 fn default_recovery_threshold() -> usize {
@@ -336,6 +340,8 @@ pub fn resolve_cli_runtime_config(
                 recovery_model: blend.recovery_model,
                 recovery_after_no_progress_steps: blend.recovery_after_no_progress_steps,
                 minimum_model_dwell_steps: blend.minimum_model_dwell_steps,
+                tool_call_capable_models: blend.tool_call_capable_models,
+                typed_completion_capable_models: blend.typed_completion_capable_models,
             };
             let aliases = std::iter::once(policy.default_model.as_str())
                 .chain(policy.after_tool_success.as_deref())
@@ -500,6 +506,8 @@ default_model = "fast"
 after_tool_error = "strong"
 recovery_model = "strong"
 recovery_after_no_progress_steps = 2
+tool_call_capable_models = ["fast", "strong"]
+typed_completion_capable_models = ["strong"]
 "#,
         )
         .unwrap();
@@ -511,6 +519,14 @@ recovery_after_no_progress_steps = 2
         assert_eq!(resolved.provider.model, "model-mini");
         assert_eq!(resolved.models["strong"], "model-pro");
         assert_eq!(resolved.blend_policy.as_ref().unwrap().version, 3);
+        assert_eq!(
+            resolved
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .typed_completion_capable_models,
+            BTreeSet::from(["strong".to_owned()])
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

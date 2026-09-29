@@ -203,6 +203,22 @@ impl AppState {
                             "invalid ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS: {error}"
                         ))
                     })?,
+                    tool_call_capable_models: std::env::var("ARABICA__BLEND_TOOL_CALL_MODELS")
+                        .unwrap_or_default()
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|alias| !alias.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                    typed_completion_capable_models: std::env::var(
+                        "ARABICA__BLEND_TYPED_COMPLETION_MODELS",
+                    )
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|alias| !alias.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
                 };
                 (ServerModel::Blend(provider), Some(policy))
             }

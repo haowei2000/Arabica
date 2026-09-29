@@ -1391,6 +1391,8 @@ mod round_trip {
             recovery_model: Some("strong".to_owned()),
             recovery_after_no_progress_steps: 2,
             minimum_model_dwell_steps: 1,
+            tool_call_capable_models: Default::default(),
+            typed_completion_capable_models: Default::default(),
         };
         let factory_config = initial.clone();
         let factory_aliases = aliases.clone();

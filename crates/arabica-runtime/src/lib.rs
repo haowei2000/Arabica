@@ -10,7 +10,7 @@ mod control;
 mod long_memory;
 mod short_memory;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
@@ -335,6 +335,10 @@ pub struct BlendRoutingPolicy {
     pub recovery_after_no_progress_steps: usize,
     #[serde(default = "default_blend_model_dwell_steps")]
     pub minimum_model_dwell_steps: usize,
+    #[serde(default)]
+    pub tool_call_capable_models: BTreeSet<String>,
+    #[serde(default)]
+    pub typed_completion_capable_models: BTreeSet<String>,
 }
 
 const fn default_blend_model_dwell_steps() -> usize {
@@ -484,6 +488,7 @@ enum BlendRouteReason {
     AfterToolError,
     NoProgressRecovery,
     MinimumDwell,
+    CapabilityFallback,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1111,6 +1116,32 @@ fn choose_blend_model(
     desired
 }
 
+fn capability_eligible_alias(
+    policy: &BlendRoutingPolicy,
+    preferred: &str,
+    requires_tool_calling: bool,
+    requires_typed_completion: bool,
+) -> Option<String> {
+    let eligible = |alias: &str| {
+        (!requires_tool_calling || policy.tool_call_capable_models.contains(alias))
+            && (!requires_typed_completion
+                || policy.typed_completion_capable_models.contains(alias))
+    };
+    if eligible(preferred) {
+        return Some(preferred.to_owned());
+    }
+    std::iter::once(policy.default_model.as_str())
+        .chain(policy.tool_call_capable_models.iter().map(String::as_str))
+        .chain(
+            policy
+                .typed_completion_capable_models
+                .iter()
+                .map(String::as_str),
+        )
+        .find(|alias| eligible(alias))
+        .map(str::to_owned)
+}
+
 impl<M: ModelProvider, R> CoreRuntime<M, R> {
     pub fn set_blend_policy(
         &mut self,
@@ -1121,12 +1152,17 @@ impl<M: ModelProvider, R> CoreRuntime<M, R> {
                 .chain(policy.after_tool_success.as_deref())
                 .chain(policy.after_tool_error.as_deref())
                 .chain(policy.recovery_model.as_deref());
+            let mut declared_capabilities = policy
+                .tool_call_capable_models
+                .iter()
+                .chain(&policy.typed_completion_capable_models);
             if policy.policy_id.trim().is_empty()
                 || policy.version == 0
                 || policy.recovery_after_no_progress_steps == 0
                 || policy.minimum_model_dwell_steps == 0
                 || aliases.clone().any(str::is_empty)
                 || aliases.any(|alias| !self.model.supports_model_alias(alias))
+                || declared_capabilities.any(|alias| !self.model.supports_model_alias(alias))
             {
                 return Err(RuntimeError::new(
                     RuntimeErrorKind::InvalidConfiguration,
@@ -1498,15 +1534,48 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     };
                     let request_bytes = model_run_request_bytes(&request);
                     let decision_id = format!("{}:{model_step}", run_id);
-                    let route = pinned_blend_policy.as_ref().map(|policy| {
-                        choose_blend_model(
+                    let requires_tool_calling = request
+                        .tools
+                        .iter()
+                        .any(|tool| tool.name != RUNTIME_COMPLETE_TOOL_NAME);
+                    let requires_typed_completion = matches!(
+                        &request.tool_choice,
+                        ToolChoice::Specific { name } if name == RUNTIME_COMPLETE_TOOL_NAME
+                    );
+                    let route = if let Some(policy) = pinned_blend_policy.as_ref() {
+                        let (preferred, reason) = choose_blend_model(
                             policy,
                             &history,
                             run_id,
                             consecutive_no_progress_steps,
                             model_step,
-                        )
-                    });
+                        );
+                        match capability_eligible_alias(
+                            policy,
+                            &preferred,
+                            requires_tool_calling,
+                            requires_typed_completion,
+                        ) {
+                            Some(alias) => Some((
+                                alias.clone(),
+                                if alias == preferred {
+                                    reason
+                                } else {
+                                    BlendRouteReason::CapabilityFallback
+                                },
+                            )),
+                            None => {
+                                event_log.append(Event::RunFailed {
+                                    message: format!(
+                                        "Blend has no configured model certified for required capabilities (tool_calling={requires_tool_calling}, typed_completion={requires_typed_completion})"
+                                    ),
+                                });
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     event_log.append(Event::ModelRouteSelected {
                         model_step,
                         decision_id: decision_id.clone(),
@@ -4199,6 +4268,8 @@ mod tests {
             recovery_model: None,
             recovery_after_no_progress_steps: 2,
             minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
         };
         let history = vec![
             history_event(
@@ -4252,6 +4323,8 @@ mod tests {
             recovery_model: Some("strong".to_owned()),
             recovery_after_no_progress_steps: 3,
             minimum_model_dwell_steps: 2,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
         };
         let history = vec![
             history_event(
@@ -4308,6 +4381,38 @@ mod tests {
         assert_eq!(
             choose_blend_model(&policy, &second_step, &run_id, 0, 3),
             ("fast".to_owned(), BlendRouteReason::AfterToolSuccess)
+        );
+    }
+
+    #[test]
+    fn blend_capability_fallback_requires_every_requested_capability() {
+        let mut policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "balanced".to_owned(),
+            after_tool_success: None,
+            after_tool_error: None,
+            recovery_model: None,
+            recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::from(["fast".to_owned()]),
+            typed_completion_capable_models: BTreeSet::from(["strong".to_owned()]),
+        };
+
+        assert_eq!(
+            capability_eligible_alias(&policy, "balanced", true, false),
+            Some("fast".to_owned())
+        );
+        assert_eq!(
+            capability_eligible_alias(&policy, "balanced", true, true),
+            None
+        );
+        policy
+            .typed_completion_capable_models
+            .insert("fast".to_owned());
+        assert_eq!(
+            capability_eligible_alias(&policy, "balanced", true, true),
+            Some("fast".to_owned())
         );
     }
 

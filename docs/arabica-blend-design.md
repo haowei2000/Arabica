@@ -28,7 +28,10 @@ or failed tools, and recovery after a configured no-progress threshold. The
 next-call tool outcome is aggregated across the completed tool batch: any
 failed tool selects the error route, even when another tool in that batch
 succeeded. Ordinary default/success routes honor a configurable minimum model
-dwell; tool-error and no-progress recovery routes bypass it. The server can
+dwell; tool-error and no-progress recovery routes bypass it. CLI and server
+configuration can certify aliases for tool calling and typed completion;
+routes fall back to a certified alias or fail before provider use if none
+meets the request requirements. The server can
 configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
 named aliases and model IDs from `~/.arabica/config.toml`. All candidates
 currently share one API type, base URL, and key. Terminal chat, one-shot runs,
@@ -387,9 +390,10 @@ changes. Protocol changes also need serialization/schema and restore tests.
 3. **Complete call observations.** Record cancellation and missing usage as
    explicit observation states, and keep task success separate from run
    completion.
-4. **Filter and stabilize routes.** Add explicit model capability declarations
-   and validate required capabilities and context limits before selection.
-   Minimum model dwell is implemented; capability filtering remains pending.
+4. **Filter and stabilize routes.** Tool-calling and typed-completion
+   declarations and minimum model dwell are implemented. Context capacity,
+   image, reasoning, and provider-specific capability declarations remain
+   pending.
 5. **Run controlled Blend experiments.** Compare fixed strong, fixed
    inexpensive, fixed stage-based, and state-aware routing on frozen tasks.
    Report verified success, cost per successful task, latency, recovery, and
