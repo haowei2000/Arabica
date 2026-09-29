@@ -571,6 +571,46 @@ mod tests {
     }
 
     #[test]
+    fn blend_events_deserialize_older_records_with_unknown_new_fields() {
+        let route: Event = serde_json::from_value(serde_json::json!({
+            "type": "model.route.selected",
+            "payload": {
+                "model_step": 1,
+                "decision_id": "run:1",
+                "policy_id": "legacy",
+                "policy_version": 1,
+                "model_alias": "fast",
+                "reason": "default"
+            }
+        }))
+        .expect("legacy route event deserializes");
+        assert!(
+            matches!(route, Event::ModelRouteSelected { policy_fingerprint, model_registry_snapshot, .. }
+            if policy_fingerprint.is_empty() && model_registry_snapshot.is_empty())
+        );
+
+        let observed: Event = serde_json::from_value(serde_json::json!({
+            "type": "model.call.observed",
+            "payload": {
+                "model_step": 1,
+                "decision_id": "run:1",
+                "elapsed_ms": 9,
+                "provider_succeeded": true,
+                "usage": null
+            }
+        }))
+        .expect("legacy observation event deserializes");
+        assert!(matches!(
+            observed,
+            Event::ModelCallObserved {
+                outcome: ModelCallOutcome::Unknown,
+                usage: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn event_carries_causation_and_ordering_metadata() {
         let event = EventEnvelope::new(
             EventMetadata {
