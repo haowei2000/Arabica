@@ -4,12 +4,10 @@ use arabica_cli::auth::AuthAction;
 use arabica_cli::config::{ResolvedCliConfig, resolve_cli_runtime_config};
 use arabica_cli::host::{
     HostConfigArgs, LocalRunnerPolicy, build_host_runtime, process_environment,
-    resolve_provider_config,
 };
 use arabica_cli::interactive::{self, InteractiveOptions};
 use arabica_cli::print::{self, OutputFormat, PrintOptions, Resume};
 use arabica_cli::sessions::SessionsAction;
-use arabica_provider::ApiProviderConfig;
 use arabica_runner::LocalTool;
 use clap::{Args, Parser, Subcommand};
 use std::io::IsTerminal;
@@ -118,21 +116,11 @@ async fn run(cli: Cli) -> i32 {
         };
     }
 
-    let resolved = match if matches!(command, Some(Commands::Acp)) {
-        resolve_provider_config(&config, process_environment)
-            .map(|provider| ResolvedCliConfig {
-                provider,
-                blend_policy: None,
-                models: Default::default(),
-            })
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
-    } else {
-        (|| {
-            let home = arabica_adapters::default_arabica_home()?;
-            let cwd = std::env::current_dir()?;
-            resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
-        })()
-    } {
+    let resolved = match (|| {
+        let home = arabica_adapters::default_arabica_home()?;
+        let cwd = std::env::current_dir()?;
+        resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
+    })() {
         Ok(config) => config,
         Err(error) => {
             eprintln!("error: {error}");
@@ -145,7 +133,7 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the acp subcommand");
             2
         }
-        (Some(Commands::Acp), None) => run_acp(resolved.provider).await,
+        (Some(Commands::Acp), None) => run_acp(resolved).await,
         (Some(Commands::Chat | Commands::Config), Some(_)) => {
             eprintln!("error: -p cannot be combined with this subcommand");
             2
@@ -214,7 +202,7 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
     }
 }
 
-async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
+async fn run_acp(resolved: ResolvedCliConfig) -> i32 {
     // Shell is opt-in at the policy layer (`LocalRunnerPolicy::coding` does
     // not include it: it is the tool with no confinement, the one place the
     // permission gate is the only boundary). ACP is exactly the surface
@@ -224,7 +212,7 @@ async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
     // build, test, or run `git` would not be a meaningfully useful trade
     // for that safety.
     let tool_policy = LocalRunnerPolicy::coding().with_tool(LocalTool::Shell);
-    match arabica_cli::acp::run(provider_config, tool_policy).await {
+    match arabica_cli::acp::run(resolved, tool_policy).await {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("error: {error}");

@@ -19,9 +19,11 @@ calls, not causal estimates.
 `BlendProvider` holds named `ApiModelProvider` candidates and routes by alias.
 `BlendRoutingPolicy` supports a default model, next-call model after successful
 or failed tools, and recovery after a configured no-progress threshold. The
-server can configure candidates through `ARABICA__BLEND_MODELS`; all candidates
-currently share one API type, base URL, and key. The CLI composition host still
-uses its existing single-model configuration.
+server can configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
+named aliases and model IDs from `~/.arabica/config.toml`. All candidates
+currently share one API type, base URL, and key. Terminal chat, one-shot runs,
+and ACP sessions use the same policy and provider pool; ACP exposes aliases in
+its model selector and treats the selected alias as that session's default.
 
 This slice does not automatically retrain or promote policy versions. It
 provides auditable outcomes and deterministic rules that can be revised by

@@ -7,6 +7,7 @@
 //! policy a coding CLI needs. Terminal chat, `arabica acp`, and `structure -p` build on
 //! this; neither adds a second way to do it.
 
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
@@ -71,6 +72,31 @@ pub struct HostConfigArgs {
     /// Override OPENAI__BASE_URL.
     #[arg(long)]
     pub base_url: Option<String>,
+}
+
+/// Shared model-pool configuration consumed by terminal, one-shot, and ACP
+/// hosts. Protocol adapters may expose different controls, but model
+/// construction and alias validation stay here.
+#[derive(Clone, Debug)]
+pub struct HostModelCatalog {
+    pub provider: ApiProviderConfig,
+    pub models: BTreeMap<String, String>,
+    pub blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+}
+
+impl HostModelCatalog {
+    pub fn build_model(&self) -> Result<HostModel, ProviderError> {
+        if self.models.is_empty() {
+            return ApiModelProvider::new(self.provider.clone()).map(HostModel::Api);
+        }
+        let default_alias = self
+            .blend_policy
+            .as_ref()
+            .map(|policy| policy.default_model.as_str())
+            .unwrap_or_else(|| self.models.keys().next().expect("non-empty model catalog"));
+        BlendProvider::from_shared_config(self.provider.clone(), default_alias, self.models.clone())
+            .map(HostModel::Blend)
+    }
 }
 
 fn require(value: Option<String>, var: &str, flag: &str) -> Result<String, ProviderError> {

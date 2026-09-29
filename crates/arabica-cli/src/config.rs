@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use agent_client_protocol::schema::v1::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
 };
-use arabica_provider::{ApiProviderConfig, ApiType, BlendProvider};
+use arabica_provider::{ApiProviderConfig, ApiType};
 use arabica_runtime::BlendRoutingPolicy;
 use serde::{Deserialize, Serialize};
 
@@ -59,20 +59,16 @@ pub struct ResolvedCliConfig {
 }
 
 impl ResolvedCliConfig {
-    pub fn build_model(&self) -> Result<crate::host::HostModel, Box<dyn std::error::Error>> {
-        if self.models.is_empty() {
-            return Ok(crate::host::HostModel::Api(
-                arabica_provider::ApiModelProvider::new(self.provider.clone())?,
-            ));
+    pub fn model_catalog(&self) -> crate::host::HostModelCatalog {
+        crate::host::HostModelCatalog {
+            provider: self.provider.clone(),
+            models: self.models.clone(),
+            blend_policy: self.blend_policy.clone(),
         }
-        let default = self
-            .blend_policy
-            .as_ref()
-            .map(|p| p.default_model.as_str())
-            .unwrap_or_else(|| self.models.keys().next().expect("non-empty"));
-        Ok(crate::host::HostModel::Blend(
-            BlendProvider::from_shared_config(self.provider.clone(), default, self.models.clone())?,
-        ))
+    }
+
+    pub fn build_model(&self) -> Result<crate::host::HostModel, Box<dyn std::error::Error>> {
+        Ok(self.model_catalog().build_model()?)
     }
 }
 

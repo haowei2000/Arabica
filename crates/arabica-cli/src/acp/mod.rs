@@ -16,7 +16,7 @@ mod permission;
 mod stop_reason;
 mod time;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -39,31 +39,43 @@ use arabica_protocol::{
     Command, CommandEnvelope, CommandId, RunId as StructureRunId, SessionId as StructureSessionId,
     SessionStatus,
 };
-use arabica_runtime::{RunCancellation, RunControl, ToolPermissionGate};
+use arabica_runtime::{BlendRoutingPolicy, RunCancellation, RunControl, ToolPermissionGate};
 use arabica_session::{
     DispatchControl, EventVisibility, FanOutObserver, IdAllocator, SessionError,
     SessionEventObserver, SessionManager,
 };
 
-use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_mcp};
-use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+use crate::config::ResolvedCliConfig;
+use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_blend};
+use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType, BlendProvider};
 
 #[derive(Clone)]
 struct AcpProviderSettings {
     initial: ApiProviderConfig,
     models: Vec<String>,
+    aliases: BTreeMap<String, String>,
+    blend_policy: Option<BlendRoutingPolicy>,
 }
 
 impl AcpProviderSettings {
-    fn options(&self, config: &ApiProviderConfig) -> Vec<SessionConfigOption> {
+    fn options(
+        &self,
+        config: &ApiProviderConfig,
+        selected_model: Option<&str>,
+    ) -> Vec<SessionConfigOption> {
         let models = self
             .models
             .iter()
             .map(|model| SessionConfigSelectOption::new(model.clone(), model.clone()))
             .collect::<Vec<_>>();
         let mut options = vec![
-            SessionConfigOption::select("model", "Model", config.model.clone(), models)
-                .category(SessionConfigOptionCategory::Model),
+            SessionConfigOption::select(
+                "model",
+                "Model",
+                selected_model.unwrap_or(&config.model).to_owned(),
+                models,
+            )
+            .category(SessionConfigOptionCategory::Model),
         ];
         if !matches!(
             config.api_type,
@@ -134,6 +146,7 @@ struct SessionEntry {
     /// per-call `FanOutObserver` alongside the live `AcpObserver`.
     store: Arc<FileSessionStore>,
     provider_config: Option<Mutex<ApiProviderConfig>>,
+    blend_policy: Option<Mutex<BlendRoutingPolicy>>,
 }
 
 /// Builds one fresh [`HostModel`] per `session/new`: every ACP session gets
@@ -172,9 +185,34 @@ impl AcpState {
     }
 
     fn config_options(&self) -> Option<Vec<SessionConfigOption>> {
-        self.provider_settings
-            .as_ref()
-            .map(|settings| settings.options(&settings.initial))
+        self.provider_settings.as_ref().map(|settings| {
+            settings.options(
+                &settings.initial,
+                settings
+                    .blend_policy
+                    .as_ref()
+                    .map(|p| p.default_model.as_str()),
+            )
+        })
+    }
+
+    fn build_runtime(
+        &self,
+        model: HostModel,
+        cwd: &Path,
+        mcp: crate::mcp::McpTools,
+    ) -> Result<HostRuntime, AcpError> {
+        build_host_runtime_with_blend(
+            model,
+            cwd,
+            self.tool_policy.clone(),
+            &self.arabica_home,
+            mcp,
+            self.provider_settings
+                .as_ref()
+                .and_then(|settings| settings.blend_policy.clone()),
+        )
+        .map_err(runtime_error)
     }
 
     fn entry(&self, session_id: &AcpSessionId) -> Option<Arc<SessionEntry>> {
@@ -227,13 +265,7 @@ impl AcpState {
         let model = (self.model_factory)()?;
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = build_host_runtime_with_mcp(
-            model,
-            &request.cwd,
-            self.tool_policy.clone(),
-            &self.arabica_home,
-            mcp,
-        );
+        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let instructions_sha256 =
             crate::instructions::sha256(manager.runtime().system_instructions());
@@ -289,6 +321,11 @@ impl AcpState {
                         .provider_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
+                    blend_policy: self
+                        .provider_settings
+                        .as_ref()
+                        .and_then(|settings| settings.blend_policy.clone())
+                        .map(Mutex::new),
                 }),
             );
         Ok(NewSessionResponse::new(acp_session_id).config_options(self.config_options()))
@@ -334,13 +371,7 @@ impl AcpState {
         let model = (self.model_factory)()?;
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = build_host_runtime_with_mcp(
-            model,
-            &request.cwd,
-            self.tool_policy.clone(),
-            &self.arabica_home,
-            mcp,
-        );
+        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let restore_report = manager
             .restore_session(
@@ -387,6 +418,11 @@ impl AcpState {
                         .provider_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
+                    blend_policy: self
+                        .provider_settings
+                        .as_ref()
+                        .and_then(|settings| settings.blend_policy.clone())
+                        .map(Mutex::new),
                 }),
             );
 
@@ -432,13 +468,7 @@ impl AcpState {
         let model = (self.model_factory)()?;
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = build_host_runtime_with_mcp(
-            model,
-            &request.cwd,
-            self.tool_policy.clone(),
-            &self.arabica_home,
-            mcp,
-        );
+        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         manager
             .restore_session(
@@ -465,6 +495,11 @@ impl AcpState {
                         .provider_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
+                    blend_policy: self
+                        .provider_settings
+                        .as_ref()
+                        .and_then(|settings| settings.blend_policy.clone())
+                        .map(Mutex::new),
                 }),
             );
 
@@ -489,12 +524,17 @@ impl AcpState {
         })?;
         let mut config = config_lock.lock().expect("provider config lock poisoned");
         let mut updated = config.clone();
+        let mut selected_alias = None;
         let value = request
             .value
             .as_value_id()
             .ok_or_else(|| AcpError::invalid_params().data("expected a select value"))?
             .to_string();
         match request.config_id.to_string().as_str() {
+            "model" if settings.aliases.contains_key(&value) => {
+                updated.model = settings.aliases[&value].clone();
+                selected_alias = Some(value.clone());
+            }
             "model" if settings.models.contains(&value) => updated.model = value,
             "thinking" => match (updated.api_type, value.as_str()) {
                 (_, "off") => {
@@ -514,17 +554,62 @@ impl AcpState {
                 }
             },
             "model" => {
-                return Err(AcpError::invalid_params().data("model is not in ARABICA__MODELS"));
+                return Err(AcpError::invalid_params()
+                    .data("model is not a configured model or Blend alias"));
             }
             _ => return Err(AcpError::invalid_params().data("unknown configuration option")),
         }
-        let model = ApiModelProvider::new(updated.clone())
-            .map(HostModel::Api)
-            .map_err(provider_error)?;
+        let model = if !settings.aliases.is_empty() {
+            let default_alias = selected_alias
+                .clone()
+                .or_else(|| {
+                    entry.blend_policy.as_ref().and_then(|lock| {
+                        lock.lock().ok().map(|policy| policy.default_model.clone())
+                    })
+                })
+                .unwrap_or_else(|| {
+                    settings
+                        .blend_policy
+                        .as_ref()
+                        .expect("Blend aliases require policy")
+                        .default_model
+                        .clone()
+                });
+            HostModel::Blend(
+                BlendProvider::from_shared_config(
+                    updated.clone(),
+                    default_alias,
+                    settings.aliases.clone(),
+                )
+                .map_err(provider_error)?,
+            )
+        } else {
+            HostModel::Api(ApiModelProvider::new(updated.clone()).map_err(provider_error)?)
+        };
         *manager.runtime_mut().model_mut() = model;
+        if let Some(alias) = selected_alias {
+            let mut policy = entry
+                .blend_policy
+                .as_ref()
+                .and_then(|lock| lock.lock().ok().map(|policy| policy.clone()))
+                .or_else(|| settings.blend_policy.clone())
+                .ok_or_else(|| AcpError::invalid_params().data("Blend policy is unavailable"))?;
+            policy.default_model = alias;
+            manager
+                .runtime_mut()
+                .set_blend_policy(Some(policy.clone()))
+                .map_err(runtime_error)?;
+            if let Some(lock) = &entry.blend_policy {
+                *lock.lock().expect("blend policy lock poisoned") = policy;
+            }
+        }
         *config = updated;
+        let selected_model = entry
+            .blend_policy
+            .as_ref()
+            .and_then(|lock| lock.lock().ok().map(|policy| policy.default_model.clone()));
         Ok(SetSessionConfigOptionResponse::new(
-            settings.options(&config),
+            settings.options(&config, selected_model.as_deref()),
         ))
     }
 
@@ -631,6 +716,10 @@ fn provider_error(error: arabica_provider::ProviderError) -> AcpError {
     AcpError::internal_error().data(error.to_string())
 }
 
+fn runtime_error(error: arabica_runtime::RuntimeError) -> AcpError {
+    AcpError::internal_error().data(error.to_string())
+}
+
 fn session_error(error: SessionError) -> AcpError {
     match error.code {
         arabica_protocol::ErrorCode::SessionNotFound
@@ -647,31 +736,47 @@ fn session_error(error: SessionError) -> AcpError {
 /// turn asks the ACP client for permission through `permission::bridge` and
 /// streams progress through `mapping::AcpObserver`; neither ever writes to
 /// stdout, which carries only this connection's own JSON-RPC frames.
-pub async fn run(
-    provider_config: ApiProviderConfig,
-    tool_policy: LocalRunnerPolicy,
-) -> AcpResult<()> {
+pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) -> AcpResult<()> {
     let arabica_home = arabica_adapters::default_arabica_home()
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
-    let mut models = std::env::var("ARABICA__MODELS")
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    if !models.contains(&provider_config.model) {
+    let catalog = resolved.model_catalog();
+    let provider_config = catalog.provider.clone();
+    let aliases = catalog.models.clone();
+    let blend_policy = catalog.blend_policy.clone();
+    let mut models = if aliases.is_empty() {
+        std::env::var("ARABICA__MODELS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    } else {
+        aliases.keys().cloned().collect::<Vec<_>>()
+    };
+    let initial_selection = blend_policy
+        .as_ref()
+        .map(|policy| policy.default_model.clone());
+    if !aliases.is_empty() {
+        if initial_selection
+            .as_ref()
+            .is_none_or(|selected| !aliases.contains_key(selected))
+        {
+            return Err(AcpError::invalid_params()
+                .data("Blend default_model must name a configured model alias"));
+        }
+    } else if !models.contains(&provider_config.model) {
         models.insert(0, provider_config.model.clone());
     }
     let settings = AcpProviderSettings {
         initial: provider_config.clone(),
         models,
+        aliases: aliases.clone(),
+        blend_policy: blend_policy.clone(),
     };
-    let model_factory: Arc<ModelFactory> = Arc::new(move || {
-        ApiModelProvider::new(provider_config.clone())
-            .map(HostModel::Api)
-            .map_err(provider_error)
-    });
+    let model_catalog = catalog.clone();
+    let model_factory: Arc<ModelFactory> =
+        Arc::new(move || model_catalog.build_model().map_err(provider_error));
     serve(
         AcpState::new(model_factory, tool_policy, arabica_home).with_provider_settings(settings),
         Stdio::new(),
@@ -979,6 +1084,7 @@ mod round_trip {
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
+    use agent_client_protocol::schema::v1::SessionConfigKind;
     use agent_client_protocol::schema::v1::{
         CloseSessionRequest as AcpCloseSessionRequest, ContentBlock as AcpContentBlock,
         EnvVariable, InitializeRequest as AcpInitializeRequest,
@@ -993,7 +1099,7 @@ mod round_trip {
         FinishReason, MessageItem, RuntimeItem, RuntimeResponse, RuntimeRole, RuntimeUsage,
         ToolCallItem,
     };
-    use arabica_provider::ModelRunResult;
+    use arabica_provider::{ModelProvider, ModelRunResult};
 
     use super::*;
     use crate::host::ScriptedModel;
@@ -1130,6 +1236,8 @@ mod round_trip {
             .with_provider_settings(AcpProviderSettings {
                 initial,
                 models: vec!["mock-model".to_owned()],
+                aliases: BTreeMap::new(),
+                blend_policy: None,
             });
         let (server, channel) = spawn_agent(state);
         let updates = Arc::new(StdMutex::new(Vec::<SessionUpdate>::new()));
@@ -1223,6 +1331,8 @@ mod round_trip {
         .with_provider_settings(AcpProviderSettings {
             initial,
             models: vec!["first-model".to_owned(), "second-model".to_owned()],
+            aliases: BTreeMap::new(),
+            blend_policy: None,
         });
         let session = state
             .new_session(NewSessionRequest::new(root.clone()))
@@ -1253,6 +1363,102 @@ mod round_trip {
         };
         assert_eq!(provider.config().model, "second-model");
         assert!(provider.config().thinking_enabled);
+        drop(manager);
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(arabica_home).ok();
+    }
+
+    #[tokio::test]
+    async fn acp_blend_alias_selection_changes_the_session_default_model() {
+        let root = temp_root("blend-config");
+        let arabica_home = temp_root("blend-config-home");
+        let initial = ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "test-key",
+            "http://127.0.0.1:9/v1",
+            "model-fast",
+        );
+        let aliases = BTreeMap::from([
+            ("fast".to_owned(), "model-fast".to_owned()),
+            ("strong".to_owned(), "model-strong".to_owned()),
+        ]);
+        let policy = BlendRoutingPolicy {
+            policy_id: "acp-test".to_owned(),
+            version: 1,
+            default_model: "fast".to_owned(),
+            after_tool_success: Some("fast".to_owned()),
+            after_tool_error: Some("strong".to_owned()),
+            recovery_model: Some("strong".to_owned()),
+            recovery_after_no_progress_steps: 2,
+        };
+        let factory_config = initial.clone();
+        let factory_aliases = aliases.clone();
+        let factory_policy = policy.clone();
+        let model_factory: Arc<ModelFactory> = Arc::new(move || {
+            BlendProvider::from_shared_config(
+                factory_config.clone(),
+                &factory_policy.default_model,
+                factory_aliases.clone(),
+            )
+            .map(HostModel::Blend)
+            .map_err(provider_error)
+        });
+        let state = AcpState::new(
+            model_factory,
+            LocalRunnerPolicy::coding(),
+            arabica_home.clone(),
+        )
+        .with_provider_settings(AcpProviderSettings {
+            initial,
+            models: aliases.keys().cloned().collect(),
+            aliases,
+            blend_policy: Some(policy),
+        });
+        let session = state
+            .new_session(NewSessionRequest::new(root.clone()))
+            .await
+            .unwrap();
+        let model_option = session
+            .config_options
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|option| option.id.to_string() == "model")
+            .unwrap();
+        let SessionConfigKind::Select(model_select) = &model_option.kind else {
+            panic!("model option should be a select");
+        };
+        assert_eq!(model_select.current_value.to_string(), "fast");
+        let response = state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "model",
+                "strong",
+            ))
+            .unwrap();
+        let updated_option = response
+            .config_options
+            .iter()
+            .find(|option| option.id.to_string() == "model")
+            .unwrap();
+        let SessionConfigKind::Select(updated_select) = &updated_option.kind else {
+            panic!("model option should be a select");
+        };
+        assert_eq!(updated_select.current_value.to_string(), "strong");
+        let entry = state.entry(&session.session_id).unwrap();
+        let manager = entry.manager.lock().await;
+        assert_eq!(manager.runtime().model().model_id(), Some("model-strong"));
+        assert!(manager.runtime().model().supports_model_alias("fast"));
+        assert_eq!(
+            entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .default_model,
+            "strong"
+        );
         drop(manager);
         std::fs::remove_dir_all(root).ok();
         std::fs::remove_dir_all(arabica_home).ok();

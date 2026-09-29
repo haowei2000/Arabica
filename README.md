@@ -101,7 +101,7 @@ recovery_after_no_progress_steps = 2
 recovery_model = "strong"
 ```
 
-Set the key with `arabica auth login` or `OPENAI__API_KEY`. The CLI validates every referenced alias at startup. Blend routing is active in interactive chat and `arabica -p`; ACP continues to expose its existing single-model session configuration.
+Set the key with `arabica auth login` or `OPENAI__API_KEY`. The CLI validates every referenced alias at startup. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes the configured aliases as its model selector; changing the selection updates that session's default model while retaining the remaining Blend routes.
 
 Optional configuration:
 
