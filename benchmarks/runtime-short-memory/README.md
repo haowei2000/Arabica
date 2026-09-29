@@ -320,6 +320,23 @@ an external runner must consume the frozen schedule and produce one result per
 trial. Do not claim an adaptive-policy improvement until that execution and
 oracle scoring have completed.
 
+The same library exposes a paired `MemoryEvidenceManifest` for the next
+ablation: it pins one model and one routing policy while varying only the
+memory projection. It records independent task-success and evidence-recall
+oracles plus input-token counts. This keeps memory and routing effects
+separable before any joint-policy experiment.
+
+```bash
+cargo run -p structure-short-memory-benchmark --bin blend_campaign -- plan-memory \
+  --seed 20260929 --fixed-model model-balanced-v1 \
+  --fixed-routing-policy router-fixed-v1 \
+  --baseline-memory-policy projection-v1 \
+  --enhanced-memory-policy evidence-v1 \
+  --success-oracle-version oracle-v1 --evidence-oracle-version recall-v1 \
+  --repetitions 5 --tasks repo-memory:long-context:true \
+  --output target/memory-evidence-campaign.json
+```
+
 Credentials must be injected into the Harbor host process. Do not place them in
 the job configuration. The agent writes `structure-report.json` on normal
 completion and `provider-calls.partial.json` after every Provider response so

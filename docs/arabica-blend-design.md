@@ -1,8 +1,9 @@
 # Arabica Blend: Adaptive Model Routing Design
 
-Status: active implementation, 2026-09-29. The measurement baseline and static
-multi-model routing are implemented; the first routing correctness refinement
-is in progress. Related papers and source links are in
+Status: implementation and evaluation scaffolding, 2026-09-29. The measurement
+baseline, static routing, auditable policy snapshots, call outcomes, capability
+gates, dwell control, and campaign schemas are implemented. Live campaign
+execution and several broader feature signals remain open. Related papers and source links are in
 [the reading list](blend-reading-list.md).
 
 ## Implemented slice
@@ -31,8 +32,8 @@ succeeded. Ordinary default/success routes honor a configurable minimum model
 dwell; tool-error and no-progress recovery routes bypass it. CLI and server
 configuration can certify aliases for tool calling and typed completion;
 routes fall back to a certified alias or fail before provider use if none
-meets the request requirements. The server can
-configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
+meets the request requirements. Route reasons are stable snake-case values.
+The server can configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
 named aliases and model IDs from `~/.arabica/config.toml`. All candidates
 currently share one API type, base URL, and key. Terminal chat, one-shot runs,
 and ACP sessions use the same policy and provider pool; ACP exposes aliases in
@@ -381,26 +382,34 @@ changes. Protocol changes also need serialization/schema and restore tests.
 
 ## Immediate implementation plan
 
-1. **Route from complete step outcomes.** Aggregate all tool results in a
-   completed model step, distinguish error classes, and define Blend progress
-   signals without changing the runtime's existing hard-stop semantics.
-2. **Pin reproducible policy state.** Record a policy content hash, model
-   registry snapshot, and explicit per-run model override semantics. ACP
-   changes to a session default must receive a distinct policy identity.
-3. **Complete call observations.** Record cancellation and missing usage as
-   explicit observation states, and keep task success separate from run
-   completion.
+1. **Route from complete step outcomes.** Aggregation across every tool result
+   is implemented. Typed error classes and Blend-specific progress signals
+   remain open because current tool completion events expose only a boolean
+   error flag.
+2. **Pin reproducible policy state.** Policy content fingerprints, model
+   registry snapshots, run-level policy pinning, and distinct fingerprints
+   after ACP default changes are implemented. A separate per-run explicit
+   model override remains open.
+3. **Complete call observations.** Success, provider failure, and cancellation
+   are typed. Missing usage remains explicitly unknown; verified task success
+   remains separate from run completion.
 4. **Filter and stabilize routes.** Tool-calling and typed-completion
    declarations and minimum model dwell are implemented. Context capacity,
    image, reasoning, and provider-specific capability declarations remain
    pending.
 5. **Run controlled Blend experiments.** Compare fixed strong, fixed
    inexpensive, fixed stage-based, and state-aware routing on frozen tasks.
-   Report verified success, cost per successful task, latency, recovery, and
-   uncertainty before proposing policy tuning.
-6. **Test memory-aware routing.** First vary memory evidence while holding
-   routing fixed; only combine memory and routing policies after an isolated
-   experiment shows a measurable benefit.
+   Frozen paired schedules and summaries report verified success, cost per
+   successful task, mean and p95 latency, recovery, safety incidents, and
+   Wilson uncertainty by arm and task stratum. The repository no longer ships
+   a campaign orchestrator, so live execution and empirical comparisons still
+   require an external runner.
+6. **Test memory-aware routing.** A paired memory-evidence campaign schema now
+   holds model and routing fixed while varying memory projection and recording
+   success, evidence recall, and token usage. The external runner must execute
+   this schedule before combining
+   memory and routing policies; only combine them after an isolated experiment
+   shows a measurable benefit.
 
 Each behavior change needs focused tests. Protocol changes also need
 serialization/schema and restore coverage. Automatic policy learning and

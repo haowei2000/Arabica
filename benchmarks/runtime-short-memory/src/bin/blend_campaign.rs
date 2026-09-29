@@ -3,7 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use structure_short_memory_benchmark::{
-    BlendCampaignManifest, BlendTask, BlendTrialResult, summarize_blend_campaign,
+    BlendCampaignManifest, BlendTask, BlendTrialResult, MemoryEvidenceManifest,
+    MemoryEvidenceTrialResult, summarize_blend_campaign, summarize_memory_evidence,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -49,9 +50,56 @@ fn main() -> Result<(), Box<dyn Error>> {
             let summary = summarize_blend_campaign(&manifest, &results)?;
             write_new(PathBuf::from(required(&args, "--output")?), &summary)?;
         }
-        _ => return Err("usage: blend_campaign plan|summarize --...".into()),
+        Some("plan-memory") => {
+            let manifest = MemoryEvidenceManifest::new(
+                required(&args, "--seed")?.parse()?,
+                required(&args, "--fixed-model")?.to_owned(),
+                required(&args, "--fixed-routing-policy")?.to_owned(),
+                required(&args, "--baseline-memory-policy")?.to_owned(),
+                required(&args, "--enhanced-memory-policy")?.to_owned(),
+                required(&args, "--success-oracle-version")?.to_owned(),
+                required(&args, "--evidence-oracle-version")?.to_owned(),
+                required(&args, "--repetitions")?.parse()?,
+                parse_tasks(required(&args, "--tasks")?)?,
+            )?;
+            manifest.validate()?;
+            write_new(PathBuf::from(required(&args, "--output")?), &manifest)?;
+        }
+        Some("summarize-memory") => {
+            let manifest: MemoryEvidenceManifest =
+                serde_json::from_slice(&fs::read(required(&args, "--manifest")?)?)?;
+            let results: Vec<MemoryEvidenceTrialResult> =
+                serde_json::from_slice(&fs::read(required(&args, "--results")?)?)?;
+            let summary = summarize_memory_evidence(&manifest, &results)?;
+            write_new(PathBuf::from(required(&args, "--output")?), &summary)?;
+        }
+        _ => {
+            return Err(
+                "usage: blend_campaign plan|summarize|plan-memory|summarize-memory --...".into(),
+            );
+        }
     }
     Ok(())
+}
+
+fn parse_tasks(value: &str) -> Result<Vec<BlendTask>, Box<dyn Error>> {
+    value
+        .split(',')
+        .map(|item| {
+            let mut parts = item.split(':');
+            let id = parts.next().unwrap_or_default().trim();
+            let stratum = parts.next().unwrap_or_default().trim();
+            let continuity_challenge = parts.next().unwrap_or("false").parse::<bool>()?;
+            if parts.next().is_some() {
+                return Err("task format is id:stratum:continuity".into());
+            }
+            Ok(BlendTask {
+                id: id.to_owned(),
+                stratum: stratum.to_owned(),
+                continuity_challenge,
+            })
+        })
+        .collect()
 }
 
 fn required<'a>(args: &'a [String], name: &str) -> Result<&'a str, Box<dyn Error>> {

@@ -8,7 +8,10 @@ mod baseline;
 pub mod blend_campaign;
 pub use blend_campaign::{
     BLEND_CAMPAIGN_SCHEMA, BlendArm, BlendArmSummary, BlendCampaignManifest, BlendCampaignSummary,
-    BlendTask, BlendTrial, BlendTrialResult, summarize_blend_campaign,
+    BlendTask, BlendTrial, BlendTrialResult, MemoryEvidenceCondition,
+    MemoryEvidenceConditionSummary, MemoryEvidenceManifest, MemoryEvidenceSummary,
+    MemoryEvidenceTrial, MemoryEvidenceTrialResult, summarize_blend_campaign,
+    summarize_memory_evidence,
 };
 mod cli_comparison;
 pub mod experiment;
