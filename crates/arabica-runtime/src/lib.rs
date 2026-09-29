@@ -10,11 +10,12 @@ mod control;
 mod long_memory;
 mod short_memory;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use arabica_model::{
     ContentBlock, FinishReason, MemoryBatchKind, MemoryLoadState, MemoryPointer, MessageItem,
@@ -23,7 +24,7 @@ use arabica_model::{
 };
 use arabica_protocol::{
     AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, Event, EventEnvelope,
-    EventId, ModelResponseRejectionReason, OutputStream, RunId, SessionId,
+    EventId, ModelCallOutcome, ModelResponseRejectionReason, OutputStream, RunId, SessionId,
     TerminalControllerPolicy, TerminalControllerState, TerminalControllerTransitionReason,
     ToolInteractionKind, ToolPermissionOutcome, ToolPermissionScope, ToolPermissionSource,
     WorkspaceId,
@@ -321,6 +322,188 @@ pub struct AutoHydrationObservation {
     pub hydrated_bytes: usize,
 }
 
+/// Deterministic per-run routing rules. Each configured alias must exist in
+/// the ModelProvider supplied to this runtime.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendRoutingPolicy {
+    pub policy_id: String,
+    pub version: u64,
+    pub default_model: String,
+    pub after_tool_success: Option<String>,
+    pub after_tool_error: Option<String>,
+    pub recovery_model: Option<String>,
+    pub recovery_after_no_progress_steps: usize,
+    #[serde(default = "default_blend_model_dwell_steps")]
+    pub minimum_model_dwell_steps: usize,
+    #[serde(default)]
+    pub tool_call_capable_models: BTreeSet<String>,
+    #[serde(default)]
+    pub typed_completion_capable_models: BTreeSet<String>,
+}
+
+const fn default_blend_model_dwell_steps() -> usize {
+    1
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendModelEvaluation {
+    pub selected_calls: u64,
+    pub observed_calls: u64,
+    pub provider_failures: u64,
+    pub cancelled_calls: u64,
+    pub calls_with_unknown_outcome: u64,
+    pub elapsed_ms_total: u64,
+    pub usage_reported_calls: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub downstream_tool_successes: u64,
+    pub downstream_tool_errors: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendPolicyEvaluation {
+    pub runs_completed: u64,
+    pub runs_failed: u64,
+    pub runs_cancelled: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendEvaluationReport {
+    /// Metrics are direct observations for calls made by this alias. Tool
+    /// outcomes are downstream associations, not causal proof.
+    pub models: std::collections::BTreeMap<String, BlendModelEvaluation>,
+    /// End-to-end run outcomes are grouped by the pinned policy version.
+    pub policies: std::collections::BTreeMap<String, BlendPolicyEvaluation>,
+}
+
+/// Rebuild call and trajectory measurements from canonical persisted events.
+pub fn evaluate_blend_history(events: &[EventEnvelope]) -> BlendEvaluationReport {
+    let mut report = BlendEvaluationReport::default();
+    let mut selected_by_step = HashMap::<(RunId, usize), String>::new();
+    let mut policy_by_run = HashMap::<RunId, String>::new();
+    let mut latest_model_by_run = HashMap::<RunId, String>::new();
+
+    for envelope in events {
+        let Some(run_id) = envelope.run_id.as_ref() else {
+            continue;
+        };
+        match &envelope.event {
+            Event::ModelRouteSelected {
+                model_step,
+                policy_id,
+                policy_version,
+                model_alias,
+                ..
+            } => {
+                let alias = model_alias
+                    .clone()
+                    .unwrap_or_else(|| "unreported".to_owned());
+                report
+                    .models
+                    .entry(alias.clone())
+                    .or_default()
+                    .selected_calls += 1;
+                selected_by_step.insert((run_id.clone(), *model_step), alias.clone());
+                latest_model_by_run.insert(run_id.clone(), alias);
+                policy_by_run.insert(run_id.clone(), format!("{policy_id}@{policy_version}"));
+            }
+            Event::ModelCallObserved {
+                model_step,
+                elapsed_ms,
+                provider_succeeded,
+                outcome,
+                usage,
+                ..
+            } => {
+                let Some(alias) = selected_by_step.get(&(run_id.clone(), *model_step)) else {
+                    continue;
+                };
+                let metrics = report.models.entry(alias.clone()).or_default();
+                metrics.observed_calls += 1;
+                match outcome {
+                    ModelCallOutcome::Failed => metrics.provider_failures += 1,
+                    ModelCallOutcome::Cancelled => metrics.cancelled_calls += 1,
+                    ModelCallOutcome::Unknown => {
+                        metrics.calls_with_unknown_outcome += 1;
+                        metrics.provider_failures += u64::from(!provider_succeeded);
+                    }
+                    ModelCallOutcome::Succeeded => {}
+                }
+                metrics.elapsed_ms_total = metrics.elapsed_ms_total.saturating_add(*elapsed_ms);
+                if let Some(usage) = usage {
+                    metrics.usage_reported_calls += 1;
+                    metrics.input_tokens = metrics.input_tokens.saturating_add(usage.input_tokens);
+                    metrics.output_tokens =
+                        metrics.output_tokens.saturating_add(usage.output_tokens);
+                }
+            }
+            Event::ToolCallCompleted { is_error, .. } => {
+                if let Some(alias) = latest_model_by_run.get(run_id) {
+                    let metrics = report.models.entry(alias.clone()).or_default();
+                    if *is_error {
+                        metrics.downstream_tool_errors += 1;
+                    } else {
+                        metrics.downstream_tool_successes += 1;
+                    }
+                }
+            }
+            Event::RunCompleted { .. } => {
+                if let Some(policy) = policy_by_run.get(run_id) {
+                    report
+                        .policies
+                        .entry(policy.clone())
+                        .or_default()
+                        .runs_completed += 1;
+                }
+            }
+            Event::RunFailed { .. } => {
+                if let Some(policy) = policy_by_run.get(run_id) {
+                    report
+                        .policies
+                        .entry(policy.clone())
+                        .or_default()
+                        .runs_failed += 1;
+                }
+            }
+            Event::RunCancelled => {
+                if let Some(policy) = policy_by_run.get(run_id) {
+                    report
+                        .policies
+                        .entry(policy.clone())
+                        .or_default()
+                        .runs_cancelled += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    report
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BlendRouteReason {
+    Default,
+    AfterToolSuccess,
+    AfterToolError,
+    NoProgressRecovery,
+    MinimumDwell,
+    CapabilityFallback,
+}
+
+impl BlendRouteReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AfterToolSuccess => "after_tool_success",
+            Self::AfterToolError => "after_tool_error",
+            Self::NoProgressRecovery => "no_progress_recovery",
+            Self::MinimumDwell => "minimum_model_dwell",
+            Self::CapabilityFallback => "capability_fallback",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum RuntimeArchiveStore {
     #[default]
@@ -374,6 +557,7 @@ pub struct CoreRuntime<M, R> {
     archive_store: RuntimeArchiveStore,
     history_projection: HistoryProjection,
     system_instructions: Vec<String>,
+    blend_policy: Option<BlendRoutingPolicy>,
     model: M,
     runner: R,
 }
@@ -405,6 +589,7 @@ impl<M, R> CoreRuntime<M, R> {
             archive_store: RuntimeArchiveStore::Memory,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
+            blend_policy: None,
             model,
             runner,
         }
@@ -440,6 +625,7 @@ impl<M, R> CoreRuntime<M, R> {
             archive_store: RuntimeArchiveStore::Memory,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
+            blend_policy: None,
             model,
             runner,
         }
@@ -481,6 +667,7 @@ impl<M, R> CoreRuntime<M, R> {
             archive_store,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
+            blend_policy: None,
             model,
             runner,
         }
@@ -856,6 +1043,151 @@ fn permission_denied_result(tool: &str, source: ToolPermissionSource) -> String 
     }
 }
 
+fn choose_blend_model(
+    policy: &BlendRoutingPolicy,
+    history: &[EventEnvelope],
+    run_id: &RunId,
+    consecutive_no_progress_steps: usize,
+    model_step: usize,
+) -> (String, BlendRouteReason) {
+    if consecutive_no_progress_steps >= policy.recovery_after_no_progress_steps
+        && let Some(alias) = policy.recovery_model.as_ref()
+    {
+        return (alias.clone(), BlendRouteReason::NoProgressRecovery);
+    }
+
+    let previous_route = history.iter().rposition(|envelope| {
+        envelope.run_id.as_ref() == Some(run_id)
+            && matches!(
+                envelope.event,
+                Event::ModelRouteSelected { model_step: previous_step, .. }
+                    if previous_step < model_step
+            )
+    });
+    let previous_step_events = previous_route.map_or(history, |index| &history[index + 1..]);
+    // Route from the whole completed tool batch. A later successful call must
+    // not erase an earlier failure from the same model step.
+    let previous_tool_outcome = previous_step_events
+        .iter()
+        .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+        .filter_map(|envelope| match envelope.event {
+            Event::ToolCallCompleted { is_error, .. } => Some(is_error),
+            _ => None,
+        })
+        .fold(None, |outcome, is_error| {
+            Some(outcome.unwrap_or(false) || is_error)
+        });
+
+    let desired = match previous_tool_outcome {
+        Some(true) if policy.after_tool_error.is_some() => (
+            policy.after_tool_error.clone().expect("checked above"),
+            BlendRouteReason::AfterToolError,
+        ),
+        Some(false) if policy.after_tool_success.is_some() => (
+            policy.after_tool_success.clone().expect("checked above"),
+            BlendRouteReason::AfterToolSuccess,
+        ),
+        _ => (policy.default_model.clone(), BlendRouteReason::Default),
+    };
+    let previous_alias = history.iter().rev().find_map(|envelope| {
+        if envelope.run_id.as_ref() != Some(run_id) {
+            return None;
+        }
+        match &envelope.event {
+            Event::ModelRouteSelected {
+                model_step: prior,
+                model_alias,
+                ..
+            } if *prior < model_step => model_alias.clone(),
+            _ => None,
+        }
+    });
+    if matches!(
+        desired.1,
+        BlendRouteReason::AfterToolSuccess | BlendRouteReason::Default
+    ) && let Some(previous_alias) = previous_alias
+        && desired.0 != previous_alias
+    {
+        let consecutive_alias_calls = history
+            .iter()
+            .rev()
+            .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+            .filter_map(|envelope| match &envelope.event {
+                Event::ModelRouteSelected {
+                    model_step: prior,
+                    model_alias,
+                    ..
+                } if *prior < model_step => Some(model_alias.as_deref()),
+                _ => None,
+            })
+            .take_while(|alias| *alias == Some(previous_alias.as_str()))
+            .count();
+        if consecutive_alias_calls < policy.minimum_model_dwell_steps {
+            return (previous_alias, BlendRouteReason::MinimumDwell);
+        }
+    }
+    desired
+}
+
+fn capability_eligible_alias(
+    policy: &BlendRoutingPolicy,
+    preferred: &str,
+    requires_tool_calling: bool,
+    requires_typed_completion: bool,
+) -> Option<String> {
+    let eligible = |alias: &str| {
+        (!requires_tool_calling || policy.tool_call_capable_models.contains(alias))
+            && (!requires_typed_completion
+                || policy.typed_completion_capable_models.contains(alias))
+    };
+    if eligible(preferred) {
+        return Some(preferred.to_owned());
+    }
+    std::iter::once(policy.default_model.as_str())
+        .chain(policy.tool_call_capable_models.iter().map(String::as_str))
+        .chain(
+            policy
+                .typed_completion_capable_models
+                .iter()
+                .map(String::as_str),
+        )
+        .find(|alias| eligible(alias))
+        .map(str::to_owned)
+}
+
+impl<M: ModelProvider, R> CoreRuntime<M, R> {
+    pub fn set_blend_policy(
+        &mut self,
+        policy: Option<BlendRoutingPolicy>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(policy) = policy.as_ref() {
+            let mut aliases = std::iter::once(policy.default_model.as_str())
+                .chain(policy.after_tool_success.as_deref())
+                .chain(policy.after_tool_error.as_deref())
+                .chain(policy.recovery_model.as_deref());
+            let mut declared_capabilities = policy
+                .tool_call_capable_models
+                .iter()
+                .chain(&policy.typed_completion_capable_models);
+            if policy.policy_id.trim().is_empty()
+                || policy.version == 0
+                || policy.recovery_after_no_progress_steps == 0
+                || policy.minimum_model_dwell_steps == 0
+                || aliases.clone().any(str::is_empty)
+                || aliases.any(|alias| !self.model.supports_model_alias(alias))
+                || declared_capabilities.any(|alias| !self.model.supports_model_alias(alias))
+            {
+                return Err(RuntimeError::new(
+                    RuntimeErrorKind::InvalidConfiguration,
+                    "Blend policy has an invalid version, threshold, or model alias",
+                ));
+            }
+        }
+        self.blend_policy = policy;
+        Ok(())
+    }
+}
+
 impl<M: ModelProvider, R: RunnerEnvironment> CoreRuntime<M, R> {
     /// End a run the host cancelled while it executed.
     ///
@@ -1023,6 +1355,16 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 event_log.append(Event::MessageAccepted {
                     content: content.clone(),
                 });
+                // A run keeps one immutable routing recipe even if the host
+                // changes the session's default model while this run awaits.
+                let pinned_blend_policy = self.blend_policy.clone();
+                let policy_fingerprint = pinned_blend_policy.as_ref().map_or_else(
+                    || "single_model".to_owned(),
+                    |policy| {
+                        let bytes = serde_json::to_vec(policy).unwrap_or_default();
+                        format!("{:x}", Sha256::digest(bytes))
+                    },
+                );
                 let tools = self.tools.clone();
                 let mut protected_event_ids = HashSet::new();
                 let mut pointer_gc_economics = PointerGcRunEconomics::default();
@@ -1204,20 +1546,105 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         system_instructions: self.system_instructions.clone(),
                     };
                     let request_bytes = model_run_request_bytes(&request);
+                    let decision_id = format!("{}:{model_step}", run_id);
+                    let requires_tool_calling = !request.tools.is_empty();
+                    let requires_typed_completion = matches!(
+                        &request.tool_choice,
+                        ToolChoice::Specific { name } if name == RUNTIME_COMPLETE_TOOL_NAME
+                    );
+                    let route = if let Some(policy) = pinned_blend_policy.as_ref() {
+                        let (preferred, reason) = choose_blend_model(
+                            policy,
+                            &history,
+                            run_id,
+                            consecutive_no_progress_steps,
+                            model_step,
+                        );
+                        match capability_eligible_alias(
+                            policy,
+                            &preferred,
+                            requires_tool_calling,
+                            requires_typed_completion,
+                        ) {
+                            Some(alias) => Some((
+                                alias.clone(),
+                                if alias == preferred {
+                                    reason
+                                } else {
+                                    BlendRouteReason::CapabilityFallback
+                                },
+                            )),
+                            None => {
+                                event_log.append(Event::RunFailed {
+                                    message: format!(
+                                        "Blend has no configured model certified for required capabilities (tool_calling={requires_tool_calling}, typed_completion={requires_typed_completion})"
+                                    ),
+                                });
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    event_log.append(Event::ModelRouteSelected {
+                        model_step,
+                        decision_id: decision_id.clone(),
+                        policy_id: pinned_blend_policy.as_ref().map_or_else(
+                            || "single_model".to_owned(),
+                            |policy| policy.policy_id.clone(),
+                        ),
+                        policy_version: pinned_blend_policy
+                            .as_ref()
+                            .map_or(1, |policy| policy.version),
+                        policy_fingerprint: policy_fingerprint.clone(),
+                        model_registry_snapshot: self.model.model_registry_snapshot(),
+                        model_alias: route
+                            .as_ref()
+                            .map(|(alias, _)| alias.clone())
+                            .or_else(|| self.model.model_id().map(str::to_owned)),
+                        reason: route.as_ref().map_or_else(
+                            || "configured_single_model".to_owned(),
+                            |(_, reason)| reason.as_str().to_owned(),
+                        ),
+                    });
+                    let model_call_started = Instant::now();
                     let result = match control.cancellation.as_ref() {
                         // Without a cancellation handle the call is awaited
                         // exactly as it was before control existed.
-                        None => self.model.complete(request).await,
+                        None => match route.as_ref() {
+                            Some((alias, _)) => {
+                                self.model.complete_with_model(request, alias).await
+                            }
+                            None => self.model.complete(request).await,
+                        },
                         Some(cancellation) => {
                             let outcome = tokio::select! {
                                 biased;
                                 () = cancellation.cancelled() => None,
-                                result = self.model.complete(request) => Some(result),
+                                result = async {
+                                    match route.as_ref() {
+                                        Some((alias, _)) => self.model.complete_with_model(request, alias).await,
+                                        None => self.model.complete(request).await,
+                                    }
+                                } => Some(result),
                             };
                             match outcome {
                                 Some(result) => result,
                                 // Dropping the call aborts the provider request.
-                                None => return self.finish_cancelled(run_id, event_log).await,
+                                None => {
+                                    event_log.append(Event::ModelCallObserved {
+                                        model_step,
+                                        decision_id: decision_id.clone(),
+                                        elapsed_ms: u64::try_from(
+                                            model_call_started.elapsed().as_millis(),
+                                        )
+                                        .unwrap_or(u64::MAX),
+                                        provider_succeeded: false,
+                                        outcome: ModelCallOutcome::Cancelled,
+                                        usage: None,
+                                    });
+                                    return self.finish_cancelled(run_id, event_log).await;
+                                }
                             }
                         }
                     };
@@ -1230,6 +1657,15 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     request: request.clone(),
                                 });
                             }
+                            event_log.append(Event::ModelCallObserved {
+                                model_step,
+                                decision_id: decision_id.clone(),
+                                elapsed_ms: u64::try_from(model_call_started.elapsed().as_millis())
+                                    .unwrap_or(u64::MAX),
+                                provider_succeeded: false,
+                                outcome: ModelCallOutcome::Failed,
+                                usage: None,
+                            });
                             if self.terminal_controller_policy.is_typed() {
                                 event_log.append(Event::TerminalControlTransition {
                                     model_step,
@@ -1275,6 +1711,18 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 .event_id,
                         );
                     }
+                    event_log.append(Event::ModelCallObserved {
+                        model_step,
+                        decision_id,
+                        elapsed_ms: u64::try_from(model_call_started.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        provider_succeeded: true,
+                        outcome: ModelCallOutcome::Succeeded,
+                        usage: result
+                            .response
+                            .as_ref()
+                            .map(|response| response.usage.clone()),
+                    });
                     pointer_gc_economics.observe(request_bytes, &result);
                     let response_items = result
                         .response
@@ -2332,6 +2780,20 @@ pub struct DeterministicCompactionProjection {
     pub archive_idempotent: bool,
     pub exact_continuation_bytes: usize,
     pub projected_continuation_bytes: usize,
+    pub timing: DeterministicCompactionTiming,
+}
+
+/// Timings for the benchmark-only deterministic compaction audit path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeterministicCompactionTiming {
+    pub first_model_step_ns: u64,
+    pub idempotence_model_step_ns: u64,
+    pub diagnostic_materialization_ns: u64,
+    pub archive_put_ns: u64,
+    pub archive_get_ns: u64,
+    pub archive_count_ns: u64,
+    pub archive_put_calls: u64,
+    pub archive_get_calls: u64,
 }
 
 pub fn project_compaction_for_benchmark(
@@ -2340,7 +2802,7 @@ pub fn project_compaction_for_benchmark(
     policy: &ShortMemoryPolicy,
     strategy: RuntimeCompactionStrategy,
     checkpoint_batches: usize,
-    memory: &mut LongMemoryManager,
+    memory: &mut impl LongMemoryStore,
 ) -> Result<DeterministicCompactionProjection, RuntimeError> {
     if !strategy.enabled() {
         return Err(RuntimeError::new(
@@ -2374,6 +2836,7 @@ pub fn project_compaction_for_benchmark(
         },
     };
     let protected = HashSet::new();
+    let first_started = Instant::now();
     let first = project_model_step(
         history,
         run_id,
@@ -2383,6 +2846,8 @@ pub fn project_compaction_for_benchmark(
         HistoryProjection::Policy,
         memory,
     )?;
+    let first_model_step_ns = first_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+    let idempotence_started = Instant::now();
     let second = project_model_step(
         history,
         run_id,
@@ -2392,6 +2857,10 @@ pub fn project_compaction_for_benchmark(
         HistoryProjection::Policy,
         memory,
     )?;
+    let idempotence_model_step_ns = idempotence_started
+        .elapsed()
+        .as_nanos()
+        .min(u64::MAX as u128) as u64;
     let mut entries = first.short_memory;
     entries.extend(first.run_memory);
     entries.sort_by_key(|entry| entry.sequence);
@@ -2400,6 +2869,7 @@ pub fn project_compaction_for_benchmark(
     repeated_entries.sort_by_key(|entry| entry.sequence);
     let archive_idempotent = entries == repeated_entries;
 
+    let diagnostics_started = Instant::now();
     let effective_policy = if strategy == RuntimeCompactionStrategy::FileBackedGc {
         let mut effective = policy.clone();
         effective.batch_compaction_enabled = false;
@@ -2417,17 +2887,28 @@ pub fn project_compaction_for_benchmark(
         exact_run_continuation(history, run_id, &ContinuationSubstitution::default());
     let projected_continuation =
         exact_run_continuation(history, run_id, &first.continuation_substitution);
+    let archive_count = memory.archive_count().map_err(long_memory_error)?;
+    let diagnostic_materialization_ns = diagnostics_started
+        .elapsed()
+        .as_nanos()
+        .min(u64::MAX as u128) as u64;
     Ok(DeterministicCompactionProjection {
         entries,
         visibility: materialization.visibility,
         batches: materialization.batches,
         admission: first.pointer_gc_admission,
-        archive_count: memory.archive_count().map_err(long_memory_error)?,
+        archive_count,
         archive_idempotent,
         exact_continuation_bytes: serde_json::to_vec(&exact_continuation)
             .map_or(0, |bytes| bytes.len()),
         projected_continuation_bytes: serde_json::to_vec(&projected_continuation)
             .map_or(0, |bytes| bytes.len()),
+        timing: DeterministicCompactionTiming {
+            first_model_step_ns,
+            idempotence_model_step_ns,
+            diagnostic_materialization_ns,
+            ..DeterministicCompactionTiming::default()
+        },
     })
 }
 
@@ -2438,7 +2919,7 @@ fn project_model_step(
     policy: &ShortMemoryPolicy,
     pointer_gc: PointerGcProjectionPolicy<'_>,
     history_projection: HistoryProjection,
-    memory: &mut LongMemoryManager,
+    memory: &mut impl LongMemoryStore,
 ) -> Result<ModelStepProjection, RuntimeError> {
     let file_backed_policy =
         (pointer_gc.strategy == RuntimeCompactionStrategy::FileBackedGc).then(|| {
@@ -3785,6 +4266,166 @@ mod tests {
         )
     }
 
+    #[test]
+    fn blend_routes_to_error_model_when_any_tool_in_previous_step_failed() {
+        let run_id = RunId::new("prior-run");
+        let policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "balanced".to_owned(),
+            after_tool_success: Some("fast".to_owned()),
+            after_tool_error: Some("strong".to_owned()),
+            recovery_model: None,
+            recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
+        };
+        let history = vec![
+            history_event(
+                1,
+                Event::ModelRouteSelected {
+                    model_step: 1,
+                    decision_id: "prior-run:1".to_owned(),
+                    policy_id: "test".to_owned(),
+                    policy_version: 1,
+                    policy_fingerprint: "test-fingerprint".to_owned(),
+                    model_registry_snapshot: "balanced=balanced".to_owned(),
+                    model_alias: Some("balanced".to_owned()),
+                    reason: "default".to_owned(),
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "failed".to_owned(),
+                    name: "test".to_owned(),
+                    result: "failed".to_owned(),
+                    is_error: true,
+                },
+            ),
+            history_event(
+                3,
+                Event::ToolCallCompleted {
+                    call_id: "succeeded".to_owned(),
+                    name: "test".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+
+        assert_eq!(
+            choose_blend_model(&policy, &history, &run_id, 0, 2),
+            ("strong".to_owned(), BlendRouteReason::AfterToolError)
+        );
+    }
+
+    #[test]
+    fn blend_holds_model_until_minimum_dwell_then_allows_success_route() {
+        let run_id = RunId::new("prior-run");
+        let policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "balanced".to_owned(),
+            after_tool_success: Some("fast".to_owned()),
+            after_tool_error: Some("strong".to_owned()),
+            recovery_model: Some("strong".to_owned()),
+            recovery_after_no_progress_steps: 3,
+            minimum_model_dwell_steps: 2,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
+        };
+        let history = vec![
+            history_event(
+                1,
+                Event::ModelRouteSelected {
+                    model_step: 1,
+                    decision_id: "prior-run:1".to_owned(),
+                    policy_id: "test".to_owned(),
+                    policy_version: 1,
+                    policy_fingerprint: "test".to_owned(),
+                    model_registry_snapshot: "balanced=balanced".to_owned(),
+                    model_alias: Some("balanced".to_owned()),
+                    reason: "default".to_owned(),
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "succeeded".to_owned(),
+                    name: "test".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+
+        assert_eq!(
+            choose_blend_model(&policy, &history, &run_id, 0, 2),
+            ("balanced".to_owned(), BlendRouteReason::MinimumDwell)
+        );
+        let mut second_step = history.clone();
+        second_step.push(history_event(
+            3,
+            Event::ModelRouteSelected {
+                model_step: 2,
+                decision_id: "prior-run:2".to_owned(),
+                policy_id: "test".to_owned(),
+                policy_version: 1,
+                policy_fingerprint: "test".to_owned(),
+                model_registry_snapshot: "balanced=balanced".to_owned(),
+                model_alias: Some("balanced".to_owned()),
+                reason: "minimum_dwell".to_owned(),
+            },
+        ));
+        second_step.push(history_event(
+            4,
+            Event::ToolCallCompleted {
+                call_id: "succeeded-2".to_owned(),
+                name: "test".to_owned(),
+                result: "ok".to_owned(),
+                is_error: false,
+            },
+        ));
+        assert_eq!(
+            choose_blend_model(&policy, &second_step, &run_id, 0, 3),
+            ("fast".to_owned(), BlendRouteReason::AfterToolSuccess)
+        );
+    }
+
+    #[test]
+    fn blend_capability_fallback_requires_every_requested_capability() {
+        let mut policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "balanced".to_owned(),
+            after_tool_success: None,
+            after_tool_error: None,
+            recovery_model: None,
+            recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::from(["fast".to_owned()]),
+            typed_completion_capable_models: BTreeSet::from(["strong".to_owned()]),
+        };
+
+        assert_eq!(
+            capability_eligible_alias(&policy, "balanced", true, false),
+            Some("fast".to_owned())
+        );
+        assert_eq!(
+            capability_eligible_alias(&policy, "balanced", true, true),
+            None
+        );
+        policy
+            .typed_completion_capable_models
+            .insert("fast".to_owned());
+        assert_eq!(
+            capability_eligible_alias(&policy, "balanced", true, true),
+            Some("fast".to_owned())
+        );
+    }
+
     fn pointer_gc_policy(
         checkpoint_batches: usize,
         effort: usize,
@@ -4684,6 +5325,14 @@ mod tests {
         .await;
 
         assert!(matches!(events.last(), Some(Event::RunCancelled)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelCallObserved {
+                outcome: ModelCallOutcome::Cancelled,
+                usage: None,
+                ..
+            }
+        )));
         assert!(
             runtime.model().cancelled,
             "the provider is told to clean up"

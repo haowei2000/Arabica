@@ -1,15 +1,13 @@
 //! `arabica`: interactive terminal host, ACP agent, and one-shot runner.
 
 use arabica_cli::auth::AuthAction;
-use arabica_cli::config::resolve_cli_config;
+use arabica_cli::config::{ResolvedCliConfig, resolve_cli_runtime_config};
 use arabica_cli::host::{
-    HostConfigArgs, HostModel, LocalRunnerPolicy, build_host_runtime, process_environment,
-    resolve_provider_config,
+    HostConfigArgs, LocalRunnerPolicy, build_host_runtime, process_environment,
 };
 use arabica_cli::interactive::{self, InteractiveOptions};
 use arabica_cli::print::{self, OutputFormat, PrintOptions, Resume};
 use arabica_cli::sessions::SessionsAction;
-use arabica_provider::{ApiModelProvider, ApiProviderConfig};
 use arabica_runner::LocalTool;
 use clap::{Args, Parser, Subcommand};
 use std::io::IsTerminal;
@@ -118,16 +116,11 @@ async fn run(cli: Cli) -> i32 {
         };
     }
 
-    let provider_config = match if matches!(command, Some(Commands::Acp)) {
-        resolve_provider_config(&config, process_environment)
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
-    } else {
-        (|| {
-            let home = arabica_adapters::default_arabica_home()?;
-            let cwd = std::env::current_dir()?;
-            resolve_cli_config(&config, &home, &cwd, process_environment)
-        })()
-    } {
+    let resolved = match (|| {
+        let home = arabica_adapters::default_arabica_home()?;
+        let cwd = std::env::current_dir()?;
+        resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
+    })() {
         Ok(config) => config,
         Err(error) => {
             eprintln!("error: {error}");
@@ -140,13 +133,13 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the acp subcommand");
             2
         }
-        (Some(Commands::Acp), None) => run_acp(provider_config).await,
+        (Some(Commands::Acp), None) => run_acp(resolved).await,
         (Some(Commands::Chat | Commands::Config), Some(_)) => {
             eprintln!("error: -p cannot be combined with this subcommand");
             2
         }
-        (Some(Commands::Chat), None) => run_chat(provider_config, print_args).await,
-        (Some(Commands::Config), None) => match describe_configuration(provider_config) {
+        (Some(Commands::Chat), None) => run_chat(resolved, print_args).await,
+        (Some(Commands::Config), None) => match describe_configuration(resolved) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("error: {error}");
@@ -159,12 +152,12 @@ async fn run(cli: Cli) -> i32 {
         (Some(Commands::Auth { .. }), _) => {
             unreachable!("Commands::Auth returns early above")
         }
-        (None, Some(task)) => run_print(provider_config, task.clone(), print_args).await,
-        (None, None) => run_chat(provider_config, print_args).await,
+        (None, Some(task)) => run_print(resolved, task.clone(), print_args).await,
+        (None, None) => run_chat(resolved, print_args).await,
     }
 }
 
-async fn run_chat(provider_config: ApiProviderConfig, args: PrintArgs) -> i32 {
+async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
     if args.output_format != OutputFormat::Text {
         eprintln!("error: --output-format is only available with -p");
         return 2;
@@ -175,13 +168,41 @@ async fn run_chat(provider_config: ApiProviderConfig, args: PrintArgs) -> i32 {
         resume: args.resume_mode(),
     };
     if !args.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        arabica_cli::tui::run(provider_config, options).await
+        match resolved.build_model() {
+            Ok(model) => {
+                arabica_cli::tui::run_with_model(
+                    resolved.provider,
+                    model,
+                    resolved.blend_policy,
+                    options,
+                )
+                .await
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                2
+            }
+        }
     } else {
-        interactive::run(provider_config, options).await
+        match resolved.build_model() {
+            Ok(model) => {
+                interactive::run_with_model(
+                    resolved.provider,
+                    model,
+                    resolved.blend_policy,
+                    options,
+                )
+                .await
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                2
+            }
+        }
     }
 }
 
-async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
+async fn run_acp(resolved: ResolvedCliConfig) -> i32 {
     // Shell is opt-in at the policy layer (`LocalRunnerPolicy::coding` does
     // not include it: it is the tool with no confinement, the one place the
     // permission gate is the only boundary). ACP is exactly the surface
@@ -191,7 +212,7 @@ async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
     // build, test, or run `git` would not be a meaningfully useful trade
     // for that safety.
     let tool_policy = LocalRunnerPolicy::coding().with_tool(LocalTool::Shell);
-    match arabica_cli::acp::run(provider_config, tool_policy).await {
+    match arabica_cli::acp::run(resolved, tool_policy).await {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("error: {error}");
@@ -200,7 +221,7 @@ async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
     }
 }
 
-async fn run_print(provider_config: ApiProviderConfig, task: String, args: PrintArgs) -> i32 {
+async fn run_print(resolved: ResolvedCliConfig, task: String, args: PrintArgs) -> i32 {
     let task = match print::resolve_task(&task) {
         Ok(task) => task,
         Err(error) => {
@@ -209,8 +230,16 @@ async fn run_print(provider_config: ApiProviderConfig, task: String, args: Print
         }
     };
     let resume = args.resume_mode();
-    print::run(
-        provider_config,
+    let model = match resolved.build_model() {
+        Ok(model) => model,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+    print::run_with_model(
+        model,
+        resolved.blend_policy,
         PrintOptions {
             task,
             output_format: args.output_format,
@@ -223,9 +252,11 @@ async fn run_print(provider_config: ApiProviderConfig, task: String, args: Print
 }
 
 /// `arabica config`: report the resolved provider without starting a run.
-fn describe_configuration(
-    provider_config: ApiProviderConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn describe_configuration(resolved: ResolvedCliConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let model = resolved.build_model()?;
+    let aliases = resolved.models.clone();
+    let blend_policy = resolved.blend_policy.clone();
+    let provider_config = resolved.provider;
     // Never printed: the api_key field itself is not touched below.
     let api_type = provider_config.api_type;
     let base_url = provider_config.base_url.clone();
@@ -239,7 +270,6 @@ fn describe_configuration(
             .unwrap_or_else(|| "on".to_owned())
     };
 
-    let model = HostModel::Api(ApiModelProvider::new(provider_config)?);
     let runner_root = std::env::current_dir()?;
     let arabica_home = arabica_adapters::default_arabica_home()?;
     let runtime = build_host_runtime(
@@ -253,6 +283,18 @@ fn describe_configuration(
     println!("  api_type:    {api_type}");
     println!("  base_url:    {base_url}");
     println!("  model:       {model_name}");
+    if !aliases.is_empty() {
+        println!("  models:");
+        for (alias, model_id) in aliases {
+            println!("    {alias}: {model_id}");
+        }
+        if let Some(policy) = blend_policy {
+            println!(
+                "  blend:       {} v{} (default {})",
+                policy.policy_id, policy.version, policy.default_model
+            );
+        }
+    }
     println!("  thinking:    {thinking}");
     println!("  runner_root: {}", runner_root.display());
     let home = arabica_adapters::default_arabica_home()?;

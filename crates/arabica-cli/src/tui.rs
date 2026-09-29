@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::host::HostModel;
 use arabica_adapters::FileSessionStore;
 use arabica_model::{ContentBlock, RuntimeItem, RuntimeRole};
 use arabica_protocol::{
@@ -22,6 +23,7 @@ use arabica_protocol::{
     ToolPermissionScope, ToolPermissionSource,
 };
 use arabica_provider::{ApiProviderConfig, ModelProgress, ModelProgressSink};
+use arabica_runtime::BlendRoutingPolicy;
 use arabica_runtime::{
     PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
 };
@@ -3054,7 +3056,18 @@ async fn run_inner(
     config: ApiProviderConfig,
     options: InteractiveOptions,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    let mut session = InteractiveSession::open(config, options).await?;
+    let model = HostModel::Api(arabica_provider::ApiModelProvider::new(config.clone())?);
+    run_inner_with_model(config, model, None, options).await
+}
+
+async fn run_inner_with_model(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    options: InteractiveOptions,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let mut session =
+        InteractiveSession::open_with_model(config, model, blend_policy, options).await?;
     let mut app = App::new(&session);
     app.status = format!("session {}", session.session_id);
 
@@ -3305,6 +3318,25 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
         return 2;
     }
     match run_inner(config, options).await {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    }
+}
+
+pub async fn run_with_model(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    options: InteractiveOptions,
+) -> i32 {
+    if options.allow_shell && options.read_only {
+        eprintln!("error: --allow-shell and --read-only are mutually exclusive");
+        return 2;
+    }
+    match run_inner_with_model(config, model, blend_policy, options).await {
         Ok(code) => code,
         Err(error) => {
             eprintln!("error: {error}");

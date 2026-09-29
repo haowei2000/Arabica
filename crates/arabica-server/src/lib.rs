@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use arabica_protocol::{CommandEnvelope, CommandFailure, EventEnvelope, protocol_schema};
 use arabica_provider::{
-    ApiModelProvider, ApiProviderConfig, ApiType, EchoModel, ModelProvider, ModelRunRequest,
-    ModelRunResult, ProviderError,
+    ApiModelProvider, ApiProviderConfig, ApiType, BlendProvider, EchoModel, ModelProvider,
+    ModelRunRequest, ModelRunResult, ProviderError,
 };
 use arabica_runner::LocalRunner;
 use arabica_runtime::{
-    CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+    BlendRoutingPolicy, CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy,
+    ShortMemoryPolicy,
 };
 use arabica_session::SessionManager;
 use axum::extract::State;
@@ -27,9 +28,34 @@ use tokio_stream::wrappers::BroadcastStream;
 enum ServerModel {
     Echo(EchoModel),
     Api(ApiModelProvider),
+    Blend(BlendProvider),
 }
 
 impl ModelProvider for ServerModel {
+    fn model_id(&self) -> Option<&str> {
+        match self {
+            Self::Echo(model) => model.model_id(),
+            Self::Api(model) => model.model_id(),
+            Self::Blend(model) => model.model_id(),
+        }
+    }
+
+    fn model_registry_snapshot(&self) -> String {
+        match self {
+            Self::Blend(model) => model.model_registry_snapshot(),
+            Self::Echo(model) => model.model_registry_snapshot(),
+            Self::Api(model) => model.model_registry_snapshot(),
+        }
+    }
+
+    fn supports_model_alias(&self, alias: &str) -> bool {
+        match self {
+            Self::Blend(model) => model.supports_model_alias(alias),
+            Self::Echo(model) => model.supports_model_alias(alias),
+            Self::Api(model) => model.supports_model_alias(alias),
+        }
+    }
+
     async fn complete(
         &mut self,
         request: ModelRunRequest,
@@ -37,6 +63,19 @@ impl ModelProvider for ServerModel {
         match self {
             Self::Echo(model) => model.complete(request).await,
             Self::Api(model) => model.complete(request).await,
+            Self::Blend(model) => model.complete(request).await,
+        }
+    }
+
+    async fn complete_with_model(
+        &mut self,
+        request: ModelRunRequest,
+        model_alias: &str,
+    ) -> Result<ModelRunResult, ProviderError> {
+        match self {
+            Self::Blend(model) => model.complete_with_model(request, model_alias).await,
+            Self::Echo(model) => model.complete_with_model(request, model_alias).await,
+            Self::Api(model) => model.complete_with_model(request, model_alias).await,
         }
     }
 
@@ -44,6 +83,7 @@ impl ModelProvider for ServerModel {
         match self {
             Self::Echo(model) => model.cancel(run_id).await,
             Self::Api(model) => model.cancel(run_id).await,
+            Self::Blend(model) => model.cancel(run_id).await,
         }
     }
 }
@@ -57,6 +97,29 @@ fn local_file_archive_store() -> RuntimeArchiveStore {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_ARCHIVE_ROOT));
     RuntimeArchiveStore::File { root }
+}
+
+fn blend_candidates(value: &str) -> Result<Vec<(String, String)>, ProviderError> {
+    let candidates = value
+        .split(',')
+        .map(|entry| {
+            let (alias, model) = entry.trim().split_once('=')?;
+            let alias = alias.trim();
+            let model = model.trim();
+            (!alias.is_empty() && !model.is_empty()).then(|| (alias.to_owned(), model.to_owned()))
+        })
+        .collect::<Option<Vec<_>>>();
+    let candidates = candidates.ok_or_else(|| {
+        ProviderError::new(
+            "invalid ARABICA__BLEND_MODELS; expected comma-separated alias=model entries",
+        )
+    })?;
+    if candidates.is_empty() {
+        return Err(ProviderError::new(
+            "ARABICA__BLEND_MODELS must not be empty",
+        ));
+    }
+    Ok(candidates)
 }
 
 #[derive(Clone)]
@@ -93,11 +156,83 @@ impl AppState {
             .map_err(|_| ProviderError::new("OPENAI__API_KEY is required"))?;
         let base_url = std::env::var("OPENAI__BASE_URL")
             .map_err(|_| ProviderError::new("OPENAI__BASE_URL is required"))?;
-        let model = std::env::var("OPENAI__MODEL")
-            .map_err(|_| ProviderError::new("OPENAI__MODEL is required"))?;
         let tool_root = std::env::var("ARABICA__TOOL_ROOT").unwrap_or_else(|_| ".".to_owned());
-        let provider =
-            ApiModelProvider::new(ApiProviderConfig::new(api_type, api_key, base_url, model))?;
+        let (model, blend_policy) = match std::env::var("ARABICA__BLEND_MODELS") {
+            Ok(configured_models) => {
+                let candidates = blend_candidates(&configured_models)?;
+                let default_alias = std::env::var("ARABICA__BLEND_DEFAULT")
+                    .unwrap_or_else(|_| candidates[0].0.clone());
+                let base_model = candidates[0].1.clone();
+                let provider = BlendProvider::from_shared_config(
+                    ApiProviderConfig::new(api_type, api_key, base_url, base_model),
+                    default_alias.clone(),
+                    candidates,
+                )?;
+                let recovery_after_no_progress_steps =
+                    std::env::var("ARABICA__BLEND_RECOVERY_AFTER_NO_PROGRESS_STEPS")
+                        .unwrap_or_else(|_| "2".to_owned())
+                        .parse::<usize>()
+                        .map_err(|error| {
+                            ProviderError::new(format!(
+                                "invalid ARABICA__BLEND_RECOVERY_AFTER_NO_PROGRESS_STEPS: {error}"
+                            ))
+                        })?;
+                let policy = BlendRoutingPolicy {
+                    policy_id: std::env::var("ARABICA__BLEND_POLICY_ID")
+                        .unwrap_or_else(|_| "env-rules".to_owned()),
+                    version: std::env::var("ARABICA__BLEND_POLICY_VERSION")
+                        .unwrap_or_else(|_| "1".to_owned())
+                        .parse::<u64>()
+                        .map_err(|error| {
+                            ProviderError::new(format!(
+                                "invalid ARABICA__BLEND_POLICY_VERSION: {error}"
+                            ))
+                        })?,
+                    default_model: default_alias,
+                    after_tool_success: std::env::var("ARABICA__BLEND_AFTER_TOOL_SUCCESS").ok(),
+                    after_tool_error: std::env::var("ARABICA__BLEND_AFTER_TOOL_ERROR").ok(),
+                    recovery_model: std::env::var("ARABICA__BLEND_RECOVERY_MODEL").ok(),
+                    recovery_after_no_progress_steps,
+                    minimum_model_dwell_steps: std::env::var(
+                        "ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS",
+                    )
+                    .unwrap_or_else(|_| "1".to_owned())
+                    .parse::<usize>()
+                    .map_err(|error| {
+                        ProviderError::new(format!(
+                            "invalid ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS: {error}"
+                        ))
+                    })?,
+                    tool_call_capable_models: std::env::var("ARABICA__BLEND_TOOL_CALL_MODELS")
+                        .unwrap_or_default()
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|alias| !alias.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                    typed_completion_capable_models: std::env::var(
+                        "ARABICA__BLEND_TYPED_COMPLETION_MODELS",
+                    )
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|alias| !alias.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+                };
+                (ServerModel::Blend(provider), Some(policy))
+            }
+            Err(_) => {
+                let model = std::env::var("OPENAI__MODEL")
+                    .map_err(|_| ProviderError::new("OPENAI__MODEL is required"))?;
+                (
+                    ServerModel::Api(ApiModelProvider::new(ApiProviderConfig::new(
+                        api_type, api_key, base_url, model,
+                    ))?),
+                    None,
+                )
+            }
+        };
         let compaction_strategy = match std::env::var("ARABICA__COMPACTION_STRATEGY")
             .unwrap_or_else(|_| "file_backed_gc".to_owned())
             .to_ascii_lowercase()
@@ -132,12 +267,17 @@ impl AppState {
             ));
         }
         let mut runtime = CoreRuntime::with_memory_configuration(
-            ServerModel::Api(provider),
+            model,
             LocalRunner::new(tool_root),
             ShortMemoryPolicy::default(),
             false,
             local_file_archive_store(),
         );
+        if let Some(policy) = blend_policy {
+            runtime
+                .set_blend_policy(Some(policy))
+                .map_err(|error| ProviderError::new(error.to_string()))?;
+        }
         runtime.set_compaction_strategy(compaction_strategy);
         runtime.set_async_file_backed_gc(true);
         runtime.set_pointer_gc_effort(pgc_effort);

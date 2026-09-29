@@ -1,14 +1,16 @@
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use arabica_model::{MemoryBatchKind, MemoryLoadState, ShortMemoryEntry, ShortMemoryItem};
 use arabica_runtime::{
-    EventVisibilityDecision, KeyAdmissionDecision, KeyAdmissionPolicy, LongMemoryManager,
-    MemoryClass, PointerGcAdmissionObservation, RuntimeCompactionStrategy,
-    ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
-    project_compaction_for_benchmark,
+    ArchivedMemory, EventVisibilityDecision, KeyAdmissionDecision, KeyAdmissionPolicy,
+    LongMemoryError, LongMemoryManager, LongMemoryStore, MemoryClass,
+    PointerGcAdmissionObservation, RuntimeCompactionStrategy, ShortMemoryMaterialization,
+    ShortMemoryPolicy, ShortMemoryProjector, project_compaction_for_benchmark,
 };
 use serde::{Deserialize, Serialize};
 
@@ -208,24 +210,54 @@ impl Baseline {
                     BaselineError::new("FBGC requires a trace with current_run_id")
                 })?;
                 let root = deterministic_archive_root();
+                let archive_open_started = Instant::now();
                 let mut memory = LongMemoryManager::with_file_archive(&root)
                     .map_err(|error| BaselineError::new(error.to_string()))?;
-                let projection = project_compaction_for_benchmark(
+                let archive_open_ns = elapsed_ns(archive_open_started);
+                let mut timed_memory = TimedArchiveStore::new(&mut memory);
+                let mut projection = project_compaction_for_benchmark(
                     &trace.events,
                     run_id,
                     &ShortMemoryPolicy::ttl_only(),
                     RuntimeCompactionStrategy::FileBackedGc,
                     *checkpoint_batches,
-                    &mut memory,
+                    &mut timed_memory,
                 )
                 .map_err(|error| BaselineError::new(error.to_string()))?;
+                let archive_io = timed_memory.snapshot();
+                projection.timing.archive_put_ns = archive_io.put_ns;
+                projection.timing.archive_get_ns = archive_io.get_ns;
+                projection.timing.archive_count_ns = archive_io.count_ns;
+                projection.timing.archive_put_calls = archive_io.put_calls;
+                projection.timing.archive_get_calls = archive_io.get_calls;
+                let runtime_timing = projection.timing;
+                let metadata_started = Instant::now();
                 let metadata = projection_metadata(&projection.visibility, &projection.batches);
-                compaction = Some(CompactionProjectionMetrics::from_projection(
+                let mut metrics = CompactionProjectionMetrics::from_projection(
                     RuntimeCompactionStrategy::FileBackedGc,
                     *checkpoint_batches,
                     &projection,
-                ));
+                );
+                metrics.timing = Some(BenchmarkCompactionTimings {
+                    archive_open_ns,
+                    first_model_step_ns: runtime_timing.first_model_step_ns,
+                    idempotence_model_step_ns: runtime_timing.idempotence_model_step_ns,
+                    diagnostic_materialization_ns: runtime_timing.diagnostic_materialization_ns,
+                    metadata_assembly_ns: 0,
+                    archive_put_ns: runtime_timing.archive_put_ns,
+                    archive_get_ns: runtime_timing.archive_get_ns,
+                    archive_count_ns: runtime_timing.archive_count_ns,
+                    archive_put_calls: runtime_timing.archive_put_calls,
+                    archive_get_calls: runtime_timing.archive_get_calls,
+                    archive_reopen_count_ns: 0,
+                    cleanup_ns: 0,
+                });
+                if let Some(timing) = &mut metrics.timing {
+                    timing.metadata_assembly_ns = elapsed_ns(metadata_started);
+                }
+                compaction = Some(metrics);
                 drop(memory);
+                let verification_started = Instant::now();
                 let reopened = LongMemoryManager::with_file_archive(&root)
                     .map_err(|error| BaselineError::new(error.to_string()))?;
                 let reopened_count = reopened
@@ -233,14 +265,23 @@ impl Baseline {
                     .map_err(|error| BaselineError::new(error.to_string()))?;
                 if let Some(compaction) = &mut compaction {
                     compaction.archive_reopen_verified = reopened_count == compaction.archive_count;
+                    if let Some(timing) = &mut compaction.timing {
+                        timing.archive_reopen_count_ns = elapsed_ns(verification_started);
+                    }
                 }
                 drop(reopened);
+                let cleanup_started = Instant::now();
                 std::fs::remove_dir_all(&root).map_err(|error| {
                     BaselineError::new(format!(
                         "failed to remove benchmark archive {}: {error}",
                         root.display()
                     ))
                 })?;
+                if let Some(compaction) = &mut compaction
+                    && let Some(timing) = &mut compaction.timing
+                {
+                    timing.cleanup_ns = elapsed_ns(cleanup_started);
+                }
                 (projection.entries, metadata.0, metadata.1)
             }
         };
@@ -275,6 +316,28 @@ pub struct CompactionProjectionMetrics {
     pub exact_continuation_bytes: usize,
     pub projected_continuation_bytes: usize,
     pub substitutive_transition: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<BenchmarkCompactionTimings>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BenchmarkCompactionTimings {
+    pub archive_open_ns: u64,
+    /// First policy projection, including newly admitted archive writes.
+    pub first_model_step_ns: u64,
+    /// Idempotence projection, including reads of already archived batches.
+    pub idempotence_model_step_ns: u64,
+    pub diagnostic_materialization_ns: u64,
+    pub metadata_assembly_ns: u64,
+    /// Sum of durable put_archive calls, including fsync and link publication.
+    pub archive_put_ns: u64,
+    /// Sum of archive probes and reads performed by the two model-step passes.
+    pub archive_get_ns: u64,
+    pub archive_count_ns: u64,
+    pub archive_put_calls: u64,
+    pub archive_get_calls: u64,
+    pub archive_reopen_count_ns: u64,
+    pub cleanup_ns: u64,
 }
 
 impl CompactionProjectionMetrics {
@@ -298,7 +361,104 @@ impl CompactionProjectionMetrics {
                         .entries
                         .iter()
                         .any(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))),
+            timing: Some(BenchmarkCompactionTimings {
+                first_model_step_ns: projection.timing.first_model_step_ns,
+                idempotence_model_step_ns: projection.timing.idempotence_model_step_ns,
+                diagnostic_materialization_ns: projection.timing.diagnostic_materialization_ns,
+                archive_put_ns: projection.timing.archive_put_ns,
+                archive_get_ns: projection.timing.archive_get_ns,
+                archive_count_ns: projection.timing.archive_count_ns,
+                archive_put_calls: projection.timing.archive_put_calls,
+                archive_get_calls: projection.timing.archive_get_calls,
+                ..BenchmarkCompactionTimings::default()
+            }),
         }
+    }
+}
+
+fn elapsed_ns(started: Instant) -> u64 {
+    started.elapsed().as_nanos().min(u64::MAX as u128) as u64
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ArchiveIoSnapshot {
+    put_ns: u64,
+    get_ns: u64,
+    count_ns: u64,
+    put_calls: u64,
+    get_calls: u64,
+}
+
+struct TimedArchiveStore<'a> {
+    inner: &'a mut LongMemoryManager,
+    put_ns: Cell<u64>,
+    get_ns: Cell<u64>,
+    count_ns: Cell<u64>,
+    put_calls: Cell<u64>,
+    get_calls: Cell<u64>,
+}
+
+impl<'a> TimedArchiveStore<'a> {
+    fn new(inner: &'a mut LongMemoryManager) -> Self {
+        Self {
+            inner,
+            put_ns: Cell::new(0),
+            get_ns: Cell::new(0),
+            count_ns: Cell::new(0),
+            put_calls: Cell::new(0),
+            get_calls: Cell::new(0),
+        }
+    }
+
+    fn snapshot(&self) -> ArchiveIoSnapshot {
+        ArchiveIoSnapshot {
+            put_ns: self.put_ns.get(),
+            get_ns: self.get_ns.get(),
+            count_ns: self.count_ns.get(),
+            put_calls: self.put_calls.get(),
+            get_calls: self.get_calls.get(),
+        }
+    }
+}
+
+impl LongMemoryStore for TimedArchiveStore<'_> {
+    fn put_archive(
+        &mut self,
+        memory_id: &str,
+        content: String,
+        content_hash: String,
+    ) -> Result<(), LongMemoryError> {
+        let started = Instant::now();
+        let result = self.inner.put_archive(memory_id, content, content_hash);
+        self.put_ns
+            .set(self.put_ns.get().saturating_add(elapsed_ns(started)));
+        self.put_calls.set(self.put_calls.get().saturating_add(1));
+        result
+    }
+
+    fn get_archive(&self, memory_id: &str) -> Result<Option<ArchivedMemory>, LongMemoryError> {
+        let started = Instant::now();
+        let result = self.inner.get_archive(memory_id);
+        self.get_ns
+            .set(self.get_ns.get().saturating_add(elapsed_ns(started)));
+        self.get_calls.set(self.get_calls.get().saturating_add(1));
+        result
+    }
+
+    fn search_archives(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ArchivedMemory>, LongMemoryError> {
+        self.inner.search_archives(query, limit)
+    }
+
+    fn archive_count(&self) -> Result<usize, LongMemoryError> {
+        let started = Instant::now();
+        let result = self.inner.archive_count();
+        self.count_ns
+            .set(self.count_ns.get().saturating_add(elapsed_ns(started)));
+        result
     }
 }
 

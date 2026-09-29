@@ -266,6 +266,35 @@ pub enum Event {
     RunStarted,
     #[serde(rename = "message.accepted")]
     MessageAccepted { content: String },
+    /// Model selected for one call, recorded before provider invocation.
+    /// Contains only a public model identifier and bounded routing metadata.
+    #[serde(rename = "model.route.selected")]
+    ModelRouteSelected {
+        model_step: usize,
+        decision_id: String,
+        policy_id: String,
+        policy_version: u64,
+        /// Content hash of the effective policy pinned for this run.
+        #[serde(default)]
+        policy_fingerprint: String,
+        /// Stable aliases and model IDs; excludes credentials and endpoints.
+        #[serde(default)]
+        model_registry_snapshot: String,
+        model_alias: Option<String>,
+        reason: String,
+    },
+    /// Immediate call-level measurement. Run quality is evaluated separately
+    /// after downstream tool outcomes or terminal task evidence are available.
+    #[serde(rename = "model.call.observed")]
+    ModelCallObserved {
+        model_step: usize,
+        decision_id: String,
+        elapsed_ms: u64,
+        provider_succeeded: bool,
+        #[serde(default)]
+        outcome: ModelCallOutcome,
+        usage: Option<RuntimeUsage>,
+    },
     /// Exact provider-neutral request immediately before wire encoding.
     #[serde(rename = "model.request.prepared")]
     ModelRequestPrepared {
@@ -400,6 +429,16 @@ pub enum Event {
     Error { code: ErrorCode, message: String },
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallOutcome {
+    Succeeded,
+    Failed,
+    Cancelled,
+    #[default]
+    Unknown,
+}
+
 impl Event {
     /// Model exchange events are canonical audit/runtime facts but can contain
     /// system prompts, disclosed memory, and provider reasoning state. They
@@ -408,6 +447,8 @@ impl Event {
         !matches!(
             self,
             Self::ModelRequestPrepared { .. }
+                | Self::ModelRouteSelected { .. }
+                | Self::ModelCallObserved { .. }
                 | Self::ModelResponseItem { .. }
                 | Self::ModelResponseCompleted { .. }
                 | Self::ModelResponseRejected { .. }
@@ -527,6 +568,46 @@ mod tests {
             serde_json::from_value::<CommandEnvelope>(value).expect("command deserializes"),
             command
         );
+    }
+
+    #[test]
+    fn blend_events_deserialize_older_records_with_unknown_new_fields() {
+        let route: Event = serde_json::from_value(serde_json::json!({
+            "type": "model.route.selected",
+            "payload": {
+                "model_step": 1,
+                "decision_id": "run:1",
+                "policy_id": "legacy",
+                "policy_version": 1,
+                "model_alias": "fast",
+                "reason": "default"
+            }
+        }))
+        .expect("legacy route event deserializes");
+        assert!(
+            matches!(route, Event::ModelRouteSelected { policy_fingerprint, model_registry_snapshot, .. }
+            if policy_fingerprint.is_empty() && model_registry_snapshot.is_empty())
+        );
+
+        let observed: Event = serde_json::from_value(serde_json::json!({
+            "type": "model.call.observed",
+            "payload": {
+                "model_step": 1,
+                "decision_id": "run:1",
+                "elapsed_ms": 9,
+                "provider_succeeded": true,
+                "usage": null
+            }
+        }))
+        .expect("legacy observation event deserializes");
+        assert!(matches!(
+            observed,
+            Event::ModelCallObserved {
+                outcome: ModelCallOutcome::Unknown,
+                usage: None,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -7,12 +7,13 @@
 //! policy a coding CLI needs. Terminal chat, `arabica acp`, and `structure -p` build on
 //! this; neither adds a second way to do it.
 
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use arabica_protocol::{RunId, SessionId};
 use arabica_provider::{
-    ApiModelProvider, ApiProviderConfig, ApiType, ModelProgressSink, ModelProvider,
+    ApiModelProvider, ApiProviderConfig, ApiType, BlendProvider, ModelProgressSink, ModelProvider,
     ModelRunRequest, ModelRunResult, ProviderError,
 };
 pub use arabica_runner::LocalRunnerPolicy;
@@ -73,6 +74,31 @@ pub struct HostConfigArgs {
     pub base_url: Option<String>,
 }
 
+/// Shared model-pool configuration consumed by terminal, one-shot, and ACP
+/// hosts. Protocol adapters may expose different controls, but model
+/// construction and alias validation stay here.
+#[derive(Clone, Debug)]
+pub struct HostModelCatalog {
+    pub provider: ApiProviderConfig,
+    pub models: BTreeMap<String, String>,
+    pub blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+}
+
+impl HostModelCatalog {
+    pub fn build_model(&self) -> Result<HostModel, ProviderError> {
+        if self.models.is_empty() {
+            return ApiModelProvider::new(self.provider.clone()).map(HostModel::Api);
+        }
+        let default_alias = self
+            .blend_policy
+            .as_ref()
+            .map(|policy| policy.default_model.as_str())
+            .unwrap_or_else(|| self.models.keys().next().expect("non-empty model catalog"));
+        BlendProvider::from_shared_config(self.provider.clone(), default_alias, self.models.clone())
+            .map(HostModel::Blend)
+    }
+}
+
 fn require(value: Option<String>, var: &str, flag: &str) -> Result<String, ProviderError> {
     value.ok_or_else(|| ProviderError::new(format!("{var} is required (or pass --{flag})")))
 }
@@ -128,6 +154,7 @@ pub fn process_environment(name: &str) -> Option<String> {
 #[derive(Debug)]
 pub enum HostModel {
     Api(ApiModelProvider),
+    Blend(BlendProvider),
     StreamingApi(ApiModelProvider, ModelProgressSink),
     /// A fixed sequence of responses, consumed one per call. Used by this
     /// crate's own tests; never selected from user-facing configuration.
@@ -135,12 +162,37 @@ pub enum HostModel {
 }
 
 impl ModelProvider for HostModel {
+    fn model_id(&self) -> Option<&str> {
+        match self {
+            Self::Api(model) | Self::StreamingApi(model, _) => model.model_id(),
+            Self::Blend(model) => model.model_id(),
+            Self::Scripted(model) => model.model_id(),
+        }
+    }
+
+    fn model_registry_snapshot(&self) -> String {
+        match self {
+            Self::Blend(model) => model.model_registry_snapshot(),
+            Self::Api(model) | Self::StreamingApi(model, _) => model.model_registry_snapshot(),
+            Self::Scripted(model) => model.model_registry_snapshot(),
+        }
+    }
+
+    fn supports_model_alias(&self, alias: &str) -> bool {
+        match self {
+            Self::Api(model) | Self::StreamingApi(model, _) => model.supports_model_alias(alias),
+            Self::Blend(model) => model.supports_model_alias(alias),
+            Self::Scripted(model) => model.supports_model_alias(alias),
+        }
+    }
+
     async fn complete(
         &mut self,
         request: ModelRunRequest,
     ) -> Result<ModelRunResult, ProviderError> {
         match self {
             Self::Api(model) => model.complete(request).await,
+            Self::Blend(model) => model.complete(request).await,
             Self::StreamingApi(model, progress) => {
                 model.complete_with_progress(request, progress).await
             }
@@ -148,9 +200,24 @@ impl ModelProvider for HostModel {
         }
     }
 
+    async fn complete_with_model(
+        &mut self,
+        request: ModelRunRequest,
+        model_alias: &str,
+    ) -> Result<ModelRunResult, ProviderError> {
+        match self {
+            Self::Blend(model) => model.complete_with_model(request, model_alias).await,
+            Self::Api(model) | Self::StreamingApi(model, _) => {
+                model.complete_with_model(request, model_alias).await
+            }
+            Self::Scripted(model) => model.complete_with_model(request, model_alias).await,
+        }
+    }
+
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
         match self {
             Self::Api(model) => model.cancel(run_id).await,
+            Self::Blend(model) => model.cancel(run_id).await,
             Self::StreamingApi(model, _) => model.cancel(run_id).await,
             Self::Scripted(model) => model.cancel(run_id).await,
         }
@@ -387,6 +454,20 @@ pub fn build_host_runtime_with_mcp(
     runtime.set_max_model_steps_without_progress(usize::MAX);
     runtime.set_system_instructions(system_instructions(runner_root));
     runtime
+}
+
+pub fn build_host_runtime_with_blend(
+    model: HostModel,
+    runner_root: &Path,
+    tool_policy: LocalRunnerPolicy,
+    arabica_home: &Path,
+    mcp: crate::mcp::McpTools,
+    blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+) -> Result<HostRuntime, arabica_runtime::RuntimeError> {
+    let mut runtime =
+        build_host_runtime_with_mcp(model, runner_root, tool_policy, arabica_home, mcp);
+    runtime.set_blend_policy(blend_policy)?;
+    Ok(runtime)
 }
 
 #[cfg(test)]

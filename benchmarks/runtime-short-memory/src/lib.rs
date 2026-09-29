@@ -5,6 +5,14 @@
 //! `arabica-runtime`.
 
 mod baseline;
+pub mod blend_campaign;
+pub use blend_campaign::{
+    BLEND_CAMPAIGN_SCHEMA, BlendArm, BlendArmSummary, BlendCampaignManifest, BlendCampaignSummary,
+    BlendTask, BlendTrial, BlendTrialResult, MemoryEvidenceCondition,
+    MemoryEvidenceConditionSummary, MemoryEvidenceManifest, MemoryEvidenceSummary,
+    MemoryEvidenceTrial, MemoryEvidenceTrialResult, summarize_blend_campaign,
+    summarize_memory_evidence,
+};
 mod cli_comparison;
 pub mod experiment;
 mod gates;
@@ -15,8 +23,8 @@ mod schema;
 mod tier_b;
 
 pub use baseline::{
-    Baseline, BaselineError, BenchmarkProjection, CompactionProjectionMetrics, ProjectionBatch,
-    ProjectionVisibility,
+    Baseline, BaselineError, BenchmarkCompactionTimings, BenchmarkProjection,
+    CompactionProjectionMetrics, ProjectionBatch, ProjectionVisibility,
 };
 pub use cli_comparison::{
     CLI_COMPARISON_MANIFEST_SCHEMA, CLI_COMPARISON_REPORT_SCHEMA, CLI_COMPARISON_SUITE_SCHEMA,
