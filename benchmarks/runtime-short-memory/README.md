@@ -291,6 +291,35 @@ cargo build --release -p structure-short-memory-benchmark --bin harbor_agent
 The following Harbor report and campaign notes describe historical runs and
 the retained Rust reporting contract, not a currently supplied orchestrator.
 
+## Blend campaign schedule and summary
+
+The `blend_campaign` binary freezes a paired assignment across fixed strong,
+fixed inexpensive, fixed phase-based, and adaptive routing. Every manifest
+records model IDs, policy labels, pricing/oracle versions, seeds, task strata,
+and context-continuity challenge fixtures. The binary summarizes verifier
+results with success-rate Wilson intervals, cost per successful task, latency,
+recovery count, and safety incidents, both overall and by stratum.
+
+```bash
+cargo run -p structure-short-memory-benchmark --bin blend_campaign -- plan \
+  --seed 20260929 --strong-model model-strong-v1 \
+  --inexpensive-model model-fast-v1 --fixed-phase-policy phase-v1 \
+  --adaptive-policy blend-v1 --pricing-version prices-2026-09 \
+  --success-oracle-version oracle-v1 --repetitions 5 \
+  --tasks repo-small:coding:false,repo-switch:context-switch:true \
+  --output target/blend-campaign.json
+
+cargo run -p structure-short-memory-benchmark --bin blend_campaign -- summarize \
+  --manifest target/blend-campaign.json --results target/blend-results.json \
+  --output target/blend-summary.json
+```
+
+The binary schedules and summarizes trials; it does not invoke models. The
+repository has no Harbor campaign orchestrator after the Rust-only cutover, so
+an external runner must consume the frozen schedule and produce one result per
+trial. Do not claim an adaptive-policy improvement until that execution and
+oracle scoring have completed.
+
 Credentials must be injected into the Harbor host process. Do not place them in
 the job configuration. The agent writes `structure-report.json` on normal
 completion and `provider-calls.partial.json` after every Provider response so

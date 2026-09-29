@@ -5,6 +5,11 @@
 //! `arabica-runtime`.
 
 mod baseline;
+pub mod blend_campaign;
+pub use blend_campaign::{
+    BLEND_CAMPAIGN_SCHEMA, BlendArm, BlendArmSummary, BlendCampaignManifest, BlendCampaignSummary,
+    BlendTask, BlendTrial, BlendTrialResult, summarize_blend_campaign,
+};
 mod cli_comparison;
 pub mod experiment;
 mod gates;
