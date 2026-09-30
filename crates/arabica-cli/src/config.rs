@@ -353,6 +353,12 @@ pub fn resolve_cli_runtime_config(
         .as_ref()
         .map(|blend| blend.default_model.clone())
         .ok_or("[blend].default_model is required")?;
+    if !user.models.contains_key(&configured_default_alias) {
+        return Err(format!(
+            "[blend].default_model alias {configured_default_alias:?} is not configured"
+        )
+        .into());
+    }
     let default_alias = workspace
         .model_alias
         .clone()
@@ -805,6 +811,15 @@ default_model = "fast"
             .unwrap_err()
             .to_string();
         assert!(error.contains("unknown provider"), "{error}");
+        fs::write(
+            user_config_path(&home),
+            "[providers.p]\nbase_url = 'https://provider.example/v1'\n\n[models.valid]\nprovider = 'p'\nmodel_id = 'model'\n\n[blend]\ndefault_model = 'missing'\n",
+        )
+        .unwrap();
+        let error = resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, |_| None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("default_model alias"), "{error}");
         fs::remove_dir_all(root).unwrap();
     }
 
