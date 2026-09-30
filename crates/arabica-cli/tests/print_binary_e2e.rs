@@ -108,6 +108,12 @@ async fn run_structure(
     task: &str,
     extra_args: &[&str],
 ) -> std::process::Output {
+    std::fs::create_dir_all(arabica_home).unwrap();
+    std::fs::write(
+        arabica_home.join("config.toml"),
+        "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.default]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[blend]\ndefault_model = 'default'\ntool_call_capable_models = ['default']\n",
+    )
+    .unwrap();
     let output = tokio::time::timeout(
         Duration::from_secs(8),
         tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
@@ -115,9 +121,8 @@ async fn run_structure(
             .arg(task)
             .args(extra_args)
             .env("ARABICA_HOME", arabica_home)
-            .env("OPENAI__API_KEY", "test-key")
-            .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
-            .env("OPENAI__MODEL", "test-model")
+            .env("ARABICA_PROVIDER_MOCK_API_KEY", "test-key")
+            .env("ARABICA__BASE_URL", format!("http://{address}/v1"))
             .current_dir(workspace_root)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

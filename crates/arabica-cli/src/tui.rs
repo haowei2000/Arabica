@@ -8,7 +8,7 @@
 //! status flips in place, results are status lines, and file edits show a
 //! colored diff. Ctrl+O toggles verbose printing for later events.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -1288,8 +1288,13 @@ impl App {
     }
 
     fn new(session: &InteractiveSession) -> Self {
+        let models = if session.model_configs.is_empty() {
+            configured_models(&session.config.model)
+        } else {
+            session.model_configs.keys().cloned().collect()
+        };
         Self {
-            models: configured_models(&session.config.model),
+            models,
             ..Self::default()
         }
     }
@@ -3066,8 +3071,24 @@ async fn run_inner_with_model(
     blend_policy: Option<BlendRoutingPolicy>,
     options: InteractiveOptions,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    let mut session =
-        InteractiveSession::open_with_model(config, model, blend_policy, options).await?;
+    run_inner_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
+}
+
+async fn run_inner_with_model_configs(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    model_configs: BTreeMap<String, ApiProviderConfig>,
+    options: InteractiveOptions,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let mut session = InteractiveSession::open_with_model_configs(
+        config,
+        model,
+        blend_policy,
+        model_configs,
+        options,
+    )
+    .await?;
     let mut app = App::new(&session);
     app.status = format!("session {}", session.session_id);
 
@@ -3332,11 +3353,21 @@ pub async fn run_with_model(
     blend_policy: Option<BlendRoutingPolicy>,
     options: InteractiveOptions,
 ) -> i32 {
+    run_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
+}
+
+pub async fn run_with_model_configs(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    model_configs: BTreeMap<String, ApiProviderConfig>,
+    options: InteractiveOptions,
+) -> i32 {
     if options.allow_shell && options.read_only {
         eprintln!("error: --allow-shell and --read-only are mutually exclusive");
         return 2;
     }
-    match run_inner_with_model(config, model, blend_policy, options).await {
+    match run_inner_with_model_configs(config, model, blend_policy, model_configs, options).await {
         Ok(code) => code,
         Err(error) => {
             eprintln!("error: {error}");

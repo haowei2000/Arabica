@@ -62,14 +62,13 @@ mod env {
 /// an environment key, user config key, or saved auth for all host modes.
 #[derive(Args, Clone, Debug, Default)]
 pub struct HostConfigArgs {
-    /// Override OPENAI__MODEL.
+    /// Override the default Blend alias model ID (ARABICA__MODEL).
     #[arg(long)]
     pub model: Option<String>,
-    /// Override ARABICA__API_TYPE (open_ai_chat_completions, open_ai_responses,
-    /// anthropic_messages, gemini_generate_content, gemini_interactions).
+    /// Override ARABICA__API_TYPE for the default alias's provider.
     #[arg(long)]
     pub api_type: Option<String>,
-    /// Override OPENAI__BASE_URL.
+    /// Override ARABICA__BASE_URL for the default alias's provider.
     #[arg(long)]
     pub base_url: Option<String>,
 }
@@ -82,6 +81,7 @@ pub struct HostModelCatalog {
     pub provider: ApiProviderConfig,
     pub models: BTreeMap<String, String>,
     pub blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+    pub model_configs: BTreeMap<String, ApiProviderConfig>,
 }
 
 impl HostModelCatalog {
@@ -94,8 +94,17 @@ impl HostModelCatalog {
             .as_ref()
             .map(|policy| policy.default_model.as_str())
             .unwrap_or_else(|| self.models.keys().next().expect("non-empty model catalog"));
-        BlendProvider::from_shared_config(self.provider.clone(), default_alias, self.models.clone())
+        if self.model_configs.is_empty() {
+            BlendProvider::from_shared_config(
+                self.provider.clone(),
+                default_alias,
+                self.models.clone(),
+            )
             .map(HostModel::Blend)
+        } else {
+            BlendProvider::from_configs(default_alias, self.model_configs.clone())
+                .map(HostModel::Blend)
+        }
     }
 }
 

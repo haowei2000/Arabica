@@ -36,13 +36,24 @@ async fn run_binary_with_args(
     input: &str,
     args: &[&str],
 ) -> std::process::Output {
+    std::fs::create_dir_all(home).unwrap();
+    let config_path = home.join("config.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if !config.contains("[providers.mock]") {
+        std::fs::write(
+            &config_path,
+            format!(
+                "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.default]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[blend]\ndefault_model = 'default'\ntool_call_capable_models = ['default']\n\n{config}"
+            ),
+        )
+        .unwrap();
+    }
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
         .args(args)
         .current_dir(root)
         .env("ARABICA_HOME", home)
-        .env("OPENAI__API_KEY", "test-key")
-        .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
-        .env("OPENAI__MODEL", "test-model")
+        .env("ARABICA_PROVIDER_MOCK_API_KEY", "test-key")
+        .env("ARABICA__BASE_URL", format!("http://{address}/v1"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -141,6 +152,12 @@ async fn terminal_commands_change_the_next_model_request() {
     let root = temp_dir("config-root");
     let home = temp_dir("config-home");
     std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.\"test-model\"]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[models.\"other-model\"]\nprovider = 'mock'\nmodel_id = 'other-model'\n\n[blend]\ndefault_model = 'test-model'\ntool_call_capable_models = ['test-model', 'other-model']\n",
+    )
+    .unwrap();
     let result = run_binary(
         &root,
         &home,
@@ -176,7 +193,7 @@ async fn terminal_commands_change_the_next_model_request() {
             .join("config.toml"),
     )
     .unwrap();
-    assert!(saved.contains("model = \"other-model\""));
+    assert!(saved.contains("model_alias = \"other-model\""));
     assert!(saved.contains("thinking = \"on\""));
     assert!(!saved.contains("test-key"));
     std::fs::remove_dir_all(root).ok();
@@ -317,13 +334,18 @@ async fn saved_auth_starts_chat_without_an_api_key_environment_variable() {
     let root = temp_dir("saved-auth-root");
     let home = temp_dir("saved-auth-home");
     std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.default]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[blend]\ndefault_model = 'default'\ntool_call_capable_models = ['default']\n",
+    )
+    .unwrap();
     save_key(&home, "saved-test-key").unwrap();
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
         .current_dir(&root)
         .env("ARABICA_HOME", &home)
-        .env_remove("OPENAI__API_KEY")
-        .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
-        .env("OPENAI__MODEL", "test-model")
+        .env_remove("ARABICA_PROVIDER_MOCK_API_KEY")
+        .env("ARABICA__BASE_URL", format!("http://{address}/v1"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
