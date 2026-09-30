@@ -90,6 +90,40 @@ jobs:
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
 
+  desktop:
+    name: macOS desktop (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            os: macos-15
+          - arch: x86_64
+            os: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install icon renderer
+        run: brew install librsvg
+      - name: Build desktop app
+        working-directory: apps/arabica-desktop
+        env:
+          ARABICA_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: bash scripts/package.sh release
+      - name: Archive desktop app
+        working-directory: apps/arabica-desktop/dist
+        run: |
+          archive="Arabica-macos-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent Arabica.app "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Arabica-macos-${{ matrix.arch }}
+          path: |
+            apps/arabica-desktop/dist/Arabica-macos-${{ matrix.arch }}.zip
+            apps/arabica-desktop/dist/Arabica-macos-${{ matrix.arch }}.zip.sha256
+
   publish-crates:
     name: Publish crates.io (dependency order)
     needs: build
@@ -123,7 +157,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -145,7 +179,9 @@ jobs:
           {
             echo "## Structure $tag"
             echo
-            echo "Binaries for Linux (x86_64, aarch64), macOS (x86_64, Apple silicon) and Windows (x86_64)."
+            echo "CLI binaries for Linux (x86_64, aarch64), macOS (x86_64, Apple silicon) and Windows (x86_64)."
+            echo "The Arabica macOS desktop app is available for Apple silicon and Intel Macs."
+            echo "Desktop archives are currently unsigned and are not notarized."
             echo "Verify with the \`.sha256\` sidecar files."
             echo
             echo "### Changes"

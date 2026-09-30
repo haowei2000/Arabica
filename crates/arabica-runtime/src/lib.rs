@@ -42,6 +42,7 @@ pub use long_memory::{
     ArchivedMemory, FileArchiveStore, LongMemoryError, LongMemoryErrorKind, LongMemoryManager,
     LongMemoryStore, SqliteArchiveStore,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub use short_memory::{
@@ -58,6 +59,8 @@ const CANCELLED_TOOL_RESULT: &str =
 const MEMORY_READ_TOOL_NAME: &str = "memory_read";
 const MEMORY_SEARCH_TOOL_NAME: &str = "memory_search";
 pub const RUNTIME_COMPLETE_TOOL_NAME: &str = "runtime_complete";
+pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
+pub const UPDATE_PLAN_TOOL_NAME: &str = "update_plan";
 pub const AUTO_COMPLETION_REQUIRED_MESSAGE: &str = "Structure terminal control: validation succeeded. The only valid next action is exactly one runtime_complete tool call with a non-empty summary. Emit no text and call no other tool.";
 const DEFAULT_POINTER_GC_CHECKPOINT_BATCHES: usize = 8;
 const DEFAULT_POINTER_GC_EFFORT: usize = 1;
@@ -332,6 +335,10 @@ pub struct BlendRoutingPolicy {
     pub after_tool_success: Option<String>,
     pub after_tool_error: Option<String>,
     pub recovery_model: Option<String>,
+    #[serde(default)]
+    pub planning_model: Option<String>,
+    #[serde(default)]
+    pub tool_routes: Vec<BlendToolRoute>,
     pub recovery_after_no_progress_steps: usize,
     #[serde(default = "default_blend_model_dwell_steps")]
     pub minimum_model_dwell_steps: usize,
@@ -339,6 +346,49 @@ pub struct BlendRoutingPolicy {
     pub tool_call_capable_models: BTreeSet<String>,
     #[serde(default)]
     pub typed_completion_capable_models: BTreeSet<String>,
+}
+
+/// A route selected after a completed tool batch.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlendToolRoute {
+    pub id: String,
+    pub matcher: BlendToolMatcher,
+    pub model: String,
+    #[serde(default)]
+    pub priority: i32,
+}
+
+pub fn plan_tool_definitions() -> Vec<ToolDefinition> {
+    [CREATE_PLAN_TOOL_NAME, UPDATE_PLAN_TOOL_NAME]
+        .into_iter()
+        .map(|name| ToolDefinition {
+            name: name.to_owned(),
+            description: if name == CREATE_PLAN_TOOL_NAME {
+                "Ask the planning model to create a structured plan from the current task context."
+            } else {
+                "Ask the planning model to revise the current structured plan using the current task context."
+            }
+            .to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "goal": { "type": "string", "description": "The goal the plan should achieve" },
+                    "constraints": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["goal"],
+                "additionalProperties": false
+            }),
+            strict: None,
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum BlendToolMatcher {
+    ExactName(String),
+    RegexName(String),
+    Kind(ToolInteractionKind),
 }
 
 const fn default_blend_model_dwell_steps() -> usize {
@@ -486,6 +536,9 @@ enum BlendRouteReason {
     Default,
     AfterToolSuccess,
     AfterToolError,
+    ToolRouteExactName,
+    ToolRouteRegexName,
+    ToolRouteKind,
     NoProgressRecovery,
     MinimumDwell,
     CapabilityFallback,
@@ -497,11 +550,21 @@ impl BlendRouteReason {
             Self::Default => "default",
             Self::AfterToolSuccess => "after_tool_success",
             Self::AfterToolError => "after_tool_error",
+            Self::ToolRouteExactName => "tool_route_exact_name",
+            Self::ToolRouteRegexName => "tool_route_regex_name",
+            Self::ToolRouteKind => "tool_route_kind",
             Self::NoProgressRecovery => "no_progress_recovery",
             Self::MinimumDwell => "minimum_model_dwell",
             Self::CapabilityFallback => "capability_fallback",
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BlendRouteDecision {
+    model_alias: String,
+    reason: BlendRouteReason,
+    rule_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1049,11 +1112,15 @@ fn choose_blend_model(
     run_id: &RunId,
     consecutive_no_progress_steps: usize,
     model_step: usize,
-) -> (String, BlendRouteReason) {
+) -> BlendRouteDecision {
     if consecutive_no_progress_steps >= policy.recovery_after_no_progress_steps
         && let Some(alias) = policy.recovery_model.as_ref()
     {
-        return (alias.clone(), BlendRouteReason::NoProgressRecovery);
+        return BlendRouteDecision {
+            model_alias: alias.clone(),
+            reason: BlendRouteReason::NoProgressRecovery,
+            rule_id: None,
+        };
     }
 
     let previous_route = history.iter().rposition(|envelope| {
@@ -1067,27 +1134,60 @@ fn choose_blend_model(
     let previous_step_events = previous_route.map_or(history, |index| &history[index + 1..]);
     // Route from the whole completed tool batch. A later successful call must
     // not erase an earlier failure from the same model step.
-    let previous_tool_outcome = previous_step_events
+    let denied_calls = previous_step_events
         .iter()
         .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
-        .filter_map(|envelope| match envelope.event {
-            Event::ToolCallCompleted { is_error, .. } => Some(is_error),
+        .filter_map(|envelope| match &envelope.event {
+            Event::ToolCallPermissionResolved {
+                call_id,
+                outcome: ToolPermissionOutcome::Denied,
+                ..
+            } => Some(call_id.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let completed_tool_outcome = previous_step_events
+        .iter()
+        .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+        .filter_map(|envelope| match &envelope.event {
+            Event::ToolCallCompleted {
+                call_id, is_error, ..
+            } if !denied_calls.contains(call_id.as_str()) => Some(*is_error),
             _ => None,
         })
         .fold(None, |outcome, is_error| {
             Some(outcome.unwrap_or(false) || is_error)
         });
+    let previous_tool_outcome = if !denied_calls.is_empty() && completed_tool_outcome != Some(true)
+    {
+        None
+    } else {
+        completed_tool_outcome
+    };
 
-    let desired = match previous_tool_outcome {
-        Some(true) if policy.after_tool_error.is_some() => (
-            policy.after_tool_error.clone().expect("checked above"),
-            BlendRouteReason::AfterToolError,
-        ),
-        Some(false) if policy.after_tool_success.is_some() => (
-            policy.after_tool_success.clone().expect("checked above"),
-            BlendRouteReason::AfterToolSuccess,
-        ),
-        _ => (policy.default_model.clone(), BlendRouteReason::Default),
+    let desired = if previous_tool_outcome == Some(true)
+        && let Some(model) = policy.after_tool_error.as_ref()
+    {
+        BlendRouteDecision {
+            model_alias: model.clone(),
+            reason: BlendRouteReason::AfterToolError,
+            rule_id: None,
+        }
+    } else if let Some(route) = choose_tool_route(policy, previous_step_events, run_id) {
+        route
+    } else {
+        match previous_tool_outcome {
+            Some(false) if policy.after_tool_success.is_some() => BlendRouteDecision {
+                model_alias: policy.after_tool_success.clone().expect("checked above"),
+                reason: BlendRouteReason::AfterToolSuccess,
+                rule_id: None,
+            },
+            _ => BlendRouteDecision {
+                model_alias: policy.default_model.clone(),
+                reason: BlendRouteReason::Default,
+                rule_id: None,
+            },
+        }
     };
     let previous_alias = history.iter().rev().find_map(|envelope| {
         if envelope.run_id.as_ref() != Some(run_id) {
@@ -1103,10 +1203,10 @@ fn choose_blend_model(
         }
     });
     if matches!(
-        desired.1,
+        desired.reason,
         BlendRouteReason::AfterToolSuccess | BlendRouteReason::Default
     ) && let Some(previous_alias) = previous_alias
-        && desired.0 != previous_alias
+        && desired.model_alias != previous_alias
     {
         let consecutive_alias_calls = history
             .iter()
@@ -1123,10 +1223,89 @@ fn choose_blend_model(
             .take_while(|alias| *alias == Some(previous_alias.as_str()))
             .count();
         if consecutive_alias_calls < policy.minimum_model_dwell_steps {
-            return (previous_alias, BlendRouteReason::MinimumDwell);
+            return BlendRouteDecision {
+                model_alias: previous_alias,
+                reason: BlendRouteReason::MinimumDwell,
+                rule_id: None,
+            };
         }
     }
     desired
+}
+
+fn choose_tool_route(
+    policy: &BlendRoutingPolicy,
+    events: &[EventEnvelope],
+    run_id: &RunId,
+) -> Option<BlendRouteDecision> {
+    let mut calls = HashMap::<String, (String, ToolInteractionKind)>::new();
+    let mut completed = Vec::<(String, ToolInteractionKind)>::new();
+    for envelope in events
+        .iter()
+        .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+    {
+        match &envelope.event {
+            Event::ToolCallRequested { call_id, name, .. } => {
+                calls.insert(
+                    call_id.clone(),
+                    (name.clone(), ToolInteractionKind::Generic),
+                );
+            }
+            Event::ToolCallClassified { call_id, kind } => {
+                if let Some((_, current_kind)) = calls.get_mut(call_id) {
+                    *current_kind = *kind;
+                }
+            }
+            Event::ToolCallCompleted { call_id, name, .. } => {
+                let kind = calls
+                    .get(call_id)
+                    .map_or(ToolInteractionKind::Generic, |(_, kind)| *kind);
+                completed.push((name.clone(), kind));
+            }
+            _ => {}
+        }
+    }
+
+    let mut selected: Option<(u8, i32, usize, String, BlendRouteReason, String)> = None;
+    for (name, kind) in completed {
+        for (index, route) in policy.tool_routes.iter().enumerate() {
+            let (tier, reason, matched) = match &route.matcher {
+                BlendToolMatcher::ExactName(expected) => {
+                    (3, BlendRouteReason::ToolRouteExactName, name == *expected)
+                }
+                BlendToolMatcher::RegexName(pattern) => (
+                    2,
+                    BlendRouteReason::ToolRouteRegexName,
+                    Regex::new(pattern).is_ok_and(|regex| regex.is_match(&name)),
+                ),
+                BlendToolMatcher::Kind(expected) => {
+                    (1, BlendRouteReason::ToolRouteKind, kind == *expected)
+                }
+            };
+            if matched {
+                let candidate = (
+                    tier,
+                    route.priority,
+                    usize::MAX - index,
+                    route.model.clone(),
+                    reason,
+                    route.id.clone(),
+                );
+                if selected.as_ref().is_none_or(|current| {
+                    (candidate.0, candidate.1, candidate.2) > (current.0, current.1, current.2)
+                }) {
+                    selected = Some(candidate);
+                }
+            }
+        }
+    }
+    selected.map(
+        |(_, _, _, model_alias, reason, rule_id)| BlendRouteDecision {
+            model_alias,
+            reason,
+            rule_id: Some(rule_id),
+        },
+    )
 }
 
 fn capability_eligible_alias(
@@ -1164,15 +1343,25 @@ impl<M: ModelProvider, R> CoreRuntime<M, R> {
             let mut aliases = std::iter::once(policy.default_model.as_str())
                 .chain(policy.after_tool_success.as_deref())
                 .chain(policy.after_tool_error.as_deref())
-                .chain(policy.recovery_model.as_deref());
+                .chain(policy.recovery_model.as_deref())
+                .chain(policy.planning_model.as_deref())
+                .chain(policy.tool_routes.iter().map(|route| route.model.as_str()));
             let mut declared_capabilities = policy
                 .tool_call_capable_models
                 .iter()
                 .chain(&policy.typed_completion_capable_models);
+            let mut route_ids = HashSet::new();
+            let invalid_route = policy.tool_routes.iter().any(|route| {
+                route.id.trim().is_empty()
+                    || !route_ids.insert(route.id.as_str())
+                    || !self.model.supports_model_alias(&route.model)
+                    || matches!(&route.matcher, BlendToolMatcher::RegexName(pattern) if Regex::new(pattern).is_err())
+            });
             if policy.policy_id.trim().is_empty()
                 || policy.version == 0
                 || policy.recovery_after_no_progress_steps == 0
                 || policy.minimum_model_dwell_steps == 0
+                || invalid_route
                 || aliases.clone().any(str::is_empty)
                 || aliases.any(|alias| !self.model.supports_model_alias(alias))
                 || declared_capabilities.any(|alias| !self.model.supports_model_alias(alias))
@@ -1553,7 +1742,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         ToolChoice::Specific { name } if name == RUNTIME_COMPLETE_TOOL_NAME
                     );
                     let route = if let Some(policy) = pinned_blend_policy.as_ref() {
-                        let (preferred, reason) = choose_blend_model(
+                        let decision = choose_blend_model(
                             policy,
                             &history,
                             run_id,
@@ -1562,18 +1751,29 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         );
                         match capability_eligible_alias(
                             policy,
-                            &preferred,
+                            &decision.model_alias,
                             requires_tool_calling,
                             requires_typed_completion,
                         ) {
-                            Some(alias) => Some((
-                                alias.clone(),
-                                if alias == preferred {
-                                    reason
-                                } else {
-                                    BlendRouteReason::CapabilityFallback
-                                },
-                            )),
+                            Some(alias) => {
+                                let fallback_reason = (alias != decision.model_alias).then(|| {
+                                    format!(
+                                        "model {:?} is not certified for this request",
+                                        decision.model_alias
+                                    )
+                                });
+                                Some((
+                                    alias,
+                                    decision.model_alias,
+                                    if fallback_reason.is_some() {
+                                        BlendRouteReason::CapabilityFallback
+                                    } else {
+                                        decision.reason
+                                    },
+                                    decision.rule_id,
+                                    fallback_reason,
+                                ))
+                            }
                             None => {
                                 event_log.append(Event::RunFailed {
                                     message: format!(
@@ -1600,19 +1800,32 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         model_registry_snapshot: self.model.model_registry_snapshot(),
                         model_alias: route
                             .as_ref()
-                            .map(|(alias, _)| alias.clone())
+                            .map(|(alias, _, _, _, _)| alias.clone())
                             .or_else(|| self.model.model_id().map(str::to_owned)),
                         reason: route.as_ref().map_or_else(
                             || "configured_single_model".to_owned(),
-                            |(_, reason)| reason.as_str().to_owned(),
+                            |(_, _, reason, _, _)| reason.as_str().to_owned(),
                         ),
                     });
+                    if let Some((selected_alias, desired_alias, reason, rule_id, fallback_reason)) =
+                        &route
+                    {
+                        event_log.append(Event::ModelRouteExplained {
+                            model_step,
+                            desired_model_alias: desired_alias.clone(),
+                            selected_model_alias: selected_alias.clone(),
+                            rule_id: rule_id.clone(),
+                            reason: reason.as_str().to_owned(),
+                            fallback_reason: fallback_reason.clone(),
+                        });
+                    }
+                    let planning_context_request = request.clone();
                     let model_call_started = Instant::now();
                     let result = match control.cancellation.as_ref() {
                         // Without a cancellation handle the call is awaited
                         // exactly as it was before control existed.
                         None => match route.as_ref() {
-                            Some((alias, _)) => {
+                            Some((alias, _, _, _, _)) => {
                                 self.model.complete_with_model(request, alias).await
                             }
                             None => self.model.complete(request).await,
@@ -1623,7 +1836,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 () = cancellation.cancelled() => None,
                                 result = async {
                                     match route.as_ref() {
-                                        Some((alias, _)) => self.model.complete_with_model(request, alias).await,
+                                        Some((alias, _, _, _, _)) => self.model.complete_with_model(request, alias).await,
                                         None => self.model.complete(request).await,
                                     }
                                 } => Some(result),
@@ -2092,6 +2305,160 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     }
                                 }
                             }
+                        }
+                        if matches!(
+                            call.name.as_str(),
+                            CREATE_PLAN_TOOL_NAME | UPDATE_PLAN_TOOL_NAME
+                        ) {
+                            let goal = call
+                                .arguments
+                                .get("goal")
+                                .and_then(serde_json::Value::as_str)
+                                .filter(|goal| !goal.trim().is_empty());
+                            let Some(goal) = goal else {
+                                let completed = event_log.append(Event::ToolCallCompleted {
+                                    call_id: call.call_id.clone(),
+                                    name: call.name.clone(),
+                                    result: "plan tool requires a non-empty goal".to_owned(),
+                                    is_error: true,
+                                });
+                                next_protected_event_ids.insert(completed.event_id);
+                                step_tool_errors = step_tool_errors.saturating_add(1);
+                                continue;
+                            };
+                            let constraints = call
+                                .arguments
+                                .get("constraints")
+                                .cloned()
+                                .unwrap_or_else(|| serde_json::json!([]));
+                            let previous_plan = event_log
+                                .snapshot()
+                                .iter()
+                                .rev()
+                                .find_map(|event| match &event.event {
+                                    Event::PlanUpdated { entries, .. } => Some(entries.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            let planner_alias = pinned_blend_policy
+                                .as_ref()
+                                .and_then(|policy| policy.planning_model.as_deref())
+                                .or_else(|| {
+                                    pinned_blend_policy
+                                        .as_ref()
+                                        .map(|policy| policy.default_model.as_str())
+                                })
+                                .or_else(|| {
+                                    route.as_ref().map(|(alias, _, _, _, _)| alias.as_str())
+                                })
+                                .unwrap_or_else(|| self.model.model_id().unwrap_or("default"))
+                                .to_owned();
+                            let planner_input = serde_json::json!({
+                                "task": goal,
+                                "constraints": constraints,
+                                "operation": if call.name == CREATE_PLAN_TOOL_NAME { "create" } else { "revise" },
+                                "current_plan": previous_plan,
+                                "response_format": {"entries": [{"id": "stable-id", "content": "actionable task", "status": "pending|in_progress|completed"}]}
+                            });
+                            let mut planner_request = planning_context_request.clone();
+                            planner_request.input = format!(
+                                "Produce a concise actionable plan using only the supplied conversation and memory context. Do not call tools. Return only a JSON object with an entries array. Keep stable IDs from current_plan where an item remains the same. Input: {}",
+                                planner_input
+                            );
+                            planner_request.tools.clear();
+                            planner_request.tool_choice = ToolChoice::Auto;
+                            planner_request.continuation.clear();
+                            let started = Instant::now();
+                            let planned = match control.cancellation.as_ref() {
+                                Some(cancellation) => tokio::select! {
+                                    biased;
+                                    () = cancellation.cancelled() => None,
+                                    result = self.model.complete_with_model(planner_request, &planner_alias) => Some(result),
+                                },
+                                None => Some(
+                                    self.model
+                                        .complete_with_model(planner_request, &planner_alias)
+                                        .await,
+                                ),
+                            };
+                            let Some(planned) = planned else {
+                                event_log.append(Event::PlanDelegationObserved {
+                                    model_step,
+                                    model_alias: planner_alias,
+                                    succeeded: false,
+                                    elapsed_ms: u64::try_from(started.elapsed().as_millis())
+                                        .unwrap_or(u64::MAX),
+                                    usage: None,
+                                });
+                                event_log.append(Event::ToolCallCompleted {
+                                    call_id: call.call_id.clone(),
+                                    name: call.name.clone(),
+                                    result: CANCELLED_TOOL_RESULT.to_owned(),
+                                    is_error: true,
+                                });
+                                return self.finish_cancelled(run_id, event_log).await;
+                            };
+                            let (plan_entries, failure, usage) = match planned {
+                                Ok(result) => {
+                                    let usage = result
+                                        .response
+                                        .as_ref()
+                                        .map(|response| response.usage.clone());
+                                    let parsed = result
+                                        .final_output
+                                        .as_deref()
+                                        .and_then(|output| {
+                                            serde_json::from_str::<PlanToolOutput>(output).ok()
+                                        })
+                                        .ok_or_else(|| {
+                                            "planning model did not return valid JSON plan entries"
+                                                .to_owned()
+                                        })
+                                        .and_then(validate_plan_entries);
+                                    match parsed {
+                                        Ok(entries) => (Some(entries), None, usage),
+                                        Err(error) => (None, Some(error), usage),
+                                    }
+                                }
+                                Err(error) => {
+                                    (None, Some(format!("planning model failed: {error}")), None)
+                                }
+                            };
+                            event_log.append(Event::PlanDelegationObserved {
+                                model_step,
+                                model_alias: planner_alias,
+                                succeeded: plan_entries.is_some(),
+                                elapsed_ms: u64::try_from(started.elapsed().as_millis())
+                                    .unwrap_or(u64::MAX),
+                                usage,
+                            });
+                            if let Some(entries) = plan_entries {
+                                event_log.append(Event::PlanUpdated {
+                                    plan_id: "current".to_owned(),
+                                    entries: entries.clone(),
+                                });
+                                made_state_progress = true;
+                                let completed = event_log.append(Event::ToolCallCompleted {
+                                    call_id: call.call_id.clone(),
+                                    name: call.name.clone(),
+                                    result: serde_json::to_string(&entries)
+                                        .unwrap_or_else(|_| "plan updated".to_owned()),
+                                    is_error: false,
+                                });
+                                next_protected_event_ids.insert(completed.event_id);
+                            } else {
+                                let error =
+                                    failure.unwrap_or_else(|| "plan generation failed".to_owned());
+                                let completed = event_log.append(Event::ToolCallCompleted {
+                                    call_id: call.call_id.clone(),
+                                    name: call.name.clone(),
+                                    result: error,
+                                    is_error: true,
+                                });
+                                next_protected_event_ids.insert(completed.event_id);
+                                step_tool_errors = step_tool_errors.saturating_add(1);
+                            }
+                            continue;
                         }
                         let execution_request = ToolExecutionRequest {
                             run_id: run_id.clone(),
@@ -2576,6 +2943,29 @@ fn tool_result_is_reusable(kind: ToolInteractionKind) -> bool {
     )
 }
 
+#[derive(Deserialize)]
+struct PlanToolOutput {
+    entries: Vec<arabica_protocol::PlanEntry>,
+}
+
+fn validate_plan_entries(
+    output: PlanToolOutput,
+) -> Result<Vec<arabica_protocol::PlanEntry>, String> {
+    let mut ids = HashSet::new();
+    if output.entries.is_empty() {
+        return Err("planning model returned an empty plan".to_owned());
+    }
+    for entry in &output.entries {
+        if entry.id.trim().is_empty()
+            || entry.content.trim().is_empty()
+            || !ids.insert(entry.id.as_str())
+        {
+            return Err("planning model returned an empty or duplicate plan entry".to_owned());
+        }
+    }
+    Ok(output.entries)
+}
+
 fn tool_interaction_validates_state(kind: ToolInteractionKind) -> bool {
     matches!(
         kind,
@@ -2586,7 +2976,8 @@ fn tool_interaction_validates_state(kind: ToolInteractionKind) -> bool {
 fn tool_interaction_may_change_state(kind: ToolInteractionKind) -> bool {
     matches!(
         kind,
-        ToolInteractionKind::Mutation
+        ToolInteractionKind::Plan
+            | ToolInteractionKind::Mutation
             | ToolInteractionKind::MutationWithValidation
             | ToolInteractionKind::Build
             | ToolInteractionKind::Dependency
@@ -4267,6 +4658,85 @@ mod tests {
     }
 
     #[test]
+    fn blend_tool_routes_follow_exact_regex_then_kind_precedence() {
+        let run_id = RunId::new("prior-run");
+        let events = vec![
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-plan".to_owned(),
+                    name: "create_plan".to_owned(),
+                    arguments: serde_json::json!({"goal": "ship"}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallClassified {
+                    call_id: "call-plan".to_owned(),
+                    kind: ToolInteractionKind::Plan,
+                },
+            ),
+            history_event(
+                3,
+                Event::ToolCallCompleted {
+                    call_id: "call-plan".to_owned(),
+                    name: "create_plan".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let mut policy = BlendRoutingPolicy {
+            policy_id: "test".to_owned(),
+            version: 1,
+            default_model: "default".to_owned(),
+            after_tool_success: None,
+            after_tool_error: None,
+            recovery_model: None,
+            planning_model: None,
+            tool_routes: vec![
+                BlendToolRoute {
+                    id: "plan-kind".to_owned(),
+                    matcher: BlendToolMatcher::Kind(ToolInteractionKind::Plan),
+                    model: "by-kind".to_owned(),
+                    priority: 100,
+                },
+                BlendToolRoute {
+                    id: "plan-regex".to_owned(),
+                    matcher: BlendToolMatcher::RegexName(".*_plan$".to_owned()),
+                    model: "by-regex".to_owned(),
+                    priority: 0,
+                },
+                BlendToolRoute {
+                    id: "plan-exact".to_owned(),
+                    matcher: BlendToolMatcher::ExactName("create_plan".to_owned()),
+                    model: "by-exact".to_owned(),
+                    priority: -1,
+                },
+            ],
+            recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
+        };
+
+        let exact = choose_tool_route(&policy, &events, &run_id).expect("exact rule matches");
+        assert_eq!(exact.model_alias, "by-exact");
+        assert_eq!(exact.rule_id.as_deref(), Some("plan-exact"));
+
+        policy.tool_routes.pop();
+        let regex = choose_tool_route(&policy, &events, &run_id).expect("regex rule matches");
+        assert_eq!(regex.model_alias, "by-regex");
+        assert_eq!(regex.rule_id.as_deref(), Some("plan-regex"));
+
+        policy.tool_routes.pop();
+        let kind = choose_tool_route(&policy, &events, &run_id).expect("kind rule matches");
+        assert_eq!(kind.model_alias, "by-kind");
+        assert_eq!(kind.rule_id.as_deref(), Some("plan-kind"));
+    }
+
+    #[test]
     fn blend_routes_to_error_model_when_any_tool_in_previous_step_failed() {
         let run_id = RunId::new("prior-run");
         let policy = BlendRoutingPolicy {
@@ -4276,6 +4746,8 @@ mod tests {
             after_tool_success: Some("fast".to_owned()),
             after_tool_error: Some("strong".to_owned()),
             recovery_model: None,
+            planning_model: None,
+            tool_routes: Vec::new(),
             recovery_after_no_progress_steps: 2,
             minimum_model_dwell_steps: 1,
             tool_call_capable_models: BTreeSet::new(),
@@ -4317,7 +4789,11 @@ mod tests {
 
         assert_eq!(
             choose_blend_model(&policy, &history, &run_id, 0, 2),
-            ("strong".to_owned(), BlendRouteReason::AfterToolError)
+            BlendRouteDecision {
+                model_alias: "strong".to_owned(),
+                reason: BlendRouteReason::AfterToolError,
+                rule_id: None
+            }
         );
     }
 
@@ -4331,6 +4807,8 @@ mod tests {
             after_tool_success: Some("fast".to_owned()),
             after_tool_error: Some("strong".to_owned()),
             recovery_model: Some("strong".to_owned()),
+            planning_model: None,
+            tool_routes: Vec::new(),
             recovery_after_no_progress_steps: 3,
             minimum_model_dwell_steps: 2,
             tool_call_capable_models: BTreeSet::new(),
@@ -4363,7 +4841,11 @@ mod tests {
 
         assert_eq!(
             choose_blend_model(&policy, &history, &run_id, 0, 2),
-            ("balanced".to_owned(), BlendRouteReason::MinimumDwell)
+            BlendRouteDecision {
+                model_alias: "balanced".to_owned(),
+                reason: BlendRouteReason::MinimumDwell,
+                rule_id: None
+            }
         );
         let mut second_step = history.clone();
         second_step.push(history_event(
@@ -4390,7 +4872,11 @@ mod tests {
         ));
         assert_eq!(
             choose_blend_model(&policy, &second_step, &run_id, 0, 3),
-            ("fast".to_owned(), BlendRouteReason::AfterToolSuccess)
+            BlendRouteDecision {
+                model_alias: "fast".to_owned(),
+                reason: BlendRouteReason::AfterToolSuccess,
+                rule_id: None
+            }
         );
     }
 
@@ -4403,6 +4889,8 @@ mod tests {
             after_tool_success: None,
             after_tool_error: None,
             recovery_model: None,
+            planning_model: None,
+            tool_routes: Vec::new(),
             recovery_after_no_progress_steps: 2,
             minimum_model_dwell_steps: 1,
             tool_call_capable_models: BTreeSet::from(["fast".to_owned()]),

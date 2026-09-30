@@ -30,3 +30,14 @@ jobs:
       - run: make test-proxy
       - name: Enforce Rust-only maintained sources
         run: test -z "$(git ls-files '*.py')"
+  macos-desktop:
+    name: Native macOS client
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: swift test
+        working-directory: apps/arabica-desktop
+      - run: brew install librsvg
+      - run: bash scripts/package.sh debug
+        working-directory: apps/arabica-desktop

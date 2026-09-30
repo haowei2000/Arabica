@@ -56,28 +56,45 @@ struct AcpProviderSettings {
     aliases: BTreeMap<String, String>,
     model_configs: BTreeMap<String, ApiProviderConfig>,
     blend_policy: Option<BlendRoutingPolicy>,
+    blend_policies: BTreeMap<String, BlendRoutingPolicy>,
 }
 
 impl AcpProviderSettings {
     fn options(
         &self,
         config: &ApiProviderConfig,
-        selected_model: Option<&str>,
+        policy: Option<&BlendRoutingPolicy>,
     ) -> Vec<SessionConfigOption> {
         let models = self
             .models
             .iter()
             .map(|model| SessionConfigSelectOption::new(model.clone(), model.clone()))
             .collect::<Vec<_>>();
+        let selected_model = policy
+            .map(|policy| policy.default_model.as_str())
+            .unwrap_or(&config.model);
         let mut options = vec![
-            SessionConfigOption::select(
-                "model",
-                "Model",
-                selected_model.unwrap_or(&config.model).to_owned(),
-                models,
-            )
-            .category(SessionConfigOptionCategory::Model),
+            SessionConfigOption::select("model", "Model", selected_model.to_owned(), models)
+                .category(SessionConfigOptionCategory::Model),
         ];
+        if let Some(policy) = policy {
+            let policies = self
+                .blend_policies
+                .keys()
+                .map(|id| SessionConfigSelectOption::new(id.clone(), id.clone()))
+                .collect::<Vec<_>>();
+            if policies.len() > 1 {
+                options.push(
+                    SessionConfigOption::select(
+                        "blend.policy",
+                        "Policy",
+                        policy.policy_id.clone(),
+                        policies,
+                    )
+                    .category(SessionConfigOptionCategory::ModelConfig),
+                );
+            }
+        }
         if !matches!(
             config.api_type,
             ApiType::OpenAiChatCompletions | ApiType::OpenAiResponses
@@ -187,15 +204,9 @@ impl AcpState {
     }
 
     fn config_options(&self) -> Option<Vec<SessionConfigOption>> {
-        self.provider_settings.as_ref().map(|settings| {
-            settings.options(
-                &settings.initial,
-                settings
-                    .blend_policy
-                    .as_ref()
-                    .map(|p| p.default_model.as_str()),
-            )
-        })
+        self.provider_settings
+            .as_ref()
+            .map(|settings| settings.options(&settings.initial, settings.blend_policy.as_ref()))
     }
 
     fn build_runtime(
@@ -549,7 +560,47 @@ impl AcpState {
             .as_value_id()
             .ok_or_else(|| AcpError::invalid_params().data("expected a select value"))?
             .to_string();
-        match request.config_id.to_string().as_str() {
+        let config_id = request.config_id.to_string();
+        if config_id == "blend.policy" {
+            let policy = settings
+                .blend_policies
+                .get(&value)
+                .cloned()
+                .ok_or_else(|| AcpError::invalid_params().data("unknown Blend policy"))?;
+            let next_config = session_model_configs
+                .get(&policy.default_model)
+                .cloned()
+                .ok_or_else(|| {
+                    AcpError::invalid_params().data("policy default model is unavailable")
+                })?;
+            let model = if settings.aliases.is_empty() {
+                HostModel::Api(ApiModelProvider::new(next_config.clone()).map_err(provider_error)?)
+            } else {
+                HostModel::Blend(
+                    BlendProvider::from_configs(
+                        policy.default_model.clone(),
+                        session_model_configs.clone(),
+                    )
+                    .map_err(provider_error)?,
+                )
+            };
+            manager
+                .runtime_mut()
+                .set_blend_policy(Some(policy.clone()))
+                .map_err(runtime_error)?;
+            *manager.runtime_mut().model_mut() = model;
+            *config = next_config;
+            if let Some(lock) = &entry.blend_policy {
+                *lock.lock().expect("Blend policy lock poisoned") = policy.clone();
+            }
+            if let Some(configs) = &entry.model_configs {
+                *configs.lock().expect("model configs lock poisoned") = session_model_configs;
+            }
+            return Ok(SetSessionConfigOptionResponse::new(
+                settings.options(&config, Some(&policy)),
+            ));
+        }
+        match config_id.as_str() {
             "model" if settings.aliases.contains_key(&value) => {
                 updated = session_model_configs[&value].clone();
                 selected_alias = Some(value.clone());
@@ -623,12 +674,12 @@ impl AcpState {
             }
         }
         *config = updated;
-        let selected_model = entry
+        let current_policy = entry
             .blend_policy
             .as_ref()
-            .and_then(|lock| lock.lock().ok().map(|policy| policy.default_model.clone()));
+            .and_then(|lock| lock.lock().ok().map(|policy| policy.clone()));
         Ok(SetSessionConfigOptionResponse::new(
-            settings.options(&config, selected_model.as_deref()),
+            settings.options(&config, current_policy.as_ref()),
         ))
     }
 
@@ -759,6 +810,7 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     let arabica_home = arabica_adapters::default_arabica_home()
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
     let catalog = resolved.model_catalog();
+    let blend_policies = resolved.blend_policies.clone();
     let provider_config = catalog.provider.clone();
     let aliases = catalog.models.clone();
     let model_configs = catalog.model_configs.clone();
@@ -784,6 +836,7 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
         aliases: aliases.clone(),
         model_configs,
         blend_policy: blend_policy.clone(),
+        blend_policies,
     };
     let model_catalog = catalog.clone();
     let model_factory: Arc<ModelFactory> =
@@ -1250,6 +1303,7 @@ mod round_trip {
                 aliases: BTreeMap::new(),
                 model_configs: BTreeMap::new(),
                 blend_policy: None,
+                blend_policies: BTreeMap::new(),
             });
         let (server, channel) = spawn_agent(state);
         let updates = Arc::new(StdMutex::new(Vec::<SessionUpdate>::new()));
@@ -1346,6 +1400,7 @@ mod round_trip {
             aliases: BTreeMap::new(),
             model_configs: BTreeMap::new(),
             blend_policy: None,
+            blend_policies: BTreeMap::new(),
         });
         let session = state
             .new_session(NewSessionRequest::new(root.clone()))
@@ -1410,6 +1465,8 @@ mod round_trip {
             after_tool_success: Some("fast".to_owned()),
             after_tool_error: Some("strong".to_owned()),
             recovery_model: Some("strong".to_owned()),
+            planning_model: None,
+            tool_routes: Vec::new(),
             recovery_after_no_progress_steps: 2,
             minimum_model_dwell_steps: 1,
             tool_call_capable_models: Default::default(),
@@ -1427,6 +1484,24 @@ mod round_trip {
             .map(HostModel::Blend)
             .map_err(provider_error)
         });
+        let alternate_policy = BlendRoutingPolicy {
+            policy_id: "simple".to_owned(),
+            version: 1,
+            default_model: "strong".to_owned(),
+            after_tool_success: None,
+            after_tool_error: None,
+            recovery_model: None,
+            planning_model: None,
+            tool_routes: Vec::new(),
+            recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: Default::default(),
+            typed_completion_capable_models: Default::default(),
+        };
+        let blend_policies = BTreeMap::from([
+            (policy.policy_id.clone(), policy.clone()),
+            (alternate_policy.policy_id.clone(), alternate_policy),
+        ]);
         let state = AcpState::new(
             model_factory,
             LocalRunnerPolicy::coding(),
@@ -1438,6 +1513,7 @@ mod round_trip {
             aliases,
             model_configs,
             blend_policy: Some(policy),
+            blend_policies,
         });
         let session = state
             .new_session(NewSessionRequest::new(root.clone()))
@@ -1454,6 +1530,17 @@ mod round_trip {
             panic!("model option should be a select");
         };
         assert_eq!(model_select.current_value.to_string(), "fast");
+        let policy_option = session
+            .config_options
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|option| option.id.to_string() == "blend.policy")
+            .unwrap();
+        let SessionConfigKind::Select(policy_select) = &policy_option.kind else {
+            panic!("policy option should be a select");
+        };
+        assert_eq!(policy_select.current_value.to_string(), "acp-test");
         let response = state
             .set_config_option(SetSessionConfigOptionRequest::new(
                 session.session_id.clone(),
@@ -1471,6 +1558,28 @@ mod round_trip {
         };
         assert_eq!(updated_select.current_value.to_string(), "strong");
         let entry = state.entry(&session.session_id).unwrap();
+        let policy_response = state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "blend.policy",
+                "simple",
+            ))
+            .unwrap();
+        let updated_policy_option = policy_response
+            .config_options
+            .iter()
+            .find(|option| option.id.to_string() == "blend.policy")
+            .unwrap();
+        let SessionConfigKind::Select(updated_policy_select) = &updated_policy_option.kind else {
+            panic!("policy option should be a select");
+        };
+        assert_eq!(updated_policy_select.current_value.to_string(), "simple");
+        {
+            let policy = entry.blend_policy.as_ref().unwrap().lock().unwrap();
+            assert_eq!(policy.policy_id, "simple");
+            assert_eq!(policy.default_model, "strong");
+            assert_eq!(policy.after_tool_error, None);
+        }
         let manager = entry.manager.lock().await;
         assert_eq!(manager.runtime().model().model_id(), Some("model-strong"));
         assert!(manager.runtime().model().supports_model_alias("fast"));

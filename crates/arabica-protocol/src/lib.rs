@@ -135,6 +135,8 @@ pub enum RunStatus {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolInteractionKind {
+    /// Planning work that changes or reports the agent's structured plan.
+    Plan,
     Inspection,
     Mutation,
     /// A single ordered runner action that changes state and then validates
@@ -283,6 +285,15 @@ pub enum Event {
         model_alias: Option<String>,
         reason: String,
     },
+    #[serde(rename = "model.route.explained")]
+    ModelRouteExplained {
+        model_step: usize,
+        desired_model_alias: String,
+        selected_model_alias: String,
+        rule_id: Option<String>,
+        reason: String,
+        fallback_reason: Option<String>,
+    },
     /// Immediate call-level measurement. Run quality is evaluated separately
     /// after downstream tool outcomes or terminal task evidence are available.
     #[serde(rename = "model.call.observed")]
@@ -350,6 +361,20 @@ pub enum Event {
     ToolCallClassified {
         call_id: String,
         kind: ToolInteractionKind,
+    },
+    /// Current structured plan snapshot for replay and ACP plan updates.
+    #[serde(rename = "plan.updated")]
+    PlanUpdated {
+        plan_id: String,
+        entries: Vec<PlanEntry>,
+    },
+    #[serde(rename = "plan.delegation.observed")]
+    PlanDelegationObserved {
+        model_step: usize,
+        model_alias: String,
+        succeeded: bool,
+        elapsed_ms: u64,
+        usage: Option<RuntimeUsage>,
     },
     /// Runtime is asking the host's approver whether this call may run. The
     /// tool name and arguments are in the matching `tool.call.requested`.
@@ -427,6 +452,23 @@ pub enum Event {
     ContextDisclosureSet { level: DisclosureLevel },
     #[serde(rename = "error")]
     Error { code: ErrorCode, message: String },
+}
+
+/// One durable item in the agent's current plan.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct PlanEntry {
+    pub id: String,
+    pub content: String,
+    pub status: PlanEntryStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Completed,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
