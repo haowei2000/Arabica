@@ -187,11 +187,11 @@ resumed session starts with an empty one. `/context` opens a scrollable view of 
 provider-reported token usage, a policy preview for the next turn, and the
 workspace archive count. The preview excludes the next message and FileBackedGC
 admission; it is not a token estimate. Escape or `q` closes the view. The
-archive count covers the workspace, not just the current session. `/model <name>` and
+archive count covers the workspace, not just the current session. `/model <alias>` and
 `/thinking <off|on|low|medium|high>` change the
-provider for the next prompt and persist those choices for this workspace. Chat
+configured Blend alias or its thinking mode for the next prompt and persist those choices for this workspace. Selecting an alias can switch both provider and model. Chat
 Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
-and `high`. The model name must be supported by the configured endpoint.
+and `high`.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval. The chooser defaults to **Allow once**; Enter confirms the selected
