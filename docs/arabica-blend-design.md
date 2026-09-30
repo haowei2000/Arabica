@@ -212,6 +212,45 @@ override should pin that model for the run and be visible in the decision
 reason. Legacy single-model settings remain a one-candidate Blend with
 identical behavior when Blend is disabled.
 
+The CLI and ACP host accept per-policy tool routing rules and a separate
+planning model:
+
+```toml
+[blend.policies.coding]
+default_model = "balanced"
+planning_model = "deep"
+after_tool_success = "fast"
+after_tool_error = "deep"
+recovery_model = "deep"
+recovery_after_no_progress_steps = 2
+
+[[blend.policies.coding.tool_routes]]
+id = "plan-tools"
+model = "deep"
+priority = 10
+matcher = { type = "kind", value = "plan" }
+
+[[blend.policies.coding.tool_routes]]
+id = "special-read-route"
+model = "fast"
+matcher = { type = "exact_name", value = "read_file" }
+```
+
+`create_plan` and `update_plan` remain ordinary model-callable tools. The host
+delegates their structured generation to `planning_model`, or the policy's
+default model when it is omitted. It uses only the current request's existing
+conversation and memory context. The planning request has no tools. Successful
+results are recorded as plan snapshots and mapped to ACP plan updates; failed
+generation leaves the previous plan intact.
+
+After a complete tool batch, routing checks no-progress recovery first, then a
+configured tool-error route, followed by exact tool-name rules, regex
+tool-name rules, interaction-kind rules, the success route, and the default
+model. Regex rules match tool names only. Within a matching tier, larger
+`priority` wins and configuration order breaks ties. Regex syntax and model
+aliases are validated when configuration loads. The route explanation records
+the rule ID, desired model, selected model, and any capability fallback.
+
 ## Evaluation: every decision, with delayed credit
 
 Every selected route gets an evaluation record, including failures, timeouts,

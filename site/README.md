@@ -9,6 +9,9 @@ This is a static project site for GitHub Pages. The workflow in
 its SHA-256 sidecar, and installs the `arabica` binary to a user directory.
 `test-install.sh` checks the archive and checksum flow with an offline fixture;
 the Pages workflow runs it before publishing.
+The homepage also links to the latest Arabica Desktop archives for Apple
+silicon and Intel Macs. Tag releases build and attach both `.app` bundles with
+SHA-256 sidecars; these builds are currently unsigned and not notarized.
 `configuration.html` documents the settings implemented by the CLI and server.
 
 The Source Serif 4 and Source Sans 3 webfonts are from the local Cheers site.

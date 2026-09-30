@@ -1,9 +1,10 @@
 # Structure Development Guide
 
-Structure is a backend-only, headless AI-agent runtime written in Rust. There
-is currently no frontend. The legacy Python implementation and experiment
-frameworks have been removed. Maintain the Rust workspace and its single
-experiment package; do not reintroduce a parallel implementation.
+Structure has a headless AI-agent runtime written in Rust and a native macOS
+client in `apps/arabica-desktop`. The client talks to `arabica acp` over stdio;
+it does not duplicate the runtime. The legacy Python implementation and
+experiment frameworks have been removed. Maintain the Rust workspace and its
+single experiment package; do not reintroduce a parallel implementation.
 
 ## Active Workspace
 
@@ -26,6 +27,7 @@ experiment package; do not reintroduce a parallel implementation.
 - `crates/arabica-adapters`: persistence adapters implementing the session ports (JSONL session store)
 - `crates/arabica-cli`: stdio composition host (interactive chat, `acp`, one-shot mode)
 - `crates/arabica-server`: HTTP and SSE transport
+- `apps/arabica-desktop`: SwiftUI/AppKit macOS client and ACP process host (outside the Cargo workspace)
 - `benchmarks/runtime-short-memory`: active short-memory benchmark (workspace member; `benchmarks/cli-comparison` and `benchmarks/protocol` hold protocol documents and fixtures only)
 
 Dependency direction should follow these boundaries. Transport concerns belong
@@ -40,6 +42,7 @@ cargo test --workspace
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p arabica-server
+cd apps/arabica-desktop && swift test && bash scripts/package.sh debug
 ```
 
 The server requires `ARABICA__PROVIDERS_JSON` and

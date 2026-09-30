@@ -10,8 +10,9 @@ Arabica is a headless AI-agent runtime written in Rust. The project defines a
 canonical command/event protocol, session lifecycle, model-provider boundary,
 tool runner, memory policies, and an HTTP/SSE host.
 
-> Status: active development (`0.1.1`). There is no GUI in this repository;
-> `arabica-cli` (below) is the only client-facing surface.
+> Status: active development (`0.1.1`). A first native macOS client lives in
+> [`apps/arabica-desktop`](apps/arabica-desktop/README.md). The Rust runtime
+> remains headless.
 
 ## Architecture
 
@@ -32,6 +33,11 @@ The runtime is protocol-first: clients submit a `CommandEnvelope`, the session
 layer validates and sequences the operation, and the runtime emits canonical
 `EventEnvelope` values. The HTTP host exposes the same contract without adding
 client-specific state.
+
+The macOS desktop client uses SwiftUI and AppKit. It launches the CLI's ACP
+agent as a bundled process and presents conversations, live updates, and tool
+permission requests. Build instructions are in its
+[README](apps/arabica-desktop/README.md).
 
 ## HTTP API
 
@@ -135,7 +141,9 @@ provider = "anthropic"
 model_id = "claude-sonnet-4-5"
 
 [blend]
-policy_id = "coding"
+default_policy = "coding"
+
+[blend.policies.coding]
 version = 1
 default_model = "fast"
 after_tool_success = "fast"
@@ -145,9 +153,15 @@ recovery_model = "strong"
 minimum_model_dwell_steps = 2
 tool_call_capable_models = ["fast", "strong"]
 typed_completion_capable_models = ["fast"]
+
+[blend.policies.precise]
+version = 1
+default_model = "strong"
+after_tool_error = "strong"
+minimum_model_dwell_steps = 2
 ```
 
-The CLI validates every provider reference, alias, credential source, and API-specific setting at startup. A TOML `api_key` is accepted as a fallback to the environment variable; a config file containing keys must be owner-only (`chmod 600`). `arabica auth login` remains a saved-key fallback for the default provider. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes the configured aliases as its model selector; changing the selection updates that session's default model while retaining the remaining Blend routes.
+The CLI validates every provider reference, alias, credential source, and API-specific setting at startup. A TOML `api_key` is accepted as a fallback to the environment variable; a config file containing keys must be owner-only (`chmod 600`). `arabica auth login` remains a saved-key fallback for the default provider. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes configured policy IDs and model aliases as session selectors. Selecting a policy changes the current session's routing rules; selecting a model changes that policy's session default. For one policy, the earlier flat `[blend]` fields remain accepted.
 
 Optional configuration:
 

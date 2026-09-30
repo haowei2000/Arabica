@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, Diff, SessionId as AcpSessionId, SessionNotification,
-    SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ContentBlock, ContentChunk, Diff, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus,
+    SessionId as AcpSessionId, SessionNotification, SessionUpdate, ToolCall, ToolCallContent,
+    ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use agent_client_protocol::{Client, ConnectionTo};
 use arabica_model::{RuntimeItem, RuntimeRole};
@@ -361,6 +361,19 @@ pub(super) fn updates_for(
                     .content(vec![ToolCallContent::from(result.as_str())]),
             ))]
         }
+        Event::PlanUpdated { entries, .. } => vec![SessionUpdate::Plan(Plan::new(
+            entries
+                .iter()
+                .map(|entry| {
+                    let status = match entry.status {
+                        arabica_protocol::PlanEntryStatus::Pending => PlanEntryStatus::Pending,
+                        arabica_protocol::PlanEntryStatus::InProgress => PlanEntryStatus::InProgress,
+                        arabica_protocol::PlanEntryStatus::Completed => PlanEntryStatus::Completed,
+                    };
+                    PlanEntry::new(entry.content.clone(), PlanEntryPriority::Medium, status)
+                })
+                .collect(),
+        ))],
         // A denied or cancelled decision is always followed by its own
         // `tool.call.completed{is_error: true}` (the permission gate and
         // cooperative cancellation both guarantee it), which the arm above
@@ -380,6 +393,7 @@ pub(super) fn updates_for(
         | Event::MessageAccepted { .. }
         | Event::ModelRequestPrepared { .. }
         | Event::ModelRouteSelected { .. }
+        | Event::ModelRouteExplained { .. }
         | Event::ModelCallObserved { .. }
         | Event::ModelResponseCompleted { .. }
         | Event::ModelResponseRejected { .. }
@@ -387,6 +401,7 @@ pub(super) fn updates_for(
         | Event::ToolCallReused { .. }
         | Event::ToolCallLoopBlocked { .. }
         | Event::AgentProgressAdvisory { .. }
+        | Event::PlanDelegationObserved { .. }
         | Event::AgentLoopTerminated { .. }
         | Event::TerminalControlTransition { .. }
         | Event::CommandOutput { .. }

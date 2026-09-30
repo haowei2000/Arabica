@@ -286,7 +286,12 @@ impl RunnerEnvironment for HostRunner {
         &self,
         call: &arabica_model::ToolCallItem,
     ) -> arabica_protocol::ToolInteractionKind {
-        if self.mcp.contains(&call.name) {
+        if matches!(
+            call.name.as_str(),
+            arabica_runtime::CREATE_PLAN_TOOL_NAME | arabica_runtime::UPDATE_PLAN_TOOL_NAME
+        ) {
+            arabica_protocol::ToolInteractionKind::Plan
+        } else if self.mcp.contains(&call.name) {
             self.mcp.classify(call)
         } else {
             self.local.classify(call)
@@ -383,6 +388,7 @@ pub fn build_host_runtime_with_mcp(
     mcp: crate::mcp::McpTools,
 ) -> HostRuntime {
     let mut tools = arabica_runner::tool_definitions(&tool_policy);
+    tools.extend(arabica_runtime::plan_tool_definitions());
     tools.push(memory_search_definition());
     tools.push(memory_read_definition());
     tools.extend_from_slice(mcp.definitions());
@@ -495,8 +501,8 @@ mod tests {
         assert!(runtime.system_instructions()[0].contains(&root.display().to_string()));
         assert!(runtime.system_instructions()[0].contains(std::env::consts::OS));
 
-        // The CLI advertises recovery tools but does not expose the
-        // unrelated runtime_complete control tool.
+        // The CLI advertises the coding and planning tools but does not
+        // expose the unrelated runtime_complete control tool.
         let names: Vec<&str> = runtime
             .tools()
             .iter()
@@ -512,6 +518,8 @@ mod tests {
                 "write_file",
                 "edit_files",
                 "delete_file",
+                "create_plan",
+                "update_plan",
                 "memory_search",
                 "memory_read",
             ]
