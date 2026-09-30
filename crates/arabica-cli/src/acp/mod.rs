@@ -763,17 +763,7 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     let aliases = catalog.models.clone();
     let model_configs = catalog.model_configs.clone();
     let blend_policy = catalog.blend_policy.clone();
-    let mut models = if aliases.is_empty() {
-        std::env::var("ARABICA__MODELS")
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    } else {
-        aliases.keys().cloned().collect::<Vec<_>>()
-    };
+    let mut models = aliases.keys().cloned().collect::<Vec<_>>();
     let initial_selection = blend_policy
         .as_ref()
         .map(|policy| policy.default_model.clone());

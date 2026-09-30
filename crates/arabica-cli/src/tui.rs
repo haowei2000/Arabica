@@ -854,19 +854,7 @@ fn workspace_files(root: &Path) -> Vec<String> {
 }
 
 fn configured_models(current: &str) -> Vec<String> {
-    let mut models = vec![current.to_owned()];
-    if let Ok(configured) = std::env::var("ARABICA__MODELS") {
-        for model in configured
-            .split(',')
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-        {
-            if !models.iter().any(|known| known == model) {
-                models.push(model.to_owned());
-            }
-        }
-    }
-    models
+    vec![current.to_owned()]
 }
 
 struct CompletionView {
