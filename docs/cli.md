@@ -19,50 +19,69 @@ The binary is at `target/release/arabica`.
 
 ## Configuration
 
-The CLI and ACP share `arabica-server`'s environment variable names:
+CLI and ACP load the named provider catalog from `$ARABICA_HOME/config.toml`
+(default `~/.arabica/config.toml`). Each alias selects a provider with its own
+API dialect, endpoint, credential, and generation settings.
 
 | Variable | Flag override | Required | Purpose |
 |---|---|---|---|
-| `OPENAI__API_KEY` | *(none)* | yes unless saved auth or user config supplies it | Credential. Deliberately has no flag: a `--api-key` argument would put the key in shell history and process listings. |
-| `OPENAI__BASE_URL` | `--base-url` | yes unless the flag or user config supplies it | Provider endpoint, e.g. `https://api.openai.com/v1`. |
-| `OPENAI__MODEL` | `--model` | yes unless the flag, user config, or Blend default supplies it | Model name. |
-| `ARABICA__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | Implemented: `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`. `gemini_interactions` is declared but not implemented. |
-| `ARABICA__MODELS` | *(none)* | no | Comma-separated model names offered in the ACP selector. The current `OPENAI__MODEL` is always included. |
+| `ARABICA_PROVIDER_<NAME>_API_KEY` | *(none)* | per provider unless TOML `api_key` is configured | Provider credential; `api_key_env` may specify another variable. |
+| `ARABICA__BASE_URL` | `--base-url` | no | Temporary endpoint override for the default alias's provider. |
+| `ARABICA__MODEL` | `--model` | no | Temporary model ID override for the default alias. |
+| `ARABICA__API_TYPE` | `--api-type` | no | Temporary API dialect override for the default alias's provider. |
 
-A flag always overrides its matching variable. Terminal chat and `-p` also
-load `$ARABICA_HOME/config.toml` (default `~/.arabica/config.toml`) and a
-workspace settings file under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml`.
-For the model, resolution is flag → saved workspace choice → environment →
-user config. For endpoint and API type, it is flag → environment → user
-config. Thinking is saved workspace choice → user config → off. `arabica
-config` prints the resolved values and both file paths.
+A flag always overrides its matching variable. The configured `[blend]`
+default alias is selected unless a saved workspace alias overrides it.
+`structure config` validates and prints the resolved provider/model catalog
+and the config file paths.
 
 Example user config:
 
 ```toml
-[provider]
-api_type = "open_ai_chat_completions"
-api_key = "your-api-key"
+[providers.openai]
+api_type = "open_ai_responses"
 base_url = "https://api.openai.com/v1"
-model = "gpt-4.1"
-thinking = "off"
+api_key_env = "ARABICA_PROVIDER_OPENAI_API_KEY"
+max_tokens = 8192
+thinking = "high"
+
+[providers.anthropic]
+api_type = "anthropic_messages"
+base_url = "https://api.anthropic.com/v1"
+api_key_env = "ARABICA_PROVIDER_ANTHROPIC_API_KEY"
+request_timeout_secs = 180
+anthropic_cache_static_prefix = true
+
+[models.fast]
+provider = "openai"
+model_id = "gpt-4.1-mini"
+
+[models.strong]
+provider = "anthropic"
+model_id = "claude-sonnet-4-5"
+
+[blend]
+default_model = "fast"
+after_tool_error = "strong"
+tool_call_capable_models = ["fast", "strong"]
 ```
 
-If `config.toml` contains `api_key`, restrict it to your account with
+If a provider table contains `api_key`, restrict `config.toml` to your account with
 `chmod 600 ~/.arabica/config.toml`; the CLI refuses to read a key from a
 more permissive file or a symlink. Alternatively, run `arabica auth login`
 once to enter the key without echoing it. The key is then saved in `$ARABICA_HOME/auth.json`
 (default `~/.arabica/auth.json`) with owner-only file permissions. Run
-`arabica auth status` to see which credential source is active, or
-`arabica auth logout` to remove the separately saved key. Credential
-priority is `OPENAI__API_KEY` → user `config.toml` → `auth.json`. For editor
-launches, passing the key through the editor environment is usually the most
-predictable choice.
+`structure auth status` to see which credential source is active, or
+`structure auth logout` to remove the separately saved key. Provider
+environment variables take precedence over TOML `api_key`; `auth.json` is a
+saved-key fallback for the default provider. Existing shared `[provider]`,
+`OPENAI__*`, and `ARABICA__MODELS` configurations must be migrated to named
+providers and model aliases.
 
-Workspace config files reject an `api_key` field. Nothing is read from a `.env`
-or `.arabica` directory in the project: a malicious repository could otherwise
-redirect model calls and capture the real API key. ACP uses the same resolved
-provider settings and keeps its per-session model and thinking controls.
+Workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.arabica` directory
+in the project: a malicious repository could otherwise redirect model calls
+and capture the real API key. ACP exposes configured aliases and the applicable
+thinking controls as per-session options.
 
 ## Project instructions
 
@@ -168,11 +187,11 @@ resumed session starts with an empty one. `/context` opens a scrollable view of 
 provider-reported token usage, a policy preview for the next turn, and the
 workspace archive count. The preview excludes the next message and FileBackedGC
 admission; it is not a token estimate. Escape or `q` closes the view. The
-archive count covers the workspace, not just the current session. `/model <name>` and
+archive count covers the workspace, not just the current session. `/model <alias>` and
 `/thinking <off|on|low|medium|high>` change the
-provider for the next prompt and persist those choices for this workspace. Chat
+configured Blend alias or its thinking mode for the next prompt and persist those choices for this workspace. Selecting an alias can switch both provider and model. Chat
 Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
-and `high`. The model name must be supported by the configured endpoint.
+and `high`.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval. The chooser defaults to **Allow once**; Enter confirms the selected
@@ -195,8 +214,8 @@ Shell is available only with `--allow-shell` and also requires approval.
 
 Speaks [Agent Client Protocol](https://agentclientprotocol.com) v1 over
 stdio. `initialize` always answers protocol version 1 with no auth methods
-(`authMethods: []`): there is nothing to authenticate beyond the environment
-variables above. Every `session/new` builds its own runtime and its own
+(`authMethods: []`): credentials come from provider key environment variables
+or the user config. Every `session/new` builds its own runtime and its own
 session manager, so concurrent sessions (multiple editor windows, multiple
 projects) do not share state or serialize behind one lock.
 
@@ -212,10 +231,8 @@ Add to Zed's `settings.json`:
       "command": "/absolute/path/to/arabica",
       "args": ["acp"],
       "env": {
-        "OPENAI__API_KEY": "<your-api-key>",
-        "OPENAI__BASE_URL": "https://api.openai.com/v1",
-        "OPENAI__MODEL": "<model-name>",
-        "ARABICA__MODELS": "<model-name>,<another-model>"
+        "ARABICA_PROVIDER_OPENAI_API_KEY": "<your-api-key>",
+        "ARABICA_PROVIDER_ANTHROPIC_API_KEY": "<your-api-key>"
       }
     }
   }
@@ -224,12 +241,13 @@ Add to Zed's `settings.json`:
 
 Zed passes `env` to the agent process. These values can also be inherited
 from Zed's launch environment, in which case the `env` object may be omitted.
-Putting `OPENAI__API_KEY` in `settings.json` stores it as plain text; use a
-secure launch environment if that is unacceptable. Zed's own model-provider
-settings do not configure Structure's provider.
+Putting provider keys in `settings.json` stores them as plain text; use a
+secure launch environment if that is unacceptable. The aliases and endpoints
+come from `~/.arabica/config.toml`. Zed's own model-provider settings do not
+configure Structure's providers.
 
 New and restored sessions expose ACP model and thinking selectors. The model
-selector contains `ARABICA__MODELS` plus the starting model. Chat
+selector contains configured aliases. Chat
 Completions has `off` and `on` thinking levels; Responses has `off`, `low`,
 `medium`, and `high`. A switch applies to the next prompt in that session.
 The Chat Completions adapter sends a nonstandard `thinking` parameter when

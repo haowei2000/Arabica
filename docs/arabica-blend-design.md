@@ -33,11 +33,16 @@ dwell; tool-error and no-progress recovery routes bypass it. CLI and server
 configuration can certify aliases for tool calling and typed completion;
 routes fall back to a certified alias or fail before provider use if none
 meets the request requirements. Route reasons are stable snake-case values.
-The server can configure candidates through `ARABICA__BLEND_MODELS`; the CLI reads
-named aliases and model IDs from `~/.arabica/config.toml`. All candidates
-currently share one API type, base URL, and key. Terminal chat, one-shot runs,
-and ACP sessions use the same policy and provider pool; ACP exposes aliases in
-its model selector and treats the selected alias as that session's default.
+The server reads named provider definitions from `ARABICA__PROVIDERS_JSON` and
+alias-to-provider/model mappings from `ARABICA__BLEND_MODELS_JSON`; provider
+credentials are resolved from their configured `api_key_env`, or from
+`ARABICA_PROVIDER_<NAME>_API_KEY` by default. The CLI reads the equivalent
+provider and model tables from `~/.arabica/config.toml`. Every alias may use a
+different API dialect, endpoint, credential, and provider generation settings.
+Terminal chat, one-shot runs, and ACP sessions use the same policy and provider
+pool; ACP exposes aliases in its model selector and treats the selected alias
+as that session's default. Existing shared-provider CLI and server config
+formats must be migrated to the named provider format.
 
 The evaluator reports run completion states, not verified task correctness.
 ACP model selection changes the session's default alias while

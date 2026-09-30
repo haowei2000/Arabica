@@ -170,10 +170,11 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
     if !args.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
         match resolved.build_model() {
             Ok(model) => {
-                arabica_cli::tui::run_with_model(
+                arabica_cli::tui::run_with_model_configs(
                     resolved.provider,
                     model,
                     resolved.blend_policy,
+                    resolved.model_configs,
                     options,
                 )
                 .await
@@ -186,10 +187,11 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
     } else {
         match resolved.build_model() {
             Ok(model) => {
-                interactive::run_with_model(
+                interactive::run_with_model_configs(
                     resolved.provider,
                     model,
                     resolved.blend_policy,
+                    resolved.model_configs,
                     options,
                 )
                 .await
@@ -255,6 +257,8 @@ async fn run_print(resolved: ResolvedCliConfig, task: String, args: PrintArgs) -
 fn describe_configuration(resolved: ResolvedCliConfig) -> Result<(), Box<dyn std::error::Error>> {
     let model = resolved.build_model()?;
     let aliases = resolved.models.clone();
+    let providers = resolved.model_providers.clone();
+    let model_configs = resolved.model_configs.clone();
     let blend_policy = resolved.blend_policy.clone();
     let provider_config = resolved.provider;
     // Never printed: the api_key field itself is not touched below.
@@ -286,7 +290,15 @@ fn describe_configuration(resolved: ResolvedCliConfig) -> Result<(), Box<dyn std
     if !aliases.is_empty() {
         println!("  models:");
         for (alias, model_id) in aliases {
-            println!("    {alias}: {model_id}");
+            let provider_name = providers
+                .get(&alias)
+                .map(String::as_str)
+                .unwrap_or("unknown");
+            let api_type = model_configs
+                .get(&alias)
+                .map(|config| config.api_type.to_string())
+                .unwrap_or_else(|| "unknown".to_owned());
+            println!("    {alias}: {provider_name}/{model_id} ({api_type})");
         }
         if let Some(policy) = blend_policy {
             println!(

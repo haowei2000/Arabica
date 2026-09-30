@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use arabica_protocol::{RunId, SessionId};
 use arabica_provider::{
-    ApiModelProvider, ApiProviderConfig, ApiType, BlendProvider, ModelProgressSink, ModelProvider,
+    ApiModelProvider, ApiProviderConfig, BlendProvider, ModelProgressSink, ModelProvider,
     ModelRunRequest, ModelRunResult, ProviderError,
 };
 pub use arabica_runner::LocalRunnerPolicy;
@@ -47,29 +47,17 @@ impl IdAllocator for UuidIds {
     }
 }
 
-/// Environment variables read by [`resolve_provider_config`], reusing
-/// `arabica-server`'s names (`crates/arabica-server/src/lib.rs`) so a
-/// provider configured for one host works unchanged for the other.
-mod env {
-    pub const API_KEY: &str = "OPENAI__API_KEY";
-    pub const BASE_URL: &str = "OPENAI__BASE_URL";
-    pub const MODEL: &str = "OPENAI__MODEL";
-    pub const API_TYPE: &str = "ARABICA__API_TYPE";
-}
-
-/// Model selection, deliberately not the credential. A `--api-key` flag would
-/// put the key in shell history and process listings. The CLI resolver accepts
-/// an environment key, user config key, or saved auth for all host modes.
+/// Invocation overrides for the default Blend alias. Credentials have no CLI
+/// flag so they cannot enter shell history or process listings.
 #[derive(Args, Clone, Debug, Default)]
 pub struct HostConfigArgs {
-    /// Override OPENAI__MODEL.
+    /// Override the default Blend alias model ID (ARABICA__MODEL).
     #[arg(long)]
     pub model: Option<String>,
-    /// Override ARABICA__API_TYPE (open_ai_chat_completions, open_ai_responses,
-    /// anthropic_messages, gemini_generate_content, gemini_interactions).
+    /// Override ARABICA__API_TYPE for the default alias's provider.
     #[arg(long)]
     pub api_type: Option<String>,
-    /// Override OPENAI__BASE_URL.
+    /// Override ARABICA__BASE_URL for the default alias's provider.
     #[arg(long)]
     pub base_url: Option<String>,
 }
@@ -82,6 +70,7 @@ pub struct HostModelCatalog {
     pub provider: ApiProviderConfig,
     pub models: BTreeMap<String, String>,
     pub blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+    pub model_configs: BTreeMap<String, ApiProviderConfig>,
 }
 
 impl HostModelCatalog {
@@ -94,53 +83,21 @@ impl HostModelCatalog {
             .as_ref()
             .map(|policy| policy.default_model.as_str())
             .unwrap_or_else(|| self.models.keys().next().expect("non-empty model catalog"));
-        BlendProvider::from_shared_config(self.provider.clone(), default_alias, self.models.clone())
+        if self.model_configs.is_empty() {
+            BlendProvider::from_shared_config(
+                self.provider.clone(),
+                default_alias,
+                self.models.clone(),
+            )
             .map(HostModel::Blend)
+        } else {
+            BlendProvider::from_configs(default_alias, self.model_configs.clone())
+                .map(HostModel::Blend)
+        }
     }
 }
 
-fn require(value: Option<String>, var: &str, flag: &str) -> Result<String, ProviderError> {
-    value.ok_or_else(|| ProviderError::new(format!("{var} is required (or pass --{flag})")))
-}
-
-/// Resolve provider configuration: a CLI flag overrides its matching
-/// environment variable; `OPENAI__API_KEY` has no flag and must be exported.
-///
-/// Reads through `lookup` rather than `std::env::var` directly, so tests can
-/// supply a fixed map instead of mutating the real process environment
-/// (`std::env::set_var` is `unsafe` as of Rust 2024, and this workspace
-/// forbids `unsafe` outright).
-pub fn resolve_provider_config(
-    args: &HostConfigArgs,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Result<ApiProviderConfig, ProviderError> {
-    let api_type = args
-        .api_type
-        .clone()
-        .or_else(|| lookup(env::API_TYPE))
-        .unwrap_or_else(|| ApiType::OpenAiChatCompletions.to_string())
-        .parse::<ApiType>()?;
-    let api_key = lookup(env::API_KEY).ok_or_else(|| {
-        ProviderError::new(format!(
-            "{} is required; export it in your shell, it is never a flag",
-            env::API_KEY
-        ))
-    })?;
-    let base_url = require(
-        args.base_url.clone().or_else(|| lookup(env::BASE_URL)),
-        env::BASE_URL,
-        "base-url",
-    )?;
-    let model = require(
-        args.model.clone().or_else(|| lookup(env::MODEL)),
-        env::MODEL,
-        "model",
-    )?;
-    Ok(ApiProviderConfig::new(api_type, api_key, base_url, model))
-}
-
-/// The real environment, for `main` to pass as `resolve_provider_config`'s
-/// `lookup`.
+/// The real environment, for the CLI configuration resolver's `lookup`.
 pub fn process_environment(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
@@ -474,70 +431,6 @@ pub fn build_host_runtime_with_blend(
 mod tests {
     use super::*;
     use arabica_runtime::HistoryProjection;
-
-    fn args(model: Option<&str>, api_type: Option<&str>, base_url: Option<&str>) -> HostConfigArgs {
-        HostConfigArgs {
-            model: model.map(str::to_owned),
-            api_type: api_type.map(str::to_owned),
-            base_url: base_url.map(str::to_owned),
-        }
-    }
-
-    /// A fixed environment for tests: no real process state is touched, so
-    /// these run with cargo test's default parallelism like anything else.
-    fn env_map(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
-        let vars: std::collections::HashMap<String, String> = vars
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect();
-        move |name: &str| vars.get(name).cloned()
-    }
-
-    #[test]
-    fn a_cli_flag_overrides_its_matching_environment_variable() {
-        let lookup = env_map(&[
-            (env::API_KEY, "test-key"),
-            (env::BASE_URL, "https://env.example/v1"),
-            (env::MODEL, "env-model"),
-        ]);
-        let config = resolve_provider_config(&args(Some("flag-model"), None, None), lookup)
-            .expect("config resolves");
-        assert_eq!(config.model, "flag-model");
-        assert_eq!(config.base_url, "https://env.example/v1");
-        assert_eq!(config.api_type, ApiType::OpenAiChatCompletions);
-    }
-
-    #[test]
-    fn a_missing_flag_falls_back_to_the_environment_variable() {
-        let lookup = env_map(&[
-            (env::API_KEY, "test-key"),
-            (env::BASE_URL, "u"),
-            (env::MODEL, "env-model"),
-        ]);
-        let config = resolve_provider_config(&args(None, None, None), lookup)
-            .expect("config resolves from the environment alone");
-        assert_eq!(config.model, "env-model");
-    }
-
-    #[test]
-    fn a_missing_required_setting_names_both_the_variable_and_the_flag() {
-        let lookup = env_map(&[(env::API_KEY, "test-key"), (env::MODEL, "m")]);
-        let error = resolve_provider_config(&args(None, None, None), lookup)
-            .expect_err("base_url is missing");
-        let message = error.to_string();
-        assert!(message.contains("OPENAI__BASE_URL"), "{message}");
-        assert!(message.contains("--base-url"), "{message}");
-    }
-
-    #[test]
-    fn the_api_key_has_no_flag_and_must_come_from_the_environment() {
-        let lookup = env_map(&[(env::BASE_URL, "u"), (env::MODEL, "m")]);
-        let error = resolve_provider_config(&args(None, None, None), lookup)
-            .expect_err("the key is missing");
-        assert!(error.to_string().contains("OPENAI__API_KEY"));
-        // HostConfigArgs simply has no api_key field: the absence of a flag
-        // is the safeguard, not a runtime check to bypass.
-    }
 
     #[tokio::test]
     async fn host_model_dispatches_to_the_scripted_variant() {

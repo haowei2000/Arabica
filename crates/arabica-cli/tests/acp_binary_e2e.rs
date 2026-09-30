@@ -179,12 +179,16 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
 
     let workspace_root = temp_dir("workspace");
     let arabica_home = temp_dir("home");
+    std::fs::write(
+        arabica_home.join("config.toml"),
+        "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.default]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[blend]\ndefault_model = 'default'\ntool_call_capable_models = ['default']\n",
+    )
+    .unwrap();
 
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
         .arg("acp")
-        .env("OPENAI__API_KEY", "test-key")
-        .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
-        .env("OPENAI__MODEL", "test-model")
+        .env("ARABICA_PROVIDER_MOCK_API_KEY", "test-key")
+        .env("ARABICA__BASE_URL", format!("http://{address}/v1"))
         .env("ARABICA_HOME", &arabica_home)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

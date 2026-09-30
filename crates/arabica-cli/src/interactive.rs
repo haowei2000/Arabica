@@ -11,7 +11,9 @@ use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, SessionId, SessionStatus,
     ToolPermissionOutcome, ToolPermissionScope, ToolPermissionSource,
 };
-use arabica_provider::{ApiModelProvider, ApiProviderConfig, ModelProgress, ModelProgressSink};
+use arabica_provider::{
+    ApiModelProvider, ApiProviderConfig, BlendProvider, ModelProgress, ModelProgressSink,
+};
 use arabica_runner::LocalTool;
 use arabica_runtime::BlendRoutingPolicy;
 use arabica_runtime::{
@@ -236,6 +238,8 @@ pub(crate) struct InteractiveSession {
     pub(crate) session_id: SessionId,
     pub(crate) store: Arc<FileSessionStore>,
     pub(crate) config: ApiProviderConfig,
+    pub(crate) model_configs: BTreeMap<String, ApiProviderConfig>,
+    blend_policy: Option<BlendRoutingPolicy>,
     pub(crate) arabica_home: PathBuf,
     pub(crate) runner_root: PathBuf,
     pub(crate) read_only: bool,
@@ -257,6 +261,17 @@ impl InteractiveSession {
         blend_policy: Option<BlendRoutingPolicy>,
         options: InteractiveOptions,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::open_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
+    }
+
+    pub(crate) async fn open_with_model_configs(
+        config: ApiProviderConfig,
+        model: HostModel,
+        blend_policy: Option<BlendRoutingPolicy>,
+        model_configs: BTreeMap<String, ApiProviderConfig>,
+        options: InteractiveOptions,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let session_blend_policy = blend_policy.clone();
         let runner_root = std::env::current_dir()?;
         let arabica_home = arabica_adapters::default_arabica_home()?;
         let workspace_id = workspace_id_for(&runner_root);
@@ -356,6 +371,8 @@ impl InteractiveSession {
             session_id,
             store,
             config,
+            model_configs,
+            blend_policy: session_blend_policy,
             arabica_home,
             runner_root,
             read_only: options.read_only,
@@ -472,6 +489,28 @@ impl InteractiveSession {
     }
 
     pub(crate) fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.model_configs.is_empty() {
+            let next = self
+                .model_configs
+                .get(model)
+                .cloned()
+                .ok_or_else(|| format!("unknown Blend model alias {model:?}"))?;
+            let mut policy = self
+                .blend_policy
+                .clone()
+                .ok_or("Blend model aliases require a routing policy")?;
+            policy.default_model = model.to_owned();
+            let provider = BlendProvider::from_configs(model, self.model_configs.clone())?;
+            save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+                settings.model = None;
+                settings.model_alias = Some(model.to_owned());
+            })?;
+            self.config = next;
+            self.blend_policy = Some(policy.clone());
+            self.manager.runtime_mut().set_blend_policy(Some(policy))?;
+            *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
+            return Ok(());
+        }
         let mut next = self.config.clone();
         next.model = model.to_owned();
         let provider = ApiModelProvider::new(next.clone())?;
@@ -487,6 +526,26 @@ impl InteractiveSession {
         &mut self,
         value: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.model_configs.is_empty() {
+            let alias = self
+                .blend_policy
+                .as_ref()
+                .ok_or("Blend model aliases require a routing policy")?
+                .default_model
+                .clone();
+            let mut next = self.model_configs[&alias].clone();
+            set_thinking(&mut next, value)?;
+            let mut configs = self.model_configs.clone();
+            configs.insert(alias.clone(), next.clone());
+            let provider = BlendProvider::from_configs(alias, configs.clone())?;
+            save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+                settings.thinking = Some(value.to_owned());
+            })?;
+            self.config = next;
+            self.model_configs = configs;
+            *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
+            return Ok(());
+        }
         let mut next = self.config.clone();
         set_thinking(&mut next, value)?;
         let provider = ApiModelProvider::new(next.clone())?;
@@ -602,18 +661,35 @@ pub async fn run_with_model(
     blend_policy: Option<BlendRoutingPolicy>,
     options: InteractiveOptions,
 ) -> i32 {
+    run_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
+}
+
+pub async fn run_with_model_configs(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    model_configs: BTreeMap<String, ApiProviderConfig>,
+    options: InteractiveOptions,
+) -> i32 {
     if options.allow_shell && options.read_only {
         eprintln!("error: --allow-shell and --read-only are mutually exclusive");
         return 2;
     }
-    let mut session =
-        match InteractiveSession::open_with_model(config, model, blend_policy, options).await {
-            Ok(session) => session,
-            Err(error) => {
-                eprintln!("error: {error}");
-                return 2;
-            }
-        };
+    let mut session = match InteractiveSession::open_with_model_configs(
+        config,
+        model,
+        blend_policy,
+        model_configs,
+        options,
+    )
+    .await
+    {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
     eprintln!(
         "Arabica session {}. Type /help for commands.",
         session.session_id

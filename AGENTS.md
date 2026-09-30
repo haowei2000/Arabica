@@ -42,8 +42,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p arabica-server
 ```
 
-The server requires `OPENAI__API_KEY`, `OPENAI__BASE_URL`, and
-`OPENAI__MODEL`. It listens on port 4096 unless `ARABICA__PORT` is set.
+The server requires `ARABICA__PROVIDERS_JSON` and
+`ARABICA__BLEND_MODELS_JSON`, plus the configured provider key environment
+variables. It listens on port 4096 unless `ARABICA__PORT` is set.
 
 ## Coding Rules
 

@@ -54,6 +54,7 @@ struct AcpProviderSettings {
     initial: ApiProviderConfig,
     models: Vec<String>,
     aliases: BTreeMap<String, String>,
+    model_configs: BTreeMap<String, ApiProviderConfig>,
     blend_policy: Option<BlendRoutingPolicy>,
 }
 
@@ -146,6 +147,7 @@ struct SessionEntry {
     /// per-call `FanOutObserver` alongside the live `AcpObserver`.
     store: Arc<FileSessionStore>,
     provider_config: Option<Mutex<ApiProviderConfig>>,
+    model_configs: Option<Mutex<BTreeMap<String, ApiProviderConfig>>>,
     blend_policy: Option<Mutex<BlendRoutingPolicy>>,
 }
 
@@ -321,6 +323,10 @@ impl AcpState {
                         .provider_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
+                    model_configs: self
+                        .provider_settings
+                        .as_ref()
+                        .map(|settings| Mutex::new(settings.model_configs.clone())),
                     blend_policy: self
                         .provider_settings
                         .as_ref()
@@ -418,6 +424,10 @@ impl AcpState {
                         .provider_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
+                    model_configs: self
+                        .provider_settings
+                        .as_ref()
+                        .map(|settings| Mutex::new(settings.model_configs.clone())),
                     blend_policy: self
                         .provider_settings
                         .as_ref()
@@ -495,6 +505,10 @@ impl AcpState {
                         .provider_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
+                    model_configs: self
+                        .provider_settings
+                        .as_ref()
+                        .map(|settings| Mutex::new(settings.model_configs.clone())),
                     blend_policy: self
                         .provider_settings
                         .as_ref()
@@ -524,6 +538,11 @@ impl AcpState {
         })?;
         let mut config = config_lock.lock().expect("provider config lock poisoned");
         let mut updated = config.clone();
+        let mut session_model_configs = entry
+            .model_configs
+            .as_ref()
+            .map(|configs| configs.lock().expect("model configs lock poisoned").clone())
+            .unwrap_or_else(|| settings.model_configs.clone());
         let mut selected_alias = None;
         let value = request
             .value
@@ -532,7 +551,7 @@ impl AcpState {
             .to_string();
         match request.config_id.to_string().as_str() {
             "model" if settings.aliases.contains_key(&value) => {
-                updated.model = settings.aliases[&value].clone();
+                updated = session_model_configs[&value].clone();
                 selected_alias = Some(value.clone());
             }
             "model" if settings.models.contains(&value) => updated.model = value,
@@ -575,17 +594,17 @@ impl AcpState {
                         .default_model
                         .clone()
                 });
+            session_model_configs.insert(default_alias.clone(), updated.clone());
             HostModel::Blend(
-                BlendProvider::from_shared_config(
-                    updated.clone(),
-                    default_alias,
-                    settings.aliases.clone(),
-                )
-                .map_err(provider_error)?,
+                BlendProvider::from_configs(default_alias, session_model_configs.clone())
+                    .map_err(provider_error)?,
             )
         } else {
             HostModel::Api(ApiModelProvider::new(updated.clone()).map_err(provider_error)?)
         };
+        if let Some(configs) = &entry.model_configs {
+            *configs.lock().expect("model configs lock poisoned") = session_model_configs;
+        }
         *manager.runtime_mut().model_mut() = model;
         if let Some(alias) = selected_alias {
             let mut policy = entry
@@ -742,18 +761,9 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     let catalog = resolved.model_catalog();
     let provider_config = catalog.provider.clone();
     let aliases = catalog.models.clone();
+    let model_configs = catalog.model_configs.clone();
     let blend_policy = catalog.blend_policy.clone();
-    let mut models = if aliases.is_empty() {
-        std::env::var("ARABICA__MODELS")
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    } else {
-        aliases.keys().cloned().collect::<Vec<_>>()
-    };
+    let mut models = aliases.keys().cloned().collect::<Vec<_>>();
     let initial_selection = blend_policy
         .as_ref()
         .map(|policy| policy.default_model.clone());
@@ -772,6 +782,7 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
         initial: provider_config.clone(),
         models,
         aliases: aliases.clone(),
+        model_configs,
         blend_policy: blend_policy.clone(),
     };
     let model_catalog = catalog.clone();
@@ -1237,6 +1248,7 @@ mod round_trip {
                 initial,
                 models: vec!["mock-model".to_owned()],
                 aliases: BTreeMap::new(),
+                model_configs: BTreeMap::new(),
                 blend_policy: None,
             });
         let (server, channel) = spawn_agent(state);
@@ -1332,6 +1344,7 @@ mod round_trip {
             initial,
             models: vec!["first-model".to_owned(), "second-model".to_owned()],
             aliases: BTreeMap::new(),
+            model_configs: BTreeMap::new(),
             blend_policy: None,
         });
         let session = state
@@ -1382,6 +1395,14 @@ mod round_trip {
             ("fast".to_owned(), "model-fast".to_owned()),
             ("strong".to_owned(), "model-strong".to_owned()),
         ]);
+        let model_configs = aliases
+            .iter()
+            .map(|(alias, model_id)| {
+                let mut config = initial.clone();
+                config.model = model_id.clone();
+                (alias.clone(), config)
+            })
+            .collect::<BTreeMap<_, _>>();
         let policy = BlendRoutingPolicy {
             policy_id: "acp-test".to_owned(),
             version: 1,
@@ -1415,6 +1436,7 @@ mod round_trip {
             initial,
             models: aliases.keys().cloned().collect(),
             aliases,
+            model_configs,
             blend_policy: Some(policy),
         });
         let session = state

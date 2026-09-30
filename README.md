@@ -90,12 +90,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Run the Server
 
-Configure the model provider:
+Configure named provider and model candidates. Keys stay in the environment:
 
 ```bash
-export OPENAI__API_KEY="..."
-export OPENAI__BASE_URL="https://api.openai.com/v1"
-export OPENAI__MODEL="..."
+export ARABICA_PROVIDER_OPENAI_API_KEY="..."
+export ARABICA_PROVIDER_ANTHROPIC_API_KEY="..."
+export ARABICA__PROVIDERS_JSON='{"openai":{"api_type":"open_ai_responses","base_url":"https://api.openai.com/v1"},"anthropic":{"api_type":"anthropic_messages","base_url":"https://api.anthropic.com/v1"}}'
+export ARABICA__BLEND_MODELS_JSON='{"fast":{"provider":"openai","model_id":"gpt-4.1-mini"},"strong":{"provider":"anthropic","model_id":"claude-sonnet-4-5"}}'
+export ARABICA__BLEND_DEFAULT="fast"
 ```
 
 Then start the host:
@@ -106,42 +108,53 @@ cargo run -p arabica-server
 
 ### CLI model blend
 
-The CLI reads `~/.arabica/config.toml`. Define each alias under `[models.<alias>]` and reference aliases in `[blend]`; the provider settings are shared by all models. The selected default alias supplies `OPENAI__MODEL` when no default model environment variable is set.
+The CLI reads `~/.arabica/config.toml`. Define reusable provider settings under `[providers.<name>]`; each `[models.<alias>]` selects a provider and model ID. Blend routes continue to refer to aliases. Provider API keys come from the configured `api_key_env`, or by default from `ARABICA_PROVIDER_<NAME>_API_KEY` (provider name uppercased with non-alphanumeric characters replaced by underscores).
 
 ```toml
-[provider]
+[providers.openai]
+api_type = "open_ai_responses"
 base_url = "https://api.openai.com/v1"
+api_key_env = "ARABICA_PROVIDER_OPENAI_API_KEY"
+max_tokens = 8192
+thinking = "high"
+
+[providers.anthropic]
+api_type = "anthropic_messages"
+base_url = "https://api.anthropic.com/v1"
+api_key_env = "ARABICA_PROVIDER_ANTHROPIC_API_KEY"
+max_tokens = 8192
+request_timeout_secs = 180
+anthropic_cache_static_prefix = true
 
 [models.fast]
+provider = "openai"
 model_id = "gpt-4.1-mini"
 
-[models.balanced]
-model_id = "gpt-4.1"
-
 [models.strong]
-model_id = "gpt-4.1"
+provider = "anthropic"
+model_id = "claude-sonnet-4-5"
 
 [blend]
 policy_id = "coding"
 version = 1
-default_model = "balanced"
+default_model = "fast"
 after_tool_success = "fast"
 after_tool_error = "strong"
 recovery_after_no_progress_steps = 2
 recovery_model = "strong"
 minimum_model_dwell_steps = 2
-tool_call_capable_models = ["fast", "balanced", "strong"]
-typed_completion_capable_models = ["balanced", "strong"]
+tool_call_capable_models = ["fast", "strong"]
+typed_completion_capable_models = ["fast"]
 ```
 
-Set the key with `arabica auth login` or `OPENAI__API_KEY`. The CLI validates every referenced alias at startup. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes the configured aliases as its model selector; changing the selection updates that session's default model while retaining the remaining Blend routes.
+The CLI validates every provider reference, alias, credential source, and API-specific setting at startup. A TOML `api_key` is accepted as a fallback to the environment variable; a config file containing keys must be owner-only (`chmod 600`). `arabica auth login` remains a saved-key fallback for the default provider. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes the configured aliases as its model selector; changing the selection updates that session's default model while retaining the remaining Blend routes.
 
 Optional configuration:
 
 - `ARABICA__PORT`: listening port, default `4096`
-- `ARABICA__BLEND_MODELS`: optional comma-separated `alias=model-id` entries;
-  candidates share the API type, base URL, and key above
-- `ARABICA__BLEND_DEFAULT`: default alias, defaults to the first candidate
+- `ARABICA__PROVIDERS_JSON`: server provider definitions, keyed by provider name
+- `ARABICA__BLEND_MODELS_JSON`: server alias entries with `provider` and `model_id`
+- `ARABICA__BLEND_DEFAULT`: default alias, defaults to the first alias in sorted order
 - `ARABICA__BLEND_AFTER_TOOL_SUCCESS`: optional alias for the next call after
   a successful tool result
 - `ARABICA__BLEND_AFTER_TOOL_ERROR`: optional alias after a tool error
@@ -157,9 +170,6 @@ Optional configuration:
   for typed terminal completion
 - `ARABICA__BLEND_POLICY_ID` and `ARABICA__BLEND_POLICY_VERSION`: immutable
   policy identity recorded with each route
-- `ARABICA__API_TYPE`: provider API dialect, default
-  `open_ai_chat_completions`; `open_ai_responses` enables stateless Responses
-  replay with exact reasoning/output-item retention
 - `ARABICA__TOOL_ROOT`: root directory available to the local runner
 - `ARABICA__COMPACTION_STRATEGY`: `file_backed_gc` (default), `pointer_gc`,
   or `disabled`
@@ -174,10 +184,11 @@ not selected by either executable.
 
 ## Run the CLI
 
-`arabica-cli` builds an `arabica` binary with interactive chat, `arabica acp`
-(Agent Client Protocol v1 over stdio, for editors like Zed), and
-`arabica -p "task"` (one-shot execution). These read the same environment
-variables as the server above. See [`docs/cli.md`](docs/cli.md) for flags,
+`arabica-cli` builds a `structure` binary with two entry points: `structure
+acp` (Agent Client Protocol v1 over stdio, for editors like Zed) and
+`structure -p "task"` (one-shot execution). Both read provider-specific key
+environment variables and the model configuration from `~/.arabica/config.toml`.
+See [`docs/cli.md`](docs/cli.md) for flags,
 exit codes, and a Zed configuration snippet.
 
 ```bash
