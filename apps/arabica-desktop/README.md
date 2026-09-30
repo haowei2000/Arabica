@@ -22,8 +22,11 @@ bash scripts/package.sh debug
 open dist/Arabica.app
 ```
 
-Use `bash scripts/package.sh` for a release build. The script builds the Swift
-client and the Rust CLI, then places both in `dist/Arabica.app`. For local Swift
+Use `bash scripts/package.sh` for an unsigned local release build. The script
+builds the Swift client and the Rust CLI, then places both in `dist/Arabica.app`.
+GitHub tag releases additionally sign, notarize, and staple the application
+before publishing the ZIP. See [RELEASING.md](RELEASING.md) for the required
+GitHub Actions credentials. For local Swift
 development, `swift build` and `swift test` work independently; set
 `ARABICA_EXECUTABLE` to the absolute path of a built `arabica` binary when
 running the Swift executable outside the application bundle.

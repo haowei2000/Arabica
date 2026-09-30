@@ -11,7 +11,8 @@ its SHA-256 sidecar, and installs the `arabica` binary to a user directory.
 the Pages workflow runs it before publishing.
 The homepage also links to the latest Arabica Desktop archives for Apple
 silicon and Intel Macs. Tag releases build and attach both `.app` bundles with
-SHA-256 sidecars; these builds are currently unsigned and not notarized.
+SHA-256 sidecars. The v0.4.0 packages are unsigned; the desktop signing and
+notarization workflow is being prepared for a subsequent release.
 `configuration.html` documents the settings implemented by the CLI and server.
 
 The Source Serif 4 and Source Sans 3 webfonts are from the local Cheers site.

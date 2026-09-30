@@ -71,7 +71,7 @@
       <div class="install-grid">
         <article class="install-method"><p class="small-note">macOS 14+</p><h3>Arabica Desktop</h3><p>Download the native macOS app for your Mac, unzip it, then move <code>Arabica.app</code> to Applications.</p>
           <p class="install-note"><a href="https://github.com/haowei2000/Arabica/releases/latest/download/Arabica-macos-aarch64.zip">Apple silicon (M1–M-series) ↗</a><br><a href="https://github.com/haowei2000/Arabica/releases/latest/download/Arabica-macos-x86_64.zip">Intel Mac ↗</a></p>
-          <p class="install-note">The app includes the Arabica agent. Configure a provider in Settings on first launch. Release builds are currently unsigned and not notarized.</p>
+          <p class="install-note">The app includes the Arabica agent. Configure a provider in Settings on first launch. The current v0.4.0 package is unsigned and not notarized; macOS may block it.</p>
         </article>
         <article class="install-method"><p class="small-note">macOS + Linux</p><h3>Download with curl</h3><p>The installer detects your CPU, checks the release SHA-256 file, and places the binary in <code>~/.local/bin</code>.</p>
           <pre class="code-block"><code>curl -fsSL https://haowei2000.github.io/Arabica/install.sh \
