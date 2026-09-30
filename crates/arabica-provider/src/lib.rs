@@ -200,9 +200,7 @@ impl BlendProvider {
     ) -> Result<Self, ProviderError> {
         let providers = candidates
             .into_iter()
-            .map(|(alias, config)| {
-                ApiModelProvider::new(config).map(|provider| (alias, provider))
-            })
+            .map(|(alias, config)| ApiModelProvider::new(config).map(|provider| (alias, provider)))
             .collect::<Result<Vec<_>, _>>()?;
         Self::new(default_alias, providers)
     }
@@ -3619,6 +3617,29 @@ mod tests {
         assert!(snapshot.contains("strong=opus"));
         assert!(!snapshot.contains("secret"));
         assert!(!snapshot.contains("example"));
+    }
+
+    #[test]
+    fn blend_rejects_duplicate_aliases_with_per_alias_configs() {
+        let config = ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "key",
+            "https://example.test/v1",
+            "model",
+        );
+        let result = BlendProvider::from_configs(
+            "same",
+            [
+                ("same".to_owned(), config.clone()),
+                ("same".to_owned(), config),
+            ],
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate Blend model alias")
+        );
     }
 
     fn sample_request() -> ModelRunRequest {
