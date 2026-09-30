@@ -111,12 +111,17 @@ jobs:
         env:
           ARABICA_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: bash scripts/package.sh release
-      - name: Archive desktop app
-        working-directory: apps/arabica-desktop/dist
+      - name: Sign, notarize, and archive desktop app
+        working-directory: apps/arabica-desktop
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_BASE64 }}
         run: |
-          archive="Arabica-macos-${{ matrix.arch }}.zip"
-          ditto -c -k --sequesterRsrc --keepParent Arabica.app "$archive"
-          shasum -a 256 "$archive" > "$archive.sha256"
+          bash scripts/sign-notarize-and-package.sh "${{ matrix.arch }}"
       - uses: actions/upload-artifact@v4
         with:
           name: Arabica-macos-${{ matrix.arch }}
@@ -181,7 +186,7 @@ jobs:
             echo
             echo "CLI binaries for Linux (x86_64, aarch64), macOS (x86_64, Apple silicon) and Windows (x86_64)."
             echo "The Arabica macOS desktop app is available for Apple silicon and Intel Macs."
-            echo "Desktop archives are currently unsigned and are not notarized."
+            echo "The macOS desktop app is Developer ID signed and notarized by Apple."
             echo "Verify with the \`.sha256\` sidecar files."
             echo
             echo "### Changes"
