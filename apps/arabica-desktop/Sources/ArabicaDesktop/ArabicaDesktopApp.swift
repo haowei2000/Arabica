@@ -556,66 +556,37 @@ private struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Agent", value: "Bundled Arabica ACP")
-                LabeledContent("Workspace", value: model.workspace?.lastPathComponent ?? "None selected")
-            } header: {
-                Text("Arabica")
-            }
-
-            if !config.policyOptions.isEmpty {
-                Section {
-                    Picker("Default policy", selection: $config.defaultPolicy) {
-                        ForEach(config.policyOptions, id: \.self) { policy in
-                            Text(policy).tag(policy)
+                HStack {
+                    Picker("provider", selection: Binding(
+                        get: { config.providerName },
+                        set: { config.selectProvider($0) }
+                    )) {
+                        ForEach(config.providerOptions, id: \.self) { name in
+                            Text(name).tag(name)
                         }
                     }
-                    Text("Used for new conversations. You can choose another available policy for an individual conversation in the composer.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.muted)
-                    if !config.policyStatus.isEmpty {
-                        Text(config.policyStatus)
-                            .font(.system(size: 11))
-                            .foregroundStyle(config.policyStatus.hasPrefix("Default policy saved") ? Palette.muted : .orange)
-                            .textSelection(.enabled)
-                    }
-                    HStack {
-                        Spacer()
-                        Button("Save default policy") { config.saveDefaultPolicy() }
-                    }
-                } header: {
-                    Text("New conversations")
+                    Button("Add provider", systemImage: "plus") { config.addProvider() }
+                        .disabled(!config.canAddEntries)
                 }
-            }
-
-            Section {
-                TextField("Provider name", text: $config.providerName)
-                    .help("A short name used in the provider and model sections.")
-                Picker("API type", selection: $config.apiType) {
+                Picker("api_type", selection: $config.apiType) {
                     let types = ["open_ai_responses", "open_ai_chat_completions", "anthropic_messages"]
                     if !types.contains(config.apiType) { Text(config.apiType).tag(config.apiType) }
                     ForEach(types, id: \.self) { Text($0).tag($0) }
                 }
-                TextField("Base URL", text: $config.baseURL)
+                TextField("base_url", text: $config.baseURL)
                     .textContentType(.URL)
-                TextField("API key environment variable", text: $config.apiKeyEnv)
+                TextField("api_key_env", text: $config.apiKeyEnv)
                     .textContentType(.username)
                 SecureField(config.hasSavedKey && !config.clearSavedKey
-                            ? "Saved key (leave blank to keep)" : "API key", text: $config.apiKey)
+                            ? "api_key (leave blank to keep saved key)" : "api_key", text: $config.apiKey)
                     .textContentType(.password)
                 if config.hasSavedKey {
-                    Toggle("Remove saved API key", isOn: $config.clearSavedKey)
+                    Toggle("Remove saved api_key", isOn: $config.clearSavedKey)
                 }
-                Text("If both are set, the environment variable takes precedence. The API key is never shown after saving.")
+                Text("The environment variable takes precedence over api_key. Secrets are never shown after saving.")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
-            } header: {
-                Text("Provider")
-            }
-
-            Section {
-                TextField("Model alias", text: $config.modelAlias)
-                TextField("Model ID", text: $config.modelID)
-                Picker("Thinking", selection: $config.thinking) {
+                Picker("thinking", selection: $config.thinking) {
                     Text("Provider default").tag("")
                     let values = ConfigEditor.supportedThinkingValues(apiType: config.apiType)
                     if !config.thinking.isEmpty && !values.contains(config.thinking) {
@@ -630,39 +601,122 @@ private struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } header: {
-                Text("Default model")
+                    configSectionHeader("[providers.\(config.providerName)]", detail: "Choose a provider first, then manage its model aliases below")
             }
 
-            if config.isUnsupported {
-                Text(config.status)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.orange)
-            } else if !config.status.isEmpty {
+            Section {
+                TextField("model_id", text: $config.modelID)
+                HStack {
+                    Picker("alias", selection: Binding(
+                        get: { config.modelAlias },
+                        set: { config.selectModel($0) }
+                    )) {
+                        if config.modelsForSelectedProvider.isEmpty {
+                            Text("No aliases yet").tag("")
+                        }
+                        ForEach(config.modelsForSelectedProvider, id: \.self) { alias in
+                            Text(alias).tag(alias)
+                        }
+                    }
+                    Button("Add alias", systemImage: "plus") { config.addModel() }
+                        .disabled(!config.canAddEntries)
+                }
+            } header: {
+                configSectionHeader("Model and alias for [providers.\(config.providerName)]", detail: "Each [models.<alias>] entry maps to this model_id for blend routing")
+            }
+
+            Section {
+                if !config.policyOptions.isEmpty {
+                    Picker("default_policy", selection: Binding(
+                        get: { config.defaultPolicy },
+                        set: { config.selectPolicy($0) }
+                    )) {
+                        ForEach(config.policyOptions, id: \.self) { policy in
+                            Text(policy).tag(policy)
+                        }
+                    }
+                    if !config.modelOptions.contains(config.policyDefaultModel), !config.policyDefaultModel.isEmpty {
+                        Text("Policy default_model references missing alias \(config.policyDefaultModel). Choose a configured model below.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                    }
+                    Text("New conversations use this policy. A conversation can choose another available policy in the composer.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.muted)
+                } else {
+                    modelAliasPicker(label: "default_model")
+                }
+            } header: {
+                configSectionHeader("[blend]", detail: "Selects the default policy for new sessions")
+            }
+
+            if !config.policyOptions.isEmpty {
+                Section {
+                    modelAliasPicker(label: "default_model")
+                    Text("The policy's routes and capability lists remain in config.toml and are preserved when the form saves.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.muted)
+                } header: {
+                    configSectionHeader("[blend.policies.\(config.defaultPolicy)]", detail: "Policy fields for the selected default policy")
+                }
+            }
+
+            Section {
+                LabeledContent("Agent", value: "Bundled Arabica ACP")
+                LabeledContent("Workspace", value: model.workspace?.lastPathComponent ?? "None selected")
+                Text("Runtime context is managed by the desktop app, not config.toml.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.muted)
+            } header: {
+                Text("Desktop context")
+            }
+
+            if !config.status.isEmpty {
                 Text(config.status)
                     .font(.system(size: 12))
                     .foregroundStyle(config.status.hasPrefix("Saved") ? Palette.muted : .orange)
                 .textSelection(.enabled)
             }
 
-            if config.isUnsupported {
-                Text("Advanced provider, model, policy routes, and MCP settings stay in this file. Open it here to edit them without the basic form rewriting those sections.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("Provider and model selectors cover every configured table. Other config.toml fields, including policy routes and [[mcp]] servers, are kept when this form saves.")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack {
-                Button(config.isUnsupported ? "Open advanced config.toml" : "Open config.toml") { config.openConfigFile() }
+                Button("Open config.toml") { config.openConfigFile() }
                 Spacer()
                 Button("Reload") { config.reload() }
-                Button("Save") { config.save() }
+                Button("Save config.toml") { config.save() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(config.isUnsupported || config.isSaving)
+                    .disabled(config.isSaving)
             }
         }
         .formStyle(.grouped)
         .padding(18)
         .frame(width: 610, height: 650)
         .onAppear { config.reload() }
+    }
+
+    private func configSectionHeader(_ path: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(path)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func modelAliasPicker(label: String) -> some View {
+        Picker(label, selection: $config.policyDefaultModel) {
+            ForEach(config.modelOptions, id: \.self) { alias in
+                Text(alias).tag(alias)
+            }
+            if !config.policyDefaultModel.isEmpty && !config.modelOptions.contains(config.policyDefaultModel) {
+                Text("Missing: \(config.policyDefaultModel)").tag(config.policyDefaultModel)
+            }
+        }
     }
 }

@@ -31,6 +31,7 @@ final class ConfigEditorTests: XCTestCase {
             ],
             thinking: "high",
             defaultPolicy: "",
+            defaultModelAlias: "default",
             newAPIKey: nil,
             removeAPIKey: false
         )
@@ -76,6 +77,7 @@ final class ConfigEditorTests: XCTestCase {
             modelValues: ["provider": ConfigDocument.quote("primary"), "model_id": ConfigDocument.quote("model-v2")],
             thinking: "",
             defaultPolicy: "review",
+            defaultModelAlias: "default",
             newAPIKey: nil,
             removeAPIKey: false
         )
@@ -84,6 +86,52 @@ final class ConfigEditorTests: XCTestCase {
         XCTAssertTrue(result.contains("[blend.policies.review]\nversion = 1\ndefault_model = \"default\""))
         XCTAssertTrue(result.contains("[blend.policies.coding]\nversion = 1\ndefault_model = \"default\"\nafter_tool_error = \"default\""))
         XCTAssertFalse(result.contains("[blend]\ndefault_policy = \"review\"\ndefault_model"))
+    }
+
+    func testUpdatingOneModelPreservesOtherCatalogEntriesAndIndependentPolicyDefault() throws {
+        let source = """
+        [providers.fast]
+        api_type = "open_ai_responses"
+        base_url = "https://fast.example.test/v1"
+
+        [providers.strong]
+        api_type = "anthropic_messages"
+        base_url = "https://strong.example.test/v1"
+
+        [models.quick]
+        provider = "fast"
+        model_id = "quick-v1"
+
+        [models.deep]
+        provider = "strong"
+        model_id = "deep-v1"
+
+        [blend]
+        default_policy = "coding"
+
+        [blend.policies.coding]
+        default_model = "deep"
+        after_tool_error = "quick"
+        """
+
+        let result = try ConfigDocument(source).updating(
+            oldProviderSection: "providers.fast",
+            newProviderSection: "providers.fast",
+            oldModelSection: "models.quick",
+            newModelSection: "models.quick",
+            providerValues: ["base_url": ConfigDocument.quote("https://fast.example.test/v2")],
+            modelValues: ["provider": ConfigDocument.quote("fast"), "model_id": ConfigDocument.quote("quick-v2")],
+            thinking: "",
+            defaultPolicy: "coding",
+            defaultModelAlias: "deep",
+            newAPIKey: nil,
+            removeAPIKey: false
+        )
+
+        XCTAssertTrue(result.contains("[providers.strong]\napi_type = \"anthropic_messages\"\nbase_url = \"https://strong.example.test/v1\""))
+        XCTAssertTrue(result.contains("[models.deep]\nprovider = \"strong\"\nmodel_id = \"deep-v1\""))
+        XCTAssertTrue(result.contains("[models.quick]\nprovider = \"fast\"\nmodel_id = \"quick-v2\""))
+        XCTAssertTrue(result.contains("[blend.policies.coding]\ndefault_model = \"deep\"\nafter_tool_error = \"quick\""))
     }
 
     func testSavingDefaultPolicyPreservesEveryRouteAndUnrelatedSetting() throws {
