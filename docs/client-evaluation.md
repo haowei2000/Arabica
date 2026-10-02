@@ -76,7 +76,8 @@ no worker counters or refresh acceptance because this bridge does not own the
 CLI/ACP worker. The endpoint is an optional read exposure through the host's
 existing transport boundary.
 
-This repository still contains no desktop client implementation. These are
-backend integration points, not a desktop UI. Its HTTP Agent sessions also do
+The native macOS client lives in `apps/arabica-desktop` and talks to ACP. These
+changes provide its backend integration points; they do not add an evaluation
+view to the SwiftUI client. HTTP Agent sessions also do
 not automatically persist JSONL or schedule evaluation; the HTTP bridge reads
 the explicitly configured CLI/ACP evaluation database.
