@@ -281,6 +281,7 @@ dependencies = [
 name = "arabica-server"
 version = "0.1.0"
 dependencies = [
+ "arabica-adapters",
  "arabica-protocol",
  "arabica-provider",
  "arabica-runner",

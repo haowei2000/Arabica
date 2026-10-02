@@ -15,7 +15,7 @@ pub mod auth;
 mod checkpoint;
 pub mod config;
 mod context;
-mod evaluation;
+pub mod evaluation;
 pub mod host;
 mod instructions;
 pub mod interactive;

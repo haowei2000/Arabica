@@ -397,3 +397,8 @@ Both entry points derive a `WorkspaceId` from the session's working directory
 `crates/arabica-cli/src/host.rs::workspace_id_for`). The same project
 directory produces the same workspace id regardless of which binding opened
 it or how many times.
+
+Evaluation reports can be queried without model credentials using
+`arabica evaluations show SESSION_ID --json`. See
+[Client evaluation queries](client-evaluation.md) for CLI, ACP extensions, and
+the desktop HTTP bridge.

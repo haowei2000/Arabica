@@ -133,3 +133,6 @@ hosts can compose `EvaluationWorker` through `SessionEventObserver` after their
 canonical file store. `EvaluationWorker::start_with_registry` also accepts a
 registry factory for compiled custom strategies; the factory and strategy
 execution both run on the evaluation thread.
+
+Structured CLI queries, optional ACP evaluation extensions, and the read-only
+HTTP bridge are documented in [Client evaluation queries](client-evaluation.md).

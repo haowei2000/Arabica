@@ -13,8 +13,8 @@
 mod evaluation_store;
 mod file_session_store;
 pub use evaluation_store::{
-    EvaluationCheckpoint, EvaluationWorker, EvaluationWorkerStatus, SavedEvaluation,
-    SqliteEvaluationStore,
+    EvaluationCheckpoint, EvaluationView, EvaluationWorker, EvaluationWorkerStatus,
+    SavedEvaluation, SqliteEvaluationStore,
 };
 
 pub use file_session_store::{

@@ -36,6 +36,24 @@ pub struct SavedEvaluation {
 /// Owned and used exclusively by evaluation workers, never runtime observers.
 pub struct SqliteEvaluationStore(Connection);
 impl SqliteEvaluationStore {
+    /// Pure query: never creates a database, migrates it, or runs evaluation.
+    pub fn read_latest(
+        path: &Path,
+        workspace: &WorkspaceId,
+        session: &SessionId,
+    ) -> StoreResult<Option<SavedEvaluation>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let connection =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_millis(50))?;
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version != 1 {
+            return Err("unsupported evaluation database schema".into());
+        }
+        Self(connection).latest(workspace, session)
+    }
     pub fn open(path: &Path) -> StoreResult<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -146,7 +164,7 @@ impl SqliteEvaluationStore {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
 pub struct EvaluationWorkerStatus {
     pub submitted: u64,
     pub dropped: u64,
@@ -183,8 +201,26 @@ impl WorkerState {
 }
 
 pub struct EvaluationWorker {
-    sender: mpsc::SyncSender<EvaluationCheckpoint>,
+    sender: mpsc::SyncSender<EvaluationJob>,
     state: Arc<WorkerState>,
+}
+
+enum EvaluationJob {
+    Checkpoint(EvaluationCheckpoint),
+    Refresh {
+        workspace: WorkspaceId,
+        session: SessionId,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EvaluationView {
+    pub schema_version: u64,
+    pub workspace_id: WorkspaceId,
+    pub session_id: SessionId,
+    pub worker_status: Option<EvaluationWorkerStatus>,
+    pub refresh_accepted: Option<bool>,
+    pub report: Option<SavedEvaluation>,
 }
 impl EvaluationWorker {
     /// Startup, file reads, config loading, evaluation and SQLite all run on
@@ -277,14 +313,43 @@ impl EvaluationWorker {
                         }
                     }
                 }
-                for checkpoint in receiver {
-                    evaluate(checkpoint);
+                for job in receiver {
+                    match job {
+                        EvaluationJob::Checkpoint(checkpoint) => evaluate(checkpoint),
+                        EvaluationJob::Refresh { workspace, session } => {
+                            match FileSessionStore::read_session(&home, &workspace, &session) {
+                                Ok(stored) => {
+                                    if let Some(event) = stored
+                                        .events
+                                        .iter()
+                                        .rev()
+                                        .find(|event| terminal(&event.event))
+                                    {
+                                        evaluate(EvaluationCheckpoint {
+                                            workspace_id: workspace,
+                                            session_id: session,
+                                            sequence: event.sequence,
+                                        });
+                                    }
+                                }
+                                Err(_) => {
+                                    worker_state.failed.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                    }
                 }
             })?;
         Ok(Self { sender, state })
     }
     pub fn submit(&self, checkpoint: EvaluationCheckpoint) -> bool {
-        match self.sender.try_send(checkpoint) {
+        self.enqueue(EvaluationJob::Checkpoint(checkpoint))
+    }
+    pub fn refresh(&self, workspace: WorkspaceId, session: SessionId) -> bool {
+        self.enqueue(EvaluationJob::Refresh { workspace, session })
+    }
+    fn enqueue(&self, job: EvaluationJob) -> bool {
+        match self.sender.try_send(job) {
             Ok(()) => {
                 self.state.submitted.fetch_add(1, Ordering::Relaxed);
                 true
@@ -460,6 +525,15 @@ mod tests {
         drop(db);
         let db = SqliteEvaluationStore::open(&path).unwrap();
         assert_eq!(
+            SqliteEvaluationStore::read_latest(
+                &path,
+                &checkpoint().workspace_id,
+                &checkpoint().session_id
+            )
+            .unwrap(),
+            Some(saved.clone())
+        );
+        assert_eq!(
             db.latest(&checkpoint().workspace_id, &checkpoint().session_id)
                 .unwrap(),
             Some(saved)
@@ -467,6 +541,38 @@ mod tests {
         drop(db);
         std::fs::remove_dir_all(home).unwrap();
     }
+    #[test]
+    fn refresh_uses_latest_persisted_checkpoint_without_runtime_access() {
+        let home = home();
+        write_history(&home);
+        let worker =
+            EvaluationWorker::start(home.clone(), 2, || Ok(EvaluationConfig::default())).unwrap();
+        wait_for(|| worker.status().completed == 1);
+        let path = FileSessionStore::session_path(
+            &home,
+            &checkpoint().workspace_id,
+            &checkpoint().session_id,
+        );
+        let store = FileSessionStore::open_existing(&path).unwrap();
+        store.observe(
+            &event(3, Event::RunCompleted { output: None }),
+            EventVisibility::Internal,
+        );
+        assert!(worker.refresh(checkpoint().workspace_id, checkpoint().session_id));
+        wait_for(|| worker.status().completed == 2);
+        assert_eq!(
+            worker
+                .latest(&checkpoint().workspace_id, &checkpoint().session_id)
+                .unwrap()
+                .checkpoint
+                .sequence,
+            3
+        );
+        drop(store);
+        drop(worker);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
     #[test]
     fn unsupported_schema_is_rejected_without_modification() {
         let home = home();
