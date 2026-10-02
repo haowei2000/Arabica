@@ -40,6 +40,116 @@ pub(crate) fn report(session: &InteractiveSession) -> Result<String, Box<dyn Err
             "Last observed archive preparation error: {error}\n"
         ));
     }
+    let Some(worker) = crate::evaluation::worker(&session.arabica_home) else {
+        report.push_str("Background evaluation unavailable; Agent execution is unaffected.\n");
+        return Ok(report);
+    };
+    if let Some(event) = stored.events.iter().rev().find(|event| {
+        matches!(
+            event.event,
+            Event::RunCompleted { .. } | Event::RunFailed { .. } | Event::RunCancelled
+        )
+    }) {
+        worker.submit(arabica_adapters::EvaluationCheckpoint {
+            workspace_id: workspace.clone(),
+            session_id: session.session_id.clone(),
+            sequence: event.sequence,
+        });
+    }
+    let status = worker.status();
+    let _ = writeln!(
+        report,
+        "\nBACKGROUND EVALUATION · completed={} failed={} dropped={}",
+        status.completed, status.failed, status.dropped
+    );
+    let Some(saved) = worker.latest(&workspace, &session.session_id) else {
+        report.push_str("No cached evaluation yet; evaluation is queued asynchronously.\n");
+        return Ok(report);
+    };
+    let _ = writeln!(
+        report,
+        "Cached evaluation through event {} (may be stale).",
+        saved.checkpoint.sequence
+    );
+    let context = saved.context;
+    let models = saved.model;
+    let _ = writeln!(
+        report,
+        "\nCONTEXT EVALUATION · {} v{}",
+        context.plugin.id, context.plugin.version
+    );
+    for diagnostic in &context.data.diagnostics {
+        let _ = writeln!(report, "Diagnostic: {diagnostic:?}");
+    }
+    for group in context.data.groups {
+        let _ = writeln!(
+            report,
+            "Group: {} · runs: {}",
+            group.group_id, group.sample_runs
+        );
+        let metrics = group.report;
+        let _ = writeln!(
+            report,
+            "Runs without context telemetry: {}",
+            metrics.runs_without_snapshot
+        );
+        let _ = writeln!(
+            report,
+            "Unknown context call rejections: {}",
+            metrics.unknown_context_rejections
+        );
+        for (identity, counts) in metrics.items {
+            let _ = writeln!(
+                report,
+                "{identity}: eligible={} enabled={} folded={} unfolded={} unfold_count={} activated={} calls={} success={} failure={} unknown={} rejected={} permission_denied={} reused={}",
+                counts.eligible_runs,
+                counts.enabled_runs,
+                counts.folded_runs,
+                counts.exposed_runs,
+                counts.unfold_count,
+                counts.activated_runs,
+                counts.started_calls,
+                counts.successful_calls,
+                counts.failed_calls,
+                counts.unknown_call_outcomes,
+                counts.rejected_calls,
+                counts.permission_denied_calls,
+                counts.reused_calls
+            );
+        }
+    }
+    let _ = writeln!(
+        report,
+        "\nMODEL EVALUATION · {} v{}",
+        models.plugin.id, models.plugin.version
+    );
+    for diagnostic in &models.data.diagnostics {
+        let _ = writeln!(report, "Diagnostic: {diagnostic:?}");
+    }
+    for group in models.data.groups {
+        let _ = writeln!(
+            report,
+            "Group: {} · runs: {} · policy: {} · registry: {}",
+            group.group_id,
+            group.sample_runs,
+            group.routing_policy_fingerprint,
+            group.model_registry_fingerprint
+        );
+        for (alias, counts) in group.report.models {
+            let _ = writeln!(
+                report,
+                "{alias}: selected={} observed={} provider_failures={} unknown={} elapsed_ms={} input_tokens={} output_tokens={}",
+                counts.selected_calls,
+                counts.observed_calls,
+                counts.provider_failures,
+                counts.calls_with_unknown_outcome,
+                counts.elapsed_ms_total,
+                counts.input_tokens,
+                counts.output_tokens
+            );
+        }
+    }
+    report.push_str("Run outcomes after exposure are associations, not causal contribution.\n");
     Ok(report)
 }
 

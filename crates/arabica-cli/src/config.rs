@@ -26,6 +26,19 @@ struct UserConfig {
     models: BTreeMap<String, UserModel>,
     #[serde(default)]
     blend: Option<UserBlend>,
+    #[serde(default)]
+    context: Option<arabica_runtime::ContextPolicy>,
+    #[serde(default)]
+    skills: UserSkills,
+    #[serde(default)]
+    evaluation: Option<toml::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserSkills {
+    #[serde(default)]
+    roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +381,48 @@ pub fn user_config_mcp(home: &Path) -> Result<Vec<McpServer>, Box<dyn std::error
         .iter()
         .map(|server| server.to_mcp_server().map_err(Into::into))
         .collect()
+}
+
+/// Independent context governance; live tool references resolve after MCP discovery.
+pub fn user_config_context(
+    home: &Path,
+) -> Result<Option<arabica_runtime::ContextPolicy>, Box<dyn std::error::Error>> {
+    let policy = read_user_config(home)?.context;
+    if let Some(policy) = &policy {
+        policy.validate()?;
+    }
+    Ok(policy)
+}
+
+pub fn user_config_evaluation(
+    home: &Path,
+) -> Result<arabica_runtime::EvaluationConfig, Box<dyn std::error::Error>> {
+    let config: arabica_runtime::EvaluationConfig = read_user_config(home)?
+        .evaluation
+        .map(toml::Value::try_into)
+        .transpose()?
+        .unwrap_or_default();
+    let registry = arabica_runtime::EvaluationRegistry::builtins(&config)?;
+    let evidence = arabica_runtime::EvaluationEvidence::from_history(&[]);
+    registry.context(&config.context_strategy, &evidence)?;
+    registry.model(&config.model_strategy, &evidence)?;
+    Ok(config)
+}
+
+/// Relative skill roots resolve against ARABICA_HOME, never the model's input.
+pub fn user_config_skill_roots(home: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    Ok(read_user_config(home)?
+        .skills
+        .roots
+        .into_iter()
+        .map(|root| {
+            if root.is_absolute() {
+                root
+            } else {
+                home.join(root)
+            }
+        })
+        .collect())
 }
 
 /// Resolve all named providers and Blend aliases from the user configuration.
@@ -940,6 +995,34 @@ minimum_model_dwell_steps = 3
     }
 
     #[test]
+    fn skill_roots_and_initial_modes_resolve_from_user_configuration() {
+        let root =
+            std::env::temp_dir().join(format!("structure-skill-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            user_config_path(&root),
+            r#"
+[skills]
+roots = ["skills"]
+[context]
+policy_id = "test"
+version = 1
+include = ["skill:review"]
+unfolded = ["skill:review"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            user_config_skill_roots(&root).unwrap(),
+            vec![root.join("skills")]
+        );
+        let policy = user_config_context(&root).unwrap().unwrap();
+        assert_eq!(policy.default_mode, arabica_protocol::ContextMode::Folded);
+        assert!(policy.unfolded.contains("skill:review"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn aliases_resolve_distinct_provider_dialects_and_credentials() {
         let root =
             std::env::temp_dir().join(format!("structure-multi-provider-{}", uuid::Uuid::now_v7()));
@@ -1025,6 +1108,41 @@ default_model = "fast"
     }
 
     #[test]
+    fn context_policy_parses_independently_and_rejects_invalid_sets() {
+        let root =
+            std::env::temp_dir().join(format!("structure-context-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            user_config_path(&root),
+            r#"
+[context]
+policy_id = "read-only"
+version = 1
+base_sets = ["files"]
+exclude = ["tool:write_file"]
+disabled_sources = ["mcp"]
+[context.sets]
+files = ["tool:read_file", "tool:write_file"]
+"#,
+        )
+        .unwrap();
+        let policy = user_config_context(&root).unwrap().unwrap();
+        assert!(policy.sets["files"].contains("tool:read_file"));
+        assert!(
+            policy
+                .disabled_sources
+                .contains(&arabica_protocol::ContextSourceKind::Mcp)
+        );
+        fs::write(
+            user_config_path(&root),
+            "[context]\npolicy_id='x'\nversion=1\nbase_sets=['missing']\n",
+        )
+        .unwrap();
+        assert!(user_config_context(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn model_alias_rejects_an_unknown_provider_before_resolving_credentials() {
         let root = std::env::temp_dir().join(format!(
             "structure-unknown-provider-{}",
@@ -1052,6 +1170,41 @@ default_model = "fast"
             .unwrap_err()
             .to_string();
         assert!(error.contains("default_model alias"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn evaluation_config_selects_independent_strategies_and_rejects_unknown_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "structure-evaluation-config-{}",
+            uuid::Uuid::now_v7()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(
+            user_config_evaluation(&root).unwrap(),
+            arabica_runtime::EvaluationConfig::default()
+        );
+        fs::write(user_config_path(&root), "[evaluation]\ncontext_strategy='behavior-clusters'\nmodel_strategy='observational'\nmax_clusters=2\nmin_cluster_runs=4\n").unwrap();
+        let config = user_config_evaluation(&root).unwrap();
+        assert_eq!(config.context_strategy, "behavior-clusters");
+        assert_eq!(config.model_strategy, "observational");
+        assert_eq!(config.max_clusters, 2);
+        fs::write(
+            user_config_path(&root),
+            "[evaluation]\nmodel_strategy='missing'\n",
+        )
+        .unwrap();
+        assert!(user_config_evaluation(&root).is_err());
+        fs::write(user_config_path(&root), "[evaluation]\nmax_clusters=0\n").unwrap();
+        assert!(user_config_evaluation(&root).is_err());
+        fs::write(
+            user_config_path(&root),
+            "[evaluation]\nmax_clusters='invalid-type'\nunknown_field=true\n",
+        )
+        .unwrap();
+        assert!(user_config_evaluation(&root).is_err());
+        assert!(user_config_context(&root).unwrap().is_none());
+        assert!(user_config_skill_roots(&root).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -16,6 +16,7 @@ dotenvy = "0.15"
 futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+arabica-adapters = { version = "0.1.0", path = "../arabica-adapters" }
 arabica-provider = { version = "0.1.0", path = "../arabica-provider" }
 arabica-protocol = { version = "0.1.0", path = "../arabica-protocol" }
 arabica-runner = { version = "0.1.0", path = "../arabica-runner" }

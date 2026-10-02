@@ -78,6 +78,11 @@ enum Commands {
         #[command(subcommand)]
         action: AuthAction,
     },
+    /// Query persisted evaluation reports without a model provider.
+    Evaluations {
+        #[command(subcommand)]
+        action: arabica_cli::evaluation::EvaluationAction,
+    },
     /// Inspect sessions stored under $ARABICA_HOME.
     Sessions {
         #[command(subcommand)]
@@ -99,6 +104,14 @@ async fn run(cli: Cli) -> i32 {
     } = cli;
 
     // These commands need no working model provider.
+    if let Some(Commands::Evaluations { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the evaluations subcommand");
+            2
+        } else {
+            arabica_cli::evaluation::run(action)
+        };
+    }
     if let Some(Commands::Sessions { action }) = command {
         return if print_args.print.is_some() {
             eprintln!("error: -p cannot be combined with the sessions subcommand");
@@ -146,6 +159,7 @@ async fn run(cli: Cli) -> i32 {
                 1
             }
         },
+        (Some(Commands::Evaluations { .. }), _) => unreachable!("evaluations returns early"),
         (Some(Commands::Sessions { .. }), _) => {
             unreachable!("Commands::Sessions returns early above")
         }
