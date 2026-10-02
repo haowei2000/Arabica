@@ -1085,10 +1085,12 @@ fn handle_prompt(
         HostModel::Blend(_) => {}
         HostModel::Scripted(_) => {}
     }
-    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
         Arc::clone(&entry.store) as Arc<dyn SessionEventObserver>,
         acp_observer as Arc<dyn SessionEventObserver>,
-    ]));
+    ];
+    crate::evaluation::attach(&mut observers, &state.arabica_home);
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
     let control = DispatchControl {
         run: RunControl {
             cancellation: Some(cancellation),

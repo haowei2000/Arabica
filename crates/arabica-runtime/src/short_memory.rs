@@ -488,6 +488,18 @@ fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
     let mut active_tool_by_run = HashMap::<String, String>::new();
 
     for event in events {
+        // Governance is audit-only evidence, not agent memory or archive content.
+        if matches!(
+            event.event,
+            Event::ContextRunResolved { .. }
+                | Event::ContextRequestExposed { .. }
+                | Event::ContextItemUnfolded { .. }
+                | Event::ContextCallStarted { .. }
+                | Event::ContextCallRejected { .. }
+        ) {
+            continue;
+        }
+
         let (context_key, context_kind) = batch_identity(event, &mut active_tool_by_run);
         let index = if let Some(index) = batch_indexes.get(&context_key) {
             *index
@@ -668,6 +680,14 @@ fn batch_identity(
         .as_ref()
         .map_or_else(|| "none".to_owned(), ToString::to_string);
     match &envelope.event {
+        Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. } => (
+            format!("run:{run}:context-audit"),
+            MemoryBatchKind::Transient,
+        ),
         Event::MessageAccepted { .. }
         | Event::RunScheduled
         | Event::RunStarted
@@ -976,6 +996,11 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::SessionClosed
         | Event::RunScheduled
         | Event::RunStarted
+        | Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. }
         | Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
         | Event::ModelCallObserved { .. }
@@ -1127,6 +1152,11 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         | Event::ModelResponseRejected { .. }
         | Event::ModelResponseNormalized { .. } => (MemoryClass::Control, None, false),
         Event::ModelRequestPrepared { .. }
+        | Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. }
         | Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
         | Event::ModelCallObserved { .. }
@@ -1190,6 +1220,11 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
 
 fn event_type_name(event: &Event) -> &'static str {
     match event {
+        Event::ContextRunResolved { .. } => "context.run.resolved",
+        Event::ContextRequestExposed { .. } => "context.request.exposed",
+        Event::ContextItemUnfolded { .. } => "context.item.unfolded",
+        Event::ContextCallStarted { .. } => "context.call.started",
+        Event::ContextCallRejected { .. } => "context.call.rejected",
         Event::SessionCreated { .. } => "session.created",
         Event::SessionForked { .. } => "session.forked",
         Event::SessionResumed => "session.resumed",
@@ -1328,6 +1363,9 @@ fn event_semantic_key(event: &Event) -> Option<String> {
         Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
         | Event::ModelCallObserved { .. } => None,
+        Event::ContextRunResolved { .. } | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. } | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. } => None,
         Event::ModelResponseItem {
             model_step,
             item_index,
@@ -1581,6 +1619,39 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn context_audit_does_not_enter_memory_batches_or_transcript() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ContextRequestExposed {
+                    model_step: 0,
+                    decision_id: "d".into(),
+                    context_ids: vec!["tool:private-context".into()],
+                    folded_ids: Vec::new(),
+                },
+            ),
+            envelope(
+                2,
+                Event::ContextCallStarted {
+                    call_id: "c".into(),
+                    decision_id: "d".into(),
+                    context_id: "tool:private-context".into(),
+                },
+            ),
+            envelope(
+                3,
+                Event::ContextCallRejected {
+                    call_id: "x".into(),
+                    decision_id: "d".into(),
+                    context_id: None,
+                },
+            ),
+        ];
+        assert!(build_batches(&events).is_empty());
+        assert!(exact_transcript_entries(&events, &RunId::new("other-run")).is_empty());
+    }
 
     fn envelope(sequence: u64, event: Event) -> EventEnvelope {
         envelope_for_run(sequence, "run-1", event)

@@ -565,10 +565,12 @@ impl InteractiveSession {
         let terminal = TerminalObserver::new();
         self.refresh_instructions();
         set_progress(self.manager.runtime_mut().model_mut(), terminal.sink());
-        let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+        let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
             Arc::clone(&self.store) as Arc<dyn SessionEventObserver>,
             Arc::clone(&terminal) as Arc<dyn SessionEventObserver>,
-        ]));
+        ];
+        crate::evaluation::attach(&mut observers, &self.arabica_home);
+        let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
         let cancellation = RunCancellation::new();
         let ctrl_c = tokio::spawn({
             let cancellation = cancellation.clone();

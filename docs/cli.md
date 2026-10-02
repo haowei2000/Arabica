@@ -1,5 +1,7 @@
 # `arabica-cli`
 
+Tool and MCP selection policies are described in [Context governance](context-governance.md).
+
 `arabica-cli` builds one binary, `arabica`, with three ways to drive the
 same coding agent: `arabica` (interactive terminal chat), `arabica acp`
 (Agent Client Protocol v1 over stdio, for editors), and `arabica -p`
