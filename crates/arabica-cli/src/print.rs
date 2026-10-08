@@ -7,16 +7,17 @@
 //! and `--read-only` are the only controls, decided once at startup, not
 //! per call. See `docs/runtime_core_architecture.md` Appendix B.
 //!
-//! Every run persists to `$ARABICA_HOME` (`arabica_adapters::FileSessionStore`)
+//! Every run persists to `$ARABICA_HOME` (`arabica_adapters::SqliteSessionStore`)
 //! so a later `--continue`/`--resume` has something to pick back up --
 //! `arabica sessions list` (`crates/arabica-cli/src/sessions.rs`) reads
-//! the same files to show what is available.
+//! the same database to show what is available.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arabica_adapters::{FileSessionStore, NewSession, StoredSession};
+#[cfg(test)]
+use arabica_adapters::SqliteSessionStore;
 use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, SessionStatus, WorkspaceId,
 };
@@ -26,6 +27,7 @@ use arabica_runtime::{BlendRoutingPolicy, RunCancellation, RunControl};
 use arabica_session::{
     DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver, SessionManager,
 };
+use arabica_session::{NewSession, SessionStore, StoredSession};
 
 use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, workspace_id_for};
 
@@ -231,7 +233,8 @@ pub async fn run_with_model(
     // (EXIT_CONFIG_ERROR) rather than folded into run_task's own failure
     // handling (EXIT_FAILED, for a provider or runtime problem once a run
     // is actually under way).
-    let resumed = match resolve_resume(&options.resume, &arabica_home, &workspace_id) {
+    let session_store = crate::host::session_store(&arabica_home);
+    let resumed = match resolve_resume(&options.resume, session_store.as_ref(), &workspace_id) {
         Ok(resumed) => resumed,
         Err(message) => {
             eprintln!("error: {message}");
@@ -248,6 +251,7 @@ pub async fn run_with_model(
         arabica_home,
         workspace_id,
         resumed,
+        session_store,
         mcp,
     )
     .await
@@ -266,28 +270,27 @@ pub async fn run_with_model(
 /// directly testable without spinning up a model or a `SessionManager`.
 pub(crate) fn resolve_resume(
     resume: &Resume,
-    arabica_home: &Path,
+    session_store: &dyn SessionStore,
     workspace_id: &WorkspaceId,
 ) -> Result<Option<StoredSession>, String> {
     match resume {
         Resume::None => Ok(None),
         Resume::Continue => {
-            let listings = FileSessionStore::list_sessions(arabica_home, Some(workspace_id))
+            let listings = session_store
+                .list(Some(workspace_id))
                 .map_err(|error| error.to_string())?;
             let Some(most_recent) = listings.first() else {
                 return Err("no session to continue in this workspace".to_owned());
             };
-            FileSessionStore::read(&most_recent.path)
+            session_store
+                .read(&most_recent.header.workspace_id, &most_recent.header.id)
                 .map(Some)
                 .map_err(|error| error.to_string())
         }
-        Resume::Id(id) => FileSessionStore::read_session(
-            arabica_home,
-            workspace_id,
-            &arabica_protocol::SessionId::new(id.clone()),
-        )
-        .map(Some)
-        .map_err(|error| format!("could not resume session {id}: {error}")),
+        Resume::Id(id) => session_store
+            .read(workspace_id, &arabica_protocol::SessionId::new(id.clone()))
+            .map(Some)
+            .map_err(|error| format!("could not resume session {id}: {error}")),
     }
 }
 
@@ -301,6 +304,7 @@ async fn run_task(
     arabica_home: PathBuf,
     workspace_id: WorkspaceId,
     resumed: Option<StoredSession>,
+    session_store: Arc<dyn SessionStore>,
     mcp: crate::mcp::McpTools,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
     let runtime: HostRuntime = crate::host::build_host_runtime_with_blend(
@@ -317,13 +321,12 @@ async fn run_task(
     let (session_id, store) = match resumed {
         Some(stored) => {
             let session_id = stored.header.id.clone();
-            let path = FileSessionStore::session_path(&arabica_home, &workspace_id, &session_id);
+            let store = session_store.open(&workspace_id, &session_id)?;
             manager.restore_session(
                 stored.into_snapshot(),
                 CommandId::new(uuid::Uuid::now_v7().to_string()),
-                None,
+                Some(store.as_ref()),
             )?;
-            let store = FileSessionStore::open_existing(&path)?;
             if manager
                 .session(&session_id)
                 .is_some_and(|session| session.status == SessionStatus::Suspended)
@@ -358,16 +361,13 @@ async fn run_task(
                 .next()
                 .expect("session.create always produces at least one Event");
             let session_id = session_created.session_id.clone();
-            let store = FileSessionStore::create(
-                &arabica_home,
-                NewSession {
-                    session_id: &session_id,
-                    workspace_id: &workspace_id,
-                    cwd: runner_root,
-                    profile: None,
-                    instructions_sha256: Some(&instructions_sha256),
-                },
-            )?;
+            let store = session_store.create(NewSession {
+                session_id: &session_id,
+                workspace_id: &workspace_id,
+                cwd: runner_root,
+                profile: None,
+                instructions_sha256: Some(&instructions_sha256),
+            })?;
             // dispatch's own return value already has this Event; nothing
             // observed it live because the store could not exist before its
             // own session_id -- allocated inside that same dispatch call --
@@ -383,10 +383,8 @@ async fn run_task(
         OutputFormat::Text => Arc::new(TextProgressObserver),
         OutputFormat::Jsonl => Arc::new(JsonlObserver),
     };
-    let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
-        Arc::new(store) as Arc<dyn SessionEventObserver>,
-        progress_observer,
-    ];
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> =
+        vec![store as Arc<dyn SessionEventObserver>, progress_observer];
     crate::evaluation::attach(&mut observers, &arabica_home);
     let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
 
@@ -449,6 +447,74 @@ fn report(outcome: Outcome) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct ReadOnlyStore(arabica_session::SessionHeader);
+
+    impl SessionStore for ReadOnlyStore {
+        fn create(
+            &self,
+            _: NewSession<'_>,
+        ) -> Result<Arc<dyn arabica_session::SessionWriter>, arabica_session::StoreError> {
+            panic!("resume lookup must not create a writer")
+        }
+        fn open(
+            &self,
+            _: &WorkspaceId,
+            _: &arabica_protocol::SessionId,
+        ) -> Result<Arc<dyn arabica_session::SessionWriter>, arabica_session::StoreError> {
+            panic!("resume lookup must not acquire ownership")
+        }
+        fn read(
+            &self,
+            workspace: &WorkspaceId,
+            session: &arabica_protocol::SessionId,
+        ) -> Result<StoredSession, arabica_session::StoreError> {
+            assert_eq!(workspace, &self.0.workspace_id);
+            assert_eq!(session, &self.0.id);
+            Ok(StoredSession {
+                header: self.0.clone(),
+                events: Vec::new(),
+            })
+        }
+        fn list(
+            &self,
+            workspace: Option<&WorkspaceId>,
+        ) -> Result<Vec<arabica_session::SessionListing>, arabica_session::StoreError> {
+            assert_eq!(workspace, Some(&self.0.workspace_id));
+            Ok(vec![arabica_session::SessionListing {
+                header: self.0.clone(),
+                updated_at_ms: Some(42),
+            }])
+        }
+    }
+
+    #[test]
+    fn resume_lookup_uses_an_injected_store_without_backend_paths() {
+        let store = ReadOnlyStore(arabica_session::SessionHeader {
+            id: arabica_protocol::SessionId::new("stored-session"),
+            workspace_id: WorkspaceId::new("workspace"),
+            title: Some("Stored title".to_owned()),
+            cwd: "/virtual-workspace".to_owned(),
+            schema: "test".to_owned(),
+            created_at_ms: 42,
+            protocol_version: arabica_protocol::PROTOCOL_VERSION.to_owned(),
+            profile: None,
+            instructions_sha256: None,
+        });
+        let resumed = resolve_resume(&Resume::Continue, &store, &store.0.workspace_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.header.title.as_deref(), Some("Stored title"));
+        let resumed = resolve_resume(
+            &Resume::Id("stored-session".to_owned()),
+            &store,
+            &store.0.workspace_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(resumed.header.id, store.0.id);
+    }
 
     #[test]
     fn a_dash_reads_the_task_from_stdin_and_anything_else_passes_through() {
@@ -578,7 +644,7 @@ mod tests {
 
     fn seed_session(home: &Path, workspace_id: &WorkspaceId) -> arabica_protocol::SessionId {
         let session_id = arabica_protocol::SessionId::new("session-1");
-        FileSessionStore::create(
+        SqliteSessionStore::create(
             home,
             NewSession {
                 session_id: &session_id,
@@ -600,9 +666,13 @@ mod tests {
         let home = PathBuf::from("/nonexistent/does-not-exist");
         let workspace_id = WorkspaceId::new("ws-1");
         assert!(
-            resolve_resume(&Resume::None, &home, &workspace_id)
-                .expect("None never fails")
-                .is_none()
+            resolve_resume(
+                &Resume::None,
+                crate::host::session_store(&home).as_ref(),
+                &workspace_id
+            )
+            .expect("None never fails")
+            .is_none()
         );
     }
 
@@ -612,8 +682,12 @@ mod tests {
         let workspace_id = WorkspaceId::new("ws-1");
         std::fs::create_dir_all(&home).expect("home creates");
 
-        let error = resolve_resume(&Resume::Continue, &home, &workspace_id)
-            .expect_err("no session exists to continue");
+        let error = resolve_resume(
+            &Resume::Continue,
+            crate::host::session_store(&home).as_ref(),
+            &workspace_id,
+        )
+        .expect_err("no session exists to continue");
         assert!(
             error.contains("no session to continue"),
             "unexpected message: {error}"
@@ -628,9 +702,13 @@ mod tests {
         let workspace_id = WorkspaceId::new("ws-1");
         let session_id = seed_session(&home, &workspace_id);
 
-        let resumed = resolve_resume(&Resume::Continue, &home, &workspace_id)
-            .expect("a session exists to continue")
-            .expect("Continue resolves to Some when a session exists");
+        let resumed = resolve_resume(
+            &Resume::Continue,
+            crate::host::session_store(&home).as_ref(),
+            &workspace_id,
+        )
+        .expect("a session exists to continue")
+        .expect("Continue resolves to Some when a session exists");
         assert_eq!(resumed.header.id, session_id);
 
         std::fs::remove_dir_all(&home).ok();
@@ -644,7 +722,7 @@ mod tests {
 
         let error = resolve_resume(
             &Resume::Id("no-such-session".to_owned()),
-            &home,
+            crate::host::session_store(&home).as_ref(),
             &workspace_id,
         )
         .expect_err("the named session does not exist");
@@ -662,9 +740,13 @@ mod tests {
         let workspace_id = WorkspaceId::new("ws-1");
         let session_id = seed_session(&home, &workspace_id);
 
-        let resumed = resolve_resume(&Resume::Id(session_id.0.clone()), &home, &workspace_id)
-            .expect("the named session exists")
-            .expect("Id resolves to Some when the session exists");
+        let resumed = resolve_resume(
+            &Resume::Id(session_id.0.clone()),
+            crate::host::session_store(&home).as_ref(),
+            &workspace_id,
+        )
+        .expect("the named session exists")
+        .expect("Id resolves to Some when the session exists");
         assert_eq!(resumed.header.id, session_id);
 
         std::fs::remove_dir_all(&home).ok();
@@ -677,8 +759,12 @@ mod tests {
         seed_session(&home, &other_workspace);
 
         let this_workspace = WorkspaceId::new("ws-1");
-        let error = resolve_resume(&Resume::Id("session-1".to_owned()), &home, &this_workspace)
-            .expect_err("session-1 belongs to a different workspace");
+        let error = resolve_resume(
+            &Resume::Id("session-1".to_owned()),
+            crate::host::session_store(&home).as_ref(),
+            &this_workspace,
+        )
+        .expect_err("session-1 belongs to a different workspace");
         assert!(
             error.contains("could not resume session session-1"),
             "unexpected message: {error}"

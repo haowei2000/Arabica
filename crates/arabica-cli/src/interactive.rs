@@ -5,7 +5,6 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use arabica_adapters::{FileSessionStore, NewSession};
 use arabica_model::{ContentBlock, RuntimeItem, RuntimeRole};
 use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, SessionId, SessionStatus,
@@ -23,6 +22,7 @@ use arabica_runtime::{
 use arabica_session::{
     DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver, SessionManager,
 };
+use arabica_session::{NewSession, SessionStore, SessionWriter};
 
 use crate::config::{save_workspace_settings, set_thinking};
 use crate::host::{
@@ -236,7 +236,8 @@ pub(crate) fn set_progress(model: &mut HostModel, sink: ModelProgressSink) {
 pub(crate) struct InteractiveSession {
     pub(crate) manager: SessionManager<HostRuntime>,
     pub(crate) session_id: SessionId,
-    pub(crate) store: Arc<FileSessionStore>,
+    pub(crate) store: Arc<dyn SessionWriter>,
+    pub(crate) session_store: Arc<dyn SessionStore>,
     pub(crate) config: ApiProviderConfig,
     pub(crate) model_configs: BTreeMap<String, ApiProviderConfig>,
     blend_policy: Option<BlendRoutingPolicy>,
@@ -247,23 +248,6 @@ pub(crate) struct InteractiveSession {
 }
 
 impl InteractiveSession {
-    pub(crate) async fn open(
-        config: ApiProviderConfig,
-        options: InteractiveOptions,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let model = HostModel::Api(ApiModelProvider::new(config.clone())?);
-        Self::open_with_model(config, model, None, options).await
-    }
-
-    pub(crate) async fn open_with_model(
-        config: ApiProviderConfig,
-        model: HostModel,
-        blend_policy: Option<BlendRoutingPolicy>,
-        options: InteractiveOptions,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::open_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
-    }
-
     pub(crate) async fn open_with_model_configs(
         config: ApiProviderConfig,
         model: HostModel,
@@ -271,11 +255,34 @@ impl InteractiveSession {
         model_configs: BTreeMap<String, ApiProviderConfig>,
         options: InteractiveOptions,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let arabica_home = arabica_adapters::default_arabica_home()?;
+        let session_store = crate::host::session_store(&arabica_home);
+        Self::open_with_store(
+            config,
+            model,
+            blend_policy,
+            model_configs,
+            options,
+            arabica_home,
+            session_store,
+        )
+        .await
+    }
+
+    pub(crate) async fn open_with_store(
+        config: ApiProviderConfig,
+        model: HostModel,
+        blend_policy: Option<BlendRoutingPolicy>,
+        model_configs: BTreeMap<String, ApiProviderConfig>,
+        options: InteractiveOptions,
+        arabica_home: PathBuf,
+        session_store: Arc<dyn SessionStore>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let session_blend_policy = blend_policy.clone();
         let runner_root = std::env::current_dir()?;
-        let arabica_home = arabica_adapters::default_arabica_home()?;
         let workspace_id = workspace_id_for(&runner_root);
-        let resumed = print::resolve_resume(&options.resume, &arabica_home, &workspace_id)?;
+        let resumed =
+            print::resolve_resume(&options.resume, session_store.as_ref(), &workspace_id)?;
         let mut tool_policy = if options.read_only {
             LocalRunnerPolicy::read_only()
         } else {
@@ -309,9 +316,7 @@ impl InteractiveSession {
         let (session_id, store) = match resumed {
             Some(stored) => {
                 let session_id = stored.header.id.clone();
-                let path =
-                    FileSessionStore::session_path(&arabica_home, &workspace_id, &session_id);
-                let store = Arc::new(FileSessionStore::open_existing(&path)?);
+                let store = session_store.open(&workspace_id, &session_id)?;
                 manager.restore_session(
                     stored.into_snapshot(),
                     CommandId::new(uuid::Uuid::now_v7().to_string()),
@@ -352,16 +357,13 @@ impl InteractiveSession {
                     .await?;
                 let event = created.first().expect("session.create emits an event");
                 let session_id = event.session_id.clone();
-                let store = Arc::new(FileSessionStore::create(
-                    &arabica_home,
-                    NewSession {
-                        session_id: &session_id,
-                        workspace_id: &workspace_id,
-                        cwd: &runner_root,
-                        profile: None,
-                        instructions_sha256: Some(&instructions_sha256),
-                    },
-                )?);
+                let store = session_store.create(NewSession {
+                    session_id: &session_id,
+                    workspace_id: &workspace_id,
+                    cwd: &runner_root,
+                    profile: None,
+                    instructions_sha256: Some(&instructions_sha256),
+                })?;
                 store.observe(event, EventVisibility::Client);
                 (session_id, store)
             }
@@ -370,6 +372,7 @@ impl InteractiveSession {
             manager,
             session_id,
             store,
+            session_store,
             config,
             model_configs,
             blend_policy: session_blend_policy,
@@ -416,7 +419,7 @@ impl InteractiveSession {
         &self,
     ) -> Result<Vec<crate::sessions::SessionEntry>, Box<dyn std::error::Error>> {
         crate::sessions::listing_entries(
-            &self.arabica_home,
+            self.session_store.as_ref(),
             Some(&workspace_id_for(&self.runner_root)),
         )
     }
@@ -430,13 +433,20 @@ impl InteractiveSession {
         &mut self,
         id: &str,
     ) -> Result<InteractiveSession, Box<dyn std::error::Error>> {
-        let next = InteractiveSession::open(
-            self.config.clone(),
+        let config = self.config.clone();
+        let model = HostModel::Api(ApiModelProvider::new(config.clone())?);
+        let next = InteractiveSession::open_with_store(
+            config,
+            model,
+            None,
+            BTreeMap::new(),
             InteractiveOptions {
                 allow_shell: self.allow_shell,
                 read_only: self.read_only,
                 resume: Resume::Id(id.to_owned()),
             },
+            self.arabica_home.clone(),
+            Arc::clone(&self.session_store),
         )
         .await?;
         self.suspend().await?;

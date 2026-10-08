@@ -11,11 +11,11 @@ use arabica_runtime::{
     ContextEvaluationResult, EvaluationConfig, EvaluationEvidence, EvaluationRegistry,
     ModelEvaluationResult,
 };
-use arabica_session::{EventVisibility, SessionEventObserver};
+use arabica_session::{EventVisibility, SessionEventObserver, SessionStore};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
-use crate::FileSessionStore;
+use crate::SqliteSessionRepository;
 
 type StoreResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -249,6 +249,7 @@ impl EvaluationWorker {
         std::thread::Builder::new()
             .name("arabica-evaluation".into())
             .spawn(move || {
+                let sessions: Arc<dyn SessionStore> = Arc::new(SqliteSessionRepository::new(&home));
                 let process = |checkpoint: EvaluationCheckpoint| -> StoreResult<()> {
                     let mut db = SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
                     if let Some(saved) =
@@ -256,11 +257,8 @@ impl EvaluationWorker {
                     {
                         worker_state.publish(saved)?;
                     }
-                    let mut stored = FileSessionStore::read_session(
-                        &home,
-                        &checkpoint.workspace_id,
-                        &checkpoint.session_id,
-                    )?;
+                    let mut stored =
+                        sessions.read(&checkpoint.workspace_id, &checkpoint.session_id)?;
                     stored
                         .events
                         .retain(|event| event.sequence <= checkpoint.sequence);
@@ -294,11 +292,12 @@ impl EvaluationWorker {
                         worker_state.failed.fetch_add(1, Ordering::Relaxed);
                     }
                 };
-                // JSONL is the durable source: recover missed checkpoints after
+                // The session repository is the durable source: recover missed checkpoints after
                 // queue overflow or process exit without a synchronous outbox write.
-                if let Ok(listings) = FileSessionStore::list_sessions(&home, None) {
+                if let Ok(listings) = sessions.list(None) {
                     for listing in listings {
-                        if let Ok(stored) = FileSessionStore::read(&listing.path)
+                        if let Ok(stored) =
+                            sessions.read(&listing.header.workspace_id, &listing.header.id)
                             && let Some(event) = stored
                                 .events
                                 .iter()
@@ -317,7 +316,7 @@ impl EvaluationWorker {
                     match job {
                         EvaluationJob::Checkpoint(checkpoint) => evaluate(checkpoint),
                         EvaluationJob::Refresh { workspace, session } => {
-                            match FileSessionStore::read_session(&home, &workspace, &session) {
+                            match sessions.read(&workspace, &session) {
                                 Ok(stored) => {
                                     if let Some(event) = stored
                                         .events
@@ -461,17 +460,15 @@ mod tests {
         }
     }
     fn write_history(home: &Path) {
-        let store = FileSessionStore::create(
-            home,
-            NewSession {
+        let store = SqliteSessionRepository::new(home)
+            .create(NewSession {
                 session_id: &SessionId::new("session"),
                 workspace_id: &WorkspaceId::new("workspace"),
                 cwd: home,
                 profile: None,
                 instructions_sha256: None,
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         for event in events() {
             store.observe(&event, EventVisibility::Internal);
         }
@@ -548,12 +545,9 @@ mod tests {
         let worker =
             EvaluationWorker::start(home.clone(), 2, || Ok(EvaluationConfig::default())).unwrap();
         wait_for(|| worker.status().completed == 1);
-        let path = FileSessionStore::session_path(
-            &home,
-            &checkpoint().workspace_id,
-            &checkpoint().session_id,
-        );
-        let store = FileSessionStore::open_existing(&path).unwrap();
+        let store = SqliteSessionRepository::new(&home)
+            .open(&checkpoint().workspace_id, &checkpoint().session_id)
+            .unwrap();
         store.observe(
             &event(3, Event::RunCompleted { output: None }),
             EventVisibility::Internal,

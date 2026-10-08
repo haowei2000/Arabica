@@ -473,29 +473,9 @@ fn system_message_contents(request: &Value) -> Vec<&str> {
 /// Reads the single session file's header line under `home`, the way
 /// `arabica sessions list` does.
 fn session_file_header(home: &std::path::Path) -> Value {
-    fn walk(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path
-                .extension()
-                .is_some_and(|extension| extension == "jsonl")
-            {
-                found.push(path);
-            }
-        }
-    }
-    let mut found = Vec::new();
-    walk(home, &mut found);
-    assert_eq!(found.len(), 1, "expected exactly one session file");
-    let first_line = std::fs::read_to_string(&found[0])
-        .unwrap()
-        .lines()
-        .next()
-        .unwrap()
-        .to_owned();
-    serde_json::from_str(&first_line).unwrap()
+    let sessions = arabica_adapters::SqliteSessionStore::list_sessions(home, None).unwrap();
+    assert_eq!(sessions.len(), 1);
+    serde_json::to_value(&sessions[0].header).unwrap()
 }
 
 #[tokio::test]
@@ -743,21 +723,11 @@ async fn resume_switches_sessions_inside_one_terminal_run() {
     // its cwd canonically (macOS /var -> /private/var), so the id must be
     // computed from the canonical path.
     let canonical_root = std::fs::canonicalize(&root).unwrap();
-    let workspace_dir = home
-        .join("sessions")
-        .join(arabica_cli::host::workspace_id_for(&canonical_root).to_string());
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&workspace_dir)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .collect();
-    files.sort_by_key(|path| {
-        std::fs::metadata(path)
-            .and_then(|metadata| metadata.modified())
-            .unwrap()
-    });
-    assert_eq!(files.len(), 2, "two sessions expected");
-    let session_a = files[0].file_stem().unwrap().to_string_lossy().to_string();
+    let workspace_id = arabica_cli::host::workspace_id_for(&canonical_root);
+    let listings =
+        arabica_adapters::SqliteSessionStore::list_sessions(&home, Some(&workspace_id)).unwrap();
+    assert_eq!(listings.len(), 2, "two sessions expected");
+    let session_a = listings.last().unwrap().header.id.to_string();
     // In one run: /sessions lists both, /resume <A> switches, and the next
     // turn continues A's history.
     let third = run_binary(
@@ -812,7 +782,7 @@ async fn resume_switches_sessions_inside_one_terminal_run() {
     // file) was suspended cleanly and still resumes by explicit id. (It is
     // no longer the most recent session -- the switch itself touched A --
     // so --continue would rightly pick A, not B.)
-    let session_b = files[1].file_stem().unwrap().to_string_lossy().to_string();
+    let session_b = listings.first().unwrap().header.id.to_string();
     let resumed_b = run_binary_with_args(
         &root,
         &home,
