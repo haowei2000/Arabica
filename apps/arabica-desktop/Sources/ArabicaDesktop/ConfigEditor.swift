@@ -21,10 +21,14 @@ final class ConfigEditor: ObservableObject {
     @Published var defaultPolicy = ""
     @Published var policyDefaultModel = "default"
     @Published var policyOptions: [String] = []
+    @Published var configuredPolicies: [ConfiguredPolicyItem] = []
     @Published var thinking = ""
     @Published var status = ""
     @Published var canAddEntries = false
     @Published var isSaving = false
+    @Published var mcpServers: [MCPServerItem] = []
+    @Published var skillRoots: [SkillRootItem] = []
+    @Published var discoveredSkills: [DiscoveredSkillItem] = []
 
     var modelsForSelectedProvider: [String] {
         modelOptions.filter { modelProviders[$0] == providerName }
@@ -34,11 +38,15 @@ final class ConfigEditor: ObservableObject {
     private var originalKey: String?
     private var providerSection = "providers.primary"
     private var modelSection: String?
-    private var configURL: URL {
+    var configURL: URL {
         let home = ProcessInfo.processInfo.environment["ARABICA_HOME"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".arabica", isDirectory: true)
         return home.appendingPathComponent("config.toml")
+    }
+
+    var arabicaHomeURL: URL {
+        configURL.deletingLastPathComponent()
     }
 
     init() { reload() }
@@ -106,6 +114,15 @@ final class ConfigEditor: ObservableObject {
         loadProvider(from: document)
         modelID = model["model_id"] ?? (providerSection == "provider" ? document.values(in: providerSection)["model"] : nil) ?? ""
         canAddEntries = !providerSections.isEmpty && !modelSections.isEmpty
+
+        // Policy items parsing
+        configuredPolicies = document.configuredPolicies()
+
+        // MCP and Skills discovery
+        mcpServers = document.mcpServers()
+        let roots = document.skillRoots(relativeTo: arabicaHomeURL)
+        skillRoots = roots
+        discoveredSkills = scanDiscoveredSkills(in: roots)
     }
 
     func selectProvider(_ name: String) {
@@ -517,9 +534,264 @@ struct ConfigDocument {
         encoded += "\""
         return encoded
     }
+
+    func mcpServers() -> [MCPServerItem] {
+        var servers: [MCPServerItem] = []
+        var currentLines: [String] = []
+        var inMcp = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "[[mcp]]" {
+                if inMcp {
+                    if let item = Self.parseMcpItem(from: currentLines) {
+                        servers.append(item)
+                    }
+                    currentLines.removeAll()
+                }
+                inMcp = true
+                continue
+            } else if trimmed.hasPrefix("[") && inMcp {
+                if !trimmed.hasPrefix("[mcp.") {
+                    if let item = Self.parseMcpItem(from: currentLines) {
+                        servers.append(item)
+                    }
+                    currentLines.removeAll()
+                    inMcp = false
+                }
+            }
+            if inMcp {
+                currentLines.append(line)
+            }
+        }
+        if inMcp, let item = Self.parseMcpItem(from: currentLines) {
+            servers.append(item)
+        }
+        return servers
+    }
+
+    private static func parseMcpItem(from lines: [String]) -> MCPServerItem? {
+        var name = ""
+        var command: String?
+        var args: [String] = []
+        var url: String?
+        var envKeys: [String] = []
+        var inEnv = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "[mcp.env]" {
+                inEnv = true
+                continue
+            } else if trimmed.hasPrefix("[") {
+                inEnv = false
+            }
+            if inEnv {
+                if let (key, _) = keyValue(line) {
+                    envKeys.append(key)
+                }
+            } else {
+                guard let (key, rawValue) = keyValue(line) else { continue }
+                if key == "name" {
+                    name = decode(rawValue) ?? rawValue
+                } else if key == "command" {
+                    command = decode(rawValue) ?? rawValue
+                } else if key == "url" {
+                    url = decode(rawValue) ?? rawValue
+                } else if key == "args" {
+                    if let decoded = decodeStringArray(rawValue) {
+                        args = decoded
+                    }
+                }
+            }
+        }
+        guard !name.isEmpty else { return nil }
+        return MCPServerItem(
+            name: name,
+            command: command,
+            args: args,
+            url: url,
+            envKeys: envKeys
+        )
+    }
+
+    func skillRoots(relativeTo arabicaHome: URL) -> [SkillRootItem] {
+        guard let range = range(of: "skills") else { return [] }
+        var roots: [SkillRootItem] = []
+        for line in lines[range] {
+            guard let (key, value) = Self.keyValue(line), key == "roots" else { continue }
+            guard let paths = Self.decodeStringArray(value) else { continue }
+            for pathStr in paths {
+                let resolvedURL: URL
+                if pathStr.hasPrefix("/") {
+                    resolvedURL = URL(fileURLWithPath: pathStr, isDirectory: true)
+                } else {
+                    resolvedURL = arabicaHome.appendingPathComponent(pathStr, isDirectory: true)
+                }
+                var isDir: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: resolvedURL.path, isDirectory: &isDir) && isDir.boolValue
+                roots.append(SkillRootItem(rawPath: pathStr, resolvedURL: resolvedURL, exists: exists))
+            }
+        }
+        return roots
+    }
+
+    func configuredPolicies() -> [ConfiguredPolicyItem] {
+        let policySections = sectionNames.filter { $0.hasPrefix("blend.policies.") }
+        return policySections.map { section in
+            let id = String(section.dropFirst("blend.policies.".count))
+            let vals = values(in: section)
+            let version = vals["version"].flatMap { UInt64($0) }
+            let defaultModel = vals["default_model"] ?? ""
+            let afterSuccess = vals["after_tool_success"]
+            let afterError = vals["after_tool_error"]
+            let recoveryModel = vals["recovery_model"]
+            let planningModel = vals["planning_model"]
+            let stallThreshold = vals["recovery_after_no_progress_steps"].flatMap { Int($0) }
+            let dwellSteps = vals["minimum_model_dwell_steps"].flatMap { Int($0) }
+            return ConfiguredPolicyItem(
+                id: id,
+                version: version,
+                defaultModel: defaultModel,
+                afterToolSuccess: afterSuccess,
+                afterToolError: afterError,
+                recoveryModel: recoveryModel,
+                planningModel: planningModel,
+                stallThreshold: stallThreshold,
+                dwellSteps: dwellSteps
+            )
+        }.sorted(by: { $0.id < $1.id })
+    }
+
+    private static func decodeStringArray(_ raw: String) -> [String]? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("["), trimmed.hasSuffix("]") else { return nil }
+        guard let data = trimmed.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            return nil
+        }
+        return json
+    }
+}
+
+struct ConfiguredPolicyItem: Identifiable, Equatable {
+    let id: String
+    let version: UInt64?
+    let defaultModel: String
+    let afterToolSuccess: String?
+    let afterToolError: String?
+    let recoveryModel: String?
+    let planningModel: String?
+    let stallThreshold: Int?
+    let dwellSteps: Int?
 }
 
 private enum EditorError: LocalizedError {
     case multipleManagedSections
     var errorDescription: String? { "The config contains multiple provider/model sections. Open it in a text editor to avoid losing custom routing." }
 }
+
+struct MCPServerItem: Identifiable, Equatable {
+    var id: String { name }
+    let name: String
+    let command: String?
+    let args: [String]
+    let url: String?
+    let envKeys: [String]
+
+    var transportType: String {
+        if command != nil { return "stdio" }
+        if url != nil { return "http" }
+        return "unknown"
+    }
+
+    var summary: String {
+        if let command {
+            return ([command] + args).joined(separator: " ")
+        }
+        if let url {
+            return url
+        }
+        return "unconfigured"
+    }
+}
+
+struct SkillRootItem: Identifiable, Equatable {
+    var id: String { resolvedURL.path }
+    let rawPath: String
+    let resolvedURL: URL
+    let exists: Bool
+}
+
+struct DiscoveredSkillItem: Identifiable, Equatable {
+    var id: String { directoryURL.path }
+    let name: String
+    let description: String
+    let directoryURL: URL
+    let rootPath: String
+}
+
+private func scanDiscoveredSkills(in roots: [SkillRootItem]) -> [DiscoveredSkillItem] {
+    var skills: [DiscoveredSkillItem] = []
+    let fm = FileManager.default
+
+    for root in roots where root.exists {
+        let rootURL = root.resolvedURL
+        let directSkillMD = rootURL.appendingPathComponent("SKILL.md")
+        if fm.fileExists(atPath: directSkillMD.path) {
+            let (name, desc) = parseSkillMetadata(from: directSkillMD, fallbackName: rootURL.lastPathComponent)
+            skills.append(DiscoveredSkillItem(name: name, description: desc, directoryURL: rootURL, rootPath: root.rawPath))
+            continue
+        }
+
+        guard let contents = try? fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            continue
+        }
+        for item in contents {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+                let skillMD = item.appendingPathComponent("SKILL.md")
+                if fm.fileExists(atPath: skillMD.path) {
+                    let (name, desc) = parseSkillMetadata(from: skillMD, fallbackName: item.lastPathComponent)
+                    skills.append(DiscoveredSkillItem(name: name, description: desc, directoryURL: item, rootPath: root.rawPath))
+                }
+            }
+        }
+    }
+    return skills.sorted(by: { $0.name < $1.name })
+}
+
+private func parseSkillMetadata(from url: URL, fallbackName: String) -> (name: String, description: String) {
+    guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+        return (fallbackName, "")
+    }
+    var name = fallbackName
+    var description = ""
+    let lines = content.components(separatedBy: .newlines)
+    var inFrontmatter = false
+    var frontmatterPassed = false
+
+    for line in lines {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed == "---" {
+            if inFrontmatter {
+                frontmatterPassed = true
+                break
+            } else if !frontmatterPassed {
+                inFrontmatter = true
+                continue
+            }
+        }
+        if inFrontmatter {
+            if trimmed.hasPrefix("name:") {
+                let val = trimmed.dropFirst("name:".count).trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty { name = val }
+            } else if trimmed.hasPrefix("description:") {
+                let val = trimmed.dropFirst("description:".count).trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty { description = val }
+            }
+        }
+    }
+    return (name, description)
+}
+

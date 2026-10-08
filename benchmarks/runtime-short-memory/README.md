@@ -2,6 +2,11 @@
 
 ## Controlled live comparisons
 
+Follow the [experiment change and reproducibility policy](../protocol/experiment-change-policy.md)
+when freezing a campaign, changing code, handling failures, or analyzing results.
+It explicitly prohibits arm-specific assistance, selective retries, hidden task
+shortcuts, post-hoc scoring changes, and misleading cache or API accounting.
+
 Use `tier_b --experiment-config experiment.json --compare --strategies B0,FBGC`
 with an explicit, **new** `--runner-root`. Copy `experiment.example.json` to
 a local configuration and confirm parameter support for the selected endpoint.

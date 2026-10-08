@@ -18,6 +18,25 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
     let worker_status: WorkerStatus?
     let refresh_accepted: Bool?
     let report: Report?
+    let policies: [PolicyRecord]?
+
+    struct PolicyRecord: Decodable, Equatable, Sendable, Identifiable {
+        var id: String { "\(policy_id)-v\(version)" }
+        let policy_id: String
+        let version: UInt64
+        let status: String
+        let policy: PolicyDetails
+        let reason: String
+
+        struct PolicyDetails: Decodable, Equatable, Sendable {
+            let default_model: String
+            let after_tool_success: String?
+            let after_tool_error: String?
+            let recovery_model: String?
+            let recovery_after_no_progress_steps: Int?
+            let minimum_model_dwell_steps: Int?
+        }
+    }
 
     struct WorkerStatus: Decodable, Equatable, Sendable {
         let completed: UInt64
@@ -134,7 +153,8 @@ final class EvaluationModel: ObservableObject {
             } else if let previous = snapshot {
                 snapshot = EvaluationSnapshot(schema_version: next.schema_version, session_id: next.session_id,
                     workspace_id: next.workspace_id, worker_status: next.worker_status,
-                    refresh_accepted: next.refresh_accepted, report: previous.report)
+                    refresh_accepted: next.refresh_accepted, report: previous.report,
+                    policies: next.policies ?? previous.policies)
             }
             queriedAt = Date()
             if refresh {

@@ -32,6 +32,11 @@ runnable evaluations in the current suite.
 
 ## Evidence and local artifacts
 
+[Experiment change and reproducibility policy](protocol/experiment-change-policy.md)
+defines what may be optimized, what requires a new frozen campaign and reruns,
+and prohibited special adjustments. Apply it to new ablations and external-agent
+comparisons before collecting formal results.
+
 `PROTOCOL.md` and `protocol/` preserve dated experiment decisions.
 [Saved results](runtime-short-memory/results/README.md), `../reports/` and
 `../paper/` preserve historical evidence, not fresh validation of this release.

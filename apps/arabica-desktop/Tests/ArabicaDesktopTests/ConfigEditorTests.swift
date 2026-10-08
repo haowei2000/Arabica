@@ -197,4 +197,43 @@ final class ConfigEditorTests: XCTestCase {
         ))
         XCTAssertNil(ConfigEditor.thinkingValidationError(apiType: "anthropic_messages", thinking: ""))
     }
+
+    func testMCPServersAndSkillRootsParsing() {
+        let toml = """
+        [skills]
+        roots = ["skills", "/opt/custom/skills"]
+
+        [[mcp]]
+        name = "filesystem"
+        command = "npx"
+        args = ["-y", "@mcp/fs", "/workspace"]
+
+        [mcp.env]
+        NODE_ENV = "production"
+
+        [[mcp]]
+        name = "remote"
+        url = "https://mcp.remote.test/sse"
+        """
+
+        let doc = ConfigDocument(toml)
+        let mcp = doc.mcpServers()
+        XCTAssertEqual(mcp.count, 2)
+        XCTAssertEqual(mcp[0].name, "filesystem")
+        XCTAssertEqual(mcp[0].command, "npx")
+        XCTAssertEqual(mcp[0].args, ["-y", "@mcp/fs", "/workspace"])
+        XCTAssertEqual(mcp[0].transportType, "stdio")
+        XCTAssertEqual(mcp[0].envKeys, ["NODE_ENV"])
+
+        XCTAssertEqual(mcp[1].name, "remote")
+        XCTAssertEqual(mcp[1].url, "https://mcp.remote.test/sse")
+        XCTAssertEqual(mcp[1].transportType, "http")
+
+        let roots = doc.skillRoots(relativeTo: URL(fileURLWithPath: "/tmp/arabica"))
+        XCTAssertEqual(roots.count, 2)
+        XCTAssertEqual(roots[0].rawPath, "skills")
+        XCTAssertEqual(roots[0].resolvedURL.path, "/tmp/arabica/skills")
+        XCTAssertEqual(roots[1].rawPath, "/opt/custom/skills")
+        XCTAssertEqual(roots[1].resolvedURL.path, "/opt/custom/skills")
+    }
 }
