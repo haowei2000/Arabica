@@ -55,6 +55,7 @@ final class DesktopModel: ObservableObject {
     @Published var availableCommands: [[String: Any]] = []
     @Published var currentModeID: String?
 
+    let evaluation = EvaluationModel()
     private let client = ACPClient()
     private let services = ACPClientServices()
     private var loadedSessionID: String?
@@ -71,6 +72,7 @@ final class DesktopModel: ObservableObject {
             self?.handleRequest(id, method: method, params: params)
         }
         client.onExit = { [weak self] in
+            self?.evaluation.reset()
             self?.services.reset()
             self?.isRunning = false
             if self?.isConnected == true, self?.isConnecting != true {
@@ -109,6 +111,7 @@ final class DesktopModel: ObservableObject {
         isConnecting = true
         isConnected = false
         errorText = nil
+        evaluation.reset()
         client.stop()
         services.reset()
         workspace = url
@@ -129,7 +132,11 @@ final class DesktopModel: ObservableObject {
         items = []
         do {
             try client.start(workspace: url)
-            try await client.initialize()
+            let initialized = try await client.initialize()
+            evaluation.connect(supported: EvaluationCapability.supported(by: initialized)) { [weak self] method, params in
+                guard let self else { throw ACPError.disconnected }
+                return try await self.client.request(method, params: params, timeoutSeconds: 10)
+            }
             isConnected = true
             UserDefaults.standard.set(url.path, forKey: "lastWorkspace")
             await refreshSessions()
@@ -182,6 +189,7 @@ final class DesktopModel: ObservableObject {
             loadedSessionID = id
             openSessionIDs.insert(id)
             items = []
+            if selectedSessionID == id { evaluation.select(id) }
         } catch {
             errorText = error.localizedDescription
         }
@@ -192,12 +200,14 @@ final class DesktopModel: ObservableObject {
         if id == loadedSessionID { return }
         guard !isRunning else { return }
         if let previous = loadedSessionID { itemCache[previous] = items }
+        evaluation.select(nil)
         selectedSessionID = id
         items = itemCache[id] ?? []
         errorText = nil
         if openSessionIDs.contains(id) {
             loadedSessionID = id
             restoreSessionControls(for: id)
+            if selectedSessionID == id { evaluation.select(id) }
             return
         }
         configOptions = []
@@ -211,6 +221,7 @@ final class DesktopModel: ObservableObject {
             applySessionControls(from: result, for: id)
             loadedSessionID = id
             openSessionIDs.insert(id)
+            if selectedSessionID == id { evaluation.select(id) }
         } catch {
             errorText = error.localizedDescription
         }
@@ -224,6 +235,7 @@ final class DesktopModel: ObservableObject {
             sessionControlCache.removeValue(forKey: id)
             if selectedSessionID == id {
                 itemCache[id] = items
+                evaluation.select(nil)
                 selectedSessionID = nil
                 loadedSessionID = nil
                 items = []

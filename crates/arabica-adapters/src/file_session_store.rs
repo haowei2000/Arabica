@@ -740,18 +740,64 @@ mod tests {
         store.observe(&envelope(1, Event::RunScheduled), EventVisibility::Client);
         store.observe(&envelope(2, Event::RunStarted), EventVisibility::Client);
 
+        let context = Event::ContextRunResolved {
+            snapshot: arabica_protocol::ContextRunSnapshot {
+                decision_id: "run-1:context".into(),
+                policy_id: "readonly".into(),
+                policy_version: 1,
+                policy_fingerprint: "policy-hash".into(),
+                catalog_fingerprint: "catalog-hash".into(),
+                selected_sets: vec!["files".into()],
+                included_ids: Vec::new(),
+                excluded_ids: Vec::new(),
+                disabled_sources: Vec::new(),
+                items: vec![arabica_protocol::ContextDecision {
+                    identity: arabica_protocol::ContextIdentity {
+                        id: "tool:read_file".into(),
+                        kind: arabica_protocol::ContextSourceKind::Tool,
+                        version: Some("schema-hash".into()),
+                        display_name: "read_file".into(),
+                        server_id: None,
+                        tool_id: Some("read_file".into()),
+                    },
+                    exposed_name: "read_file".into(),
+                    enabled: true,
+                    reason: arabica_protocol::ContextDecisionReason::Included,
+                    sets: vec!["files".into()],
+                    initial_mode: arabica_protocol::ContextMode::Folded,
+                }],
+            },
+        };
+        store.observe(&envelope(3, context.clone()), EventVisibility::Internal);
+        let unfold = Event::ContextItemUnfolded {
+            call_id: "unfold-1".into(),
+            decision_id: "run-1:context".into(),
+            context_id: "tool:read_file".into(),
+        };
+        store.observe(&envelope(4, unfold.clone()), EventVisibility::Internal);
+        let exposure = Event::ContextRequestExposed {
+            model_step: 1,
+            decision_id: "run-1:context".into(),
+            context_ids: vec!["tool:read_file".into()],
+            folded_ids: Vec::new(),
+        };
+        store.observe(&envelope(5, exposure.clone()), EventVisibility::Internal);
         let stored = FileSessionStore::read(store.path()).expect("file reads back");
         assert_eq!(stored.header.id, session_id);
         assert_eq!(stored.header.workspace_id, workspace_id);
         assert_eq!(stored.header.cwd, "/repo");
         assert_eq!(stored.header.profile.as_deref(), Some("default"));
         assert_eq!(stored.header.instructions_sha256.as_deref(), Some("abc123"));
-        assert_eq!(stored.events.len(), 2);
+        assert_eq!(stored.events.len(), 5);
         assert!(matches!(stored.events[0].event, Event::RunScheduled));
         assert!(matches!(stored.events[1].event, Event::RunStarted));
 
+        assert_eq!(stored.events[2].event, context);
         let snapshot = stored.into_snapshot();
-        assert_eq!(snapshot.events.len(), 2);
+        assert_eq!(snapshot.events.len(), 5);
+        assert_eq!(snapshot.events[2].event, context);
+        assert_eq!(snapshot.events[3].event, unfold);
+        assert_eq!(snapshot.events[4].event, exposure);
 
         std::fs::remove_dir_all(&home).ok();
     }

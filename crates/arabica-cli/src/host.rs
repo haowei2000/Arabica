@@ -392,6 +392,7 @@ pub fn build_host_runtime_with_mcp(
     tools.push(memory_search_definition());
     tools.push(memory_read_definition());
     tools.extend_from_slice(mcp.definitions());
+    let context_identities = mcp.context_identities();
     let runner = HostRunner {
         local: LocalRunner::with_policy(runner_root, tool_policy),
         mcp,
@@ -413,6 +414,7 @@ pub fn build_host_runtime_with_mcp(
     runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
     runtime.set_async_file_backed_gc(true);
     runtime.set_tools(tools);
+    runtime.set_context_identities(context_identities);
     runtime.set_max_model_steps_per_run(MAX_MODEL_STEPS_PER_RUN);
     runtime.set_max_model_steps_without_progress(usize::MAX);
     runtime.set_system_instructions(system_instructions(runner_root));
@@ -430,6 +432,25 @@ pub fn build_host_runtime_with_blend(
     let mut runtime =
         build_host_runtime_with_mcp(model, runner_root, tool_policy, arabica_home, mcp);
     runtime.set_blend_policy(blend_policy)?;
+    let context_policy = crate::config::user_config_context(arabica_home).map_err(|_| {
+        arabica_runtime::RuntimeError::new(
+            arabica_runtime::RuntimeErrorKind::InvalidConfiguration,
+            "invalid context configuration",
+        )
+    })?;
+    runtime.set_context_policy(context_policy)?;
+    let roots = crate::config::user_config_skill_roots(arabica_home).map_err(|_| {
+        arabica_runtime::RuntimeError::new(
+            arabica_runtime::RuntimeErrorKind::InvalidConfiguration,
+            "invalid skill source configuration",
+        )
+    })?;
+    if !roots.is_empty() {
+        let source = crate::skills::LocalSkillSource::new(roots);
+        // Validate before advertising a session; refresh and pin on every run.
+        let _ = arabica_runtime::SkillSource::load(&source)?;
+        runtime.set_skill_source(Box::new(source));
+    }
     Ok(runtime)
 }
 

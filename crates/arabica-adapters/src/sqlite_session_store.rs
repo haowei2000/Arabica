@@ -409,7 +409,12 @@ impl SqliteSessionStore {
             return Err(error("event does not belong to this session"));
         }
         let mut connection = self.connection.lock().map_err(error)?;
-        let transaction = connection.transaction().map_err(error)?;
+        // Reserve the writer before checking sequence. A deferred transaction
+        // can lose its read snapshot when a background reader initializes
+        // another connection, making the subsequent write fail immediately.
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(error)?;
         let last_sequence: u64 = transaction.query_row(
             "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE workspace_id=?1 AND session_id=?2",
             params![self.workspace_id.to_string(), self.session_id.to_string()], |row| row.get(0),
@@ -484,6 +489,57 @@ mod tests {
             occurred_at_ms: 0,
             event,
         }
+    }
+
+    #[test]
+    fn appends_remain_contiguous_during_background_repository_reads() {
+        use arabica_session::SessionStore;
+        let home = home("background-reads");
+        let store = SqliteSessionStore::create(&home, new_session()).unwrap();
+        store
+            .append(
+                &event(
+                    1,
+                    Event::SessionCreated {
+                        workspace_id: WorkspaceId::new("ws-1"),
+                    },
+                ),
+                EventVisibility::Client,
+            )
+            .unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let reader = std::thread::spawn({
+            let home = home.clone();
+            let barrier = barrier.clone();
+            move || {
+                let repository = crate::SqliteSessionRepository::new(home);
+                barrier.wait();
+                for _ in 0..50 {
+                    let stored = repository
+                        .read(&WorkspaceId::new("ws-1"), &SessionId::new("session-1"))
+                        .unwrap();
+                    for (index, envelope) in stored.events.iter().enumerate() {
+                        assert_eq!(envelope.sequence, index as u64 + 1);
+                    }
+                }
+            }
+        });
+        barrier.wait();
+        for sequence in 2..=51 {
+            store
+                .append(
+                    &event(sequence, Event::SessionResumed),
+                    EventVisibility::Client,
+                )
+                .unwrap();
+        }
+        reader.join().unwrap();
+        assert_eq!(
+            SqliteSessionStore::read(store.path()).unwrap().events.len(),
+            51
+        );
+        drop(store);
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

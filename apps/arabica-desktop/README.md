@@ -53,3 +53,18 @@ available commands, usage, and tool calls. Rich Markdown, image attachments,
 and distribution signing are later work. The desktop client
 speaks ACP v1 and accepts unknown `_meta` extension fields without making
 assumptions about their contents.
+
+## Background evaluation inspector
+
+Use the toolbar's **Background evaluation** button or **Option-Command-I** to
+show the collapsible inspector. The panel reads the optional ACP evaluation
+capability and does not send extensions to older agents. Status queries have a
+10-second timeout and run every five seconds while the inspector is visible.
+Switching sessions or reconnecting discards responses from the previous scope.
+
+**Request refresh** only queues background work. It keeps the last report visible
+and shows its event checkpoint; acceptance never implies completion. Evaluation
+errors remain inside the inspector and do not change chat or cancellation state.
+The inspector includes context/model observations, routing cohorts, sample
+limitations, and worker totals across all conversations. These metrics are not
+a correctness score or causal contribution estimate.

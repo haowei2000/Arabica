@@ -383,10 +383,10 @@ async fn run_task(
         OutputFormat::Text => Arc::new(TextProgressObserver),
         OutputFormat::Jsonl => Arc::new(JsonlObserver),
     };
-    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
-        store as Arc<dyn SessionEventObserver>,
-        progress_observer,
-    ]));
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> =
+        vec![store as Arc<dyn SessionEventObserver>, progress_observer];
+    crate::evaluation::attach(&mut observers, &arabica_home);
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
 
     let cancellation = RunCancellation::new();
     let ctrl_c = tokio::spawn({

@@ -11,6 +11,7 @@
 //! crate for why a handler must never `.await` its own run to completion.
 
 mod content;
+mod evaluation;
 mod mapping;
 mod permission;
 mod stop_reason;
@@ -882,7 +883,11 @@ async fn serve(
                                         .close(SessionCloseCapabilities::new()),
                                 ),
                         )
-                        .agent_info(Implementation::new("arabica", env!("CARGO_PKG_VERSION"))),
+                        .agent_info(Implementation::new("arabica", env!("CARGO_PKG_VERSION")))
+                        .meta(serde_json::Map::from_iter([(
+                            "arabica.evaluation".into(),
+                            serde_json::json!({"schemaVersion":1,"get":"_arabica/evaluation/get","refresh":"_arabica/evaluation/refresh","asynchronous":true}),
+                        )])),
                 )
             },
             agent_client_protocol::on_receive_request!(),
@@ -976,6 +981,34 @@ async fn serve(
                             _connection: ConnectionTo<Client>| {
                     match state.close_session(request).await {
                         Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: evaluation::GetEvaluationRequest,
+                            responder: Responder<serde_json::Value>,
+                            _connection: ConnectionTo<Client>| {
+                    match evaluation::query(&state, &request.session_id, false) {
+                        Ok(view) => responder.respond(view),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: evaluation::RefreshEvaluationRequest,
+                            responder: Responder<serde_json::Value>,
+                            _connection: ConnectionTo<Client>| {
+                    match evaluation::query(&state, &request.session_id, true) {
+                        Ok(view) => responder.respond(view),
                         Err(error) => responder.respond_with_error(error),
                     }
                 }
@@ -1091,10 +1124,12 @@ fn handle_prompt(
         HostModel::Blend(_) => {}
         HostModel::Scripted(_) => {}
     }
-    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
         Arc::clone(&entry.store) as Arc<dyn SessionEventObserver>,
         acp_observer as Arc<dyn SessionEventObserver>,
-    ]));
+    ];
+    crate::evaluation::attach(&mut observers, &state.arabica_home);
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
     let control = DispatchControl {
         run: RunControl {
             cancellation: Some(cancellation),
@@ -1694,6 +1729,68 @@ mod round_trip {
         server.abort();
         std::fs::remove_dir_all(root).ok();
         std::fs::remove_dir_all(arabica_home).ok();
+    }
+
+    #[tokio::test]
+    async fn evaluation_extensions_work_while_session_manager_is_locked() {
+        let root = temp_root("evaluation-client");
+        let home = temp_root("evaluation-client-home");
+        let state = scripted_state(
+            vec![text_result("unused")],
+            LocalRunnerPolicy::coding(),
+            &home,
+        );
+        let (server, channel) = spawn_agent(state.clone());
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            ClientRole
+                .builder()
+                .name("evaluation-client")
+                .connect_with(channel, async move |cx| {
+                    let initialized = cx
+                        .send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    assert_eq!(
+                        initialized.meta.as_ref().unwrap()["arabica.evaluation"]["asynchronous"],
+                        true
+                    );
+                    let session = cx
+                        .send_request(AcpNewSessionRequest::new(root))
+                        .block_task()
+                        .await?;
+                    let entry = state.entry(&session.session_id).unwrap();
+                    let _guard = entry.manager.lock().await;
+                    let view = cx
+                        .send_request(evaluation::GetEvaluationRequest {
+                            session_id: session.session_id.clone(),
+                        })
+                        .block_task()
+                        .await?;
+                    assert_eq!(view["schema_version"], 1);
+                    assert!(view["report"].is_null());
+                    let refreshed = cx
+                        .send_request(evaluation::RefreshEvaluationRequest {
+                            session_id: session.session_id,
+                        })
+                        .block_task()
+                        .await?;
+                    assert_eq!(refreshed["refresh_accepted"], true);
+                    assert!(
+                        cx.send_request(evaluation::GetEvaluationRequest {
+                            session_id: AcpSessionId::new("unknown")
+                        })
+                        .block_task()
+                        .await
+                        .is_err()
+                    );
+                    Ok(())
+                }),
+        )
+        .await
+        .expect("evaluation query blocked on the running session");
+        outcome.expect("evaluation extension round trip");
+        server.abort();
     }
 
     #[tokio::test]

@@ -40,6 +40,7 @@ arabica-runtime = { version = "0.1.0", path = "../arabica-runtime" }
 arabica-session = { version = "0.1.0", path = "../arabica-session" }
 tokio.workspace = true
 uuid.workspace = true
+serde-saphyr = { version = "=0.0.28", default-features = false, features = ["deserialize"] }
 
 [dev-dependencies]
 axum.workspace = true

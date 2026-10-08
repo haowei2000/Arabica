@@ -1,6 +1,11 @@
 //! SQLite session persistence and a legacy JSONL import adapter.
 
+mod evaluation_store;
 mod file_session_store;
+pub use evaluation_store::{
+    EvaluationCheckpoint, EvaluationView, EvaluationWorker, EvaluationWorkerStatus,
+    SavedEvaluation, SqliteEvaluationStore,
+};
 
 pub use arabica_session::{
     NewSession, SessionHeader, SessionListing, StoreError, StoreErrorKind, StoredSession,
