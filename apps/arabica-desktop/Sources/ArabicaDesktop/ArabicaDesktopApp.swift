@@ -45,6 +45,7 @@ struct ArabicaDesktopApp: App {
 
 private struct DesktopView: View {
     @EnvironmentObject var model: DesktopModel
+    @AppStorage("showEvaluationInspector") private var showEvaluation = false
 
     var body: some View {
         NavigationSplitView {
@@ -54,10 +55,22 @@ private struct DesktopView: View {
             conversation
         }
         .background(Palette.canvas)
+        .inspector(isPresented: $showEvaluation) {
+            EvaluationPanel(model: model.evaluation, isVisible: showEvaluation)
+                .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
+        }
         .sheet(item: $model.permission) { prompt in
             PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showEvaluation.toggle() } label: {
+                    Label("Background evaluation", systemImage: "chart.bar.doc.horizontal")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showEvaluation ? "Hide background evaluation" : "Show background evaluation")
+                .accessibilityValue(showEvaluation ? "Visible" : "Hidden")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { Task { await model.newSession() } } label: {
                     Label("New Conversation", systemImage: "square.and.pencil")
@@ -252,6 +265,8 @@ private struct DesktopView: View {
             Spacer()
             Text(model.workspace == nil ? "Start with a workspace." : "What would you like to work on?")
                 .font(.system(size: 33, weight: .medium, design: .serif))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(Palette.ink)
             Text(model.workspace == nil
                  ? "Choose a folder to give Arabica a place to work."
@@ -269,6 +284,7 @@ private struct DesktopView: View {
             Spacer()
         }
         .frame(maxWidth: 600, alignment: .leading)
+        .padding(.horizontal, 28)
         .frame(maxWidth: .infinity)
     }
 

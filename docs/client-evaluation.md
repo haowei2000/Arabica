@@ -76,8 +76,11 @@ no worker counters or refresh acceptance because this bridge does not own the
 CLI/ACP worker. The endpoint is an optional read exposure through the host's
 existing transport boundary.
 
-The native macOS client lives in `apps/arabica-desktop` and talks to ACP. These
-changes provide its backend integration points; they do not add an evaluation
-view to the SwiftUI client. HTTP Agent sessions also do
-not automatically persist JSONL or schedule evaluation; the HTTP bridge reads
-the explicitly configured CLI/ACP evaluation database.
+The native macOS client lives in `apps/arabica-desktop` and talks to ACP. Its
+collapsible Background evaluation inspector is available from the toolbar or
+Option-Command-I. It checks the advertised capability, polls while visible,
+preserves cached reports during refresh/failure, and discards responses from
+previous sessions or connections. Evaluation errors do not change chat state.
+
+HTTP Agent sessions do not automatically persist JSONL or schedule evaluation;
+the HTTP bridge reads the explicitly configured CLI/ACP evaluation database.
