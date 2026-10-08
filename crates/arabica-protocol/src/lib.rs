@@ -4,6 +4,9 @@
 //! values. Runtime, session, and runner modules must not invent parallel wire
 //! types.
 
+mod context;
+pub use context::*;
+
 use arabica_model::{
     FinishReason, ProviderResponseState, ProviderState, RuntimeItem, RuntimeRequest, RuntimeUsage,
 };
@@ -252,6 +255,34 @@ pub enum TerminalControllerTransitionReason {
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum Event {
+    #[serde(rename = "context.run.resolved")]
+    ContextRunResolved { snapshot: ContextRunSnapshot },
+    #[serde(rename = "context.request.exposed")]
+    ContextRequestExposed {
+        model_step: usize,
+        decision_id: String,
+        context_ids: Vec<String>,
+        #[serde(default)]
+        folded_ids: Vec<String>,
+    },
+    #[serde(rename = "context.item.unfolded")]
+    ContextItemUnfolded {
+        call_id: String,
+        decision_id: String,
+        context_id: String,
+    },
+    #[serde(rename = "context.call.started")]
+    ContextCallStarted {
+        call_id: String,
+        decision_id: String,
+        context_id: String,
+    },
+    #[serde(rename = "context.call.rejected")]
+    ContextCallRejected {
+        call_id: String,
+        decision_id: String,
+        context_id: Option<String>,
+    },
     #[serde(rename = "session.created")]
     SessionCreated { workspace_id: WorkspaceId },
     #[serde(rename = "session.forked")]
@@ -488,7 +519,12 @@ impl Event {
     pub const fn is_client_visible(&self) -> bool {
         !matches!(
             self,
-            Self::ModelRequestPrepared { .. }
+            Self::ContextRunResolved { .. }
+                | Self::ContextRequestExposed { .. }
+                | Self::ContextItemUnfolded { .. }
+                | Self::ContextCallStarted { .. }
+                | Self::ContextCallRejected { .. }
+                | Self::ModelRequestPrepared { .. }
                 | Self::ModelRouteSelected { .. }
                 | Self::ModelCallObserved { .. }
                 | Self::ModelResponseItem { .. }

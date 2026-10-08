@@ -6,7 +6,17 @@
 //! scheduling, event persistence,
 //! and event sequencing belong to `arabica-session`.
 
+mod context;
+mod context_report;
+mod evaluation;
+pub use evaluation::*;
+mod context_state;
+pub use context_report::{ContextItemMetrics, ContextReport, context_report};
 mod control;
+pub use context::{
+    ContextPolicy, SkillDefinition, SkillSource, mcp_context_identity, mcp_server_context_id,
+    tool_context_identity,
+};
 mod long_memory;
 mod short_memory;
 
@@ -617,6 +627,10 @@ pub struct CoreRuntime<M, R> {
     max_model_steps_without_progress: usize,
     terminal_controller_policy: TerminalControllerPolicy,
     tools: Vec<ToolDefinition>,
+    context_policy: Option<ContextPolicy>,
+    skills: Vec<SkillDefinition>,
+    skill_source: Option<Box<dyn SkillSource>>,
+    context_identities: std::collections::BTreeMap<String, arabica_protocol::ContextIdentity>,
     archive_store: RuntimeArchiveStore,
     history_projection: HistoryProjection,
     system_instructions: Vec<String>,
@@ -649,6 +663,10 @@ impl<M, R> CoreRuntime<M, R> {
             max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
+            context_policy: None,
+            skills: Vec::new(),
+            skill_source: None,
+            context_identities: std::collections::BTreeMap::new(),
             archive_store: RuntimeArchiveStore::Memory,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
@@ -685,6 +703,10 @@ impl<M, R> CoreRuntime<M, R> {
             max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
+            context_policy: None,
+            skills: Vec::new(),
+            skill_source: None,
+            context_identities: std::collections::BTreeMap::new(),
             archive_store: RuntimeArchiveStore::Memory,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
@@ -727,6 +749,10 @@ impl<M, R> CoreRuntime<M, R> {
             max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
+            context_policy: None,
+            skills: Vec::new(),
+            skill_source: None,
+            context_identities: std::collections::BTreeMap::new(),
             archive_store,
             history_projection: HistoryProjection::default(),
             system_instructions: Vec::new(),
@@ -944,6 +970,34 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_tools(&mut self, tools: Vec<ToolDefinition>) {
         self.tools = tools;
+    }
+
+    /// Set a policy for future runs; absence retains legacy availability.
+    pub fn set_context_policy(
+        &mut self,
+        policy: Option<ContextPolicy>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(policy) = &policy {
+            policy.validate()?;
+        }
+        self.context_policy = policy;
+        Ok(())
+    }
+
+    pub fn set_skill_source(&mut self, source: Box<dyn SkillSource>) {
+        self.skill_source = Some(source);
+    }
+
+    pub fn set_skills(&mut self, skills: Vec<SkillDefinition>) {
+        self.skills = skills;
+    }
+
+    /// Hosts supply stable identities before constructing a run snapshot.
+    pub fn set_context_identities(
+        &mut self,
+        identities: std::collections::BTreeMap<String, arabica_protocol::ContextIdentity>,
+    ) {
+        self.context_identities = identities;
     }
 
     pub fn short_memory_policy(&self) -> &ShortMemoryPolicy {
@@ -1554,7 +1608,66 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         format!("{:x}", Sha256::digest(bytes))
                     },
                 );
-                let tools = self.tools.clone();
+                let pinned_context_policy = self.context_policy.clone();
+                let mut catalog_tools = self.tools.clone();
+                // Typed completion synthesizes this schema in its final request.
+                if self.terminal_controller_policy.is_typed()
+                    && !catalog_tools
+                        .iter()
+                        .any(|tool| tool.name == RUNTIME_COMPLETE_TOOL_NAME)
+                {
+                    catalog_tools.push(runtime_complete_tool_definition());
+                }
+                let pinned_skills = match &self.skill_source {
+                    Some(source) => source.load()?,
+                    None => self.skills.clone(),
+                };
+                let managed_context = pinned_context_policy.is_some() || !pinned_skills.is_empty();
+                if managed_context {
+                    if catalog_tools.iter().any(|tool| {
+                        matches!(
+                            tool.name.as_str(),
+                            context_state::CONTEXT_UNFOLD | context_state::CONTEXT_READ
+                        )
+                    }) {
+                        return Err(RuntimeError::new(
+                            RuntimeErrorKind::InvalidConfiguration,
+                            "context control tool names are reserved",
+                        ));
+                    }
+                    catalog_tools.push(context_state::control_definition(
+                        context_state::CONTEXT_UNFOLD,
+                    ));
+                    if !pinned_skills.is_empty() {
+                        catalog_tools.push(context_state::control_definition(
+                            context_state::CONTEXT_READ,
+                        ));
+                    }
+                }
+                let context_snapshot = context::resolve_catalog(
+                    &catalog_tools,
+                    &self.context_identities,
+                    &pinned_skills,
+                    pinned_context_policy.as_ref(),
+                    format!("{run_id}:context"),
+                )?;
+                if self.terminal_controller_policy.is_typed()
+                    && !context_snapshot.items.iter().any(|item| {
+                        item.enabled
+                            && item.exposed_name == RUNTIME_COMPLETE_TOOL_NAME
+                            && item.identity.kind == arabica_protocol::ContextSourceKind::Tool
+                    })
+                {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidConfiguration,
+                        "context policy must enable runtime_complete for typed completion",
+                    ));
+                }
+                let mut run_context =
+                    context_state::RunContext::new(context_snapshot.clone(), pinned_skills);
+                event_log.append(Event::ContextRunResolved {
+                    snapshot: context_snapshot.clone(),
+                });
                 let mut protected_event_ids = HashSet::new();
                 let mut pointer_gc_economics = PointerGcRunEconomics::default();
                 let mut tool_loop_guard = ToolLoopGuard::default();
@@ -1708,6 +1821,11 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             AUTO_COMPLETION_REQUIRED_MESSAGE,
                         )));
                     }
+                    let request_context = run_context.prepare(
+                        &catalog_tools,
+                        &self.system_instructions,
+                        completion_required,
+                    );
                     let request = ModelRunRequest {
                         session_id: session_id.clone(),
                         run_id: run_id.clone(),
@@ -1715,11 +1833,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         short_memory: projection.short_memory,
                         run_memory,
                         long_memory,
-                        tools: if completion_required {
-                            vec![runtime_complete_tool_definition()]
-                        } else {
-                            tools.clone()
-                        },
+                        tools: request_context.tools,
                         tool_choice: if completion_required
                             && self.terminal_controller_policy
                                 == TerminalControllerPolicy::TypedCompletionV1
@@ -1732,8 +1846,10 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         },
                         continuation,
                         disclosure,
-                        system_instructions: self.system_instructions.clone(),
+                        system_instructions: request_context.instructions,
                     };
+                    let exposed_names: BTreeSet<_> =
+                        request.tools.iter().map(|tool| tool.name.clone()).collect();
                     let request_bytes = model_run_request_bytes(&request);
                     let decision_id = format!("{}:{model_step}", run_id);
                     let requires_tool_calling = !request.tools.is_empty();
@@ -1820,6 +1936,12 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         });
                     }
                     let planning_context_request = request.clone();
+                    event_log.append(Event::ContextRequestExposed {
+                        model_step,
+                        decision_id: context_snapshot.decision_id.clone(),
+                        context_ids: request_context.unfolded_ids,
+                        folded_ids: request_context.folded_ids,
+                    });
                     let model_call_started = Instant::now();
                     let result = match control.cancellation.as_ref() {
                         // Without a cancellation handle the call is awaited
@@ -2072,7 +2194,12 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         if control.is_cancelled() {
                             return self.finish_cancelled(run_id, event_log).await;
                         }
-                        let interaction_kind = if call.name == RUNTIME_COMPLETE_TOOL_NAME {
+                        let interaction_kind = if matches!(
+                            call.name.as_str(),
+                            RUNTIME_COMPLETE_TOOL_NAME
+                                | context_state::CONTEXT_UNFOLD
+                                | context_state::CONTEXT_READ
+                        ) {
                             ToolInteractionKind::Inspection
                         } else {
                             self.runner.classify(&call)
@@ -2089,7 +2216,86 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             kind: interaction_kind,
                         });
                         next_protected_event_ids.insert(classified.event_id);
+                        // Enforce before internal tools, cache reuse, approval, or runner dispatch.
+                        let context_item = context_snapshot.items.iter().find(|item| {
+                            item.exposed_name == call.name
+                                && matches!(
+                                    item.identity.item_type(),
+                                    arabica_protocol::ContextItemType::Tool
+                                        | arabica_protocol::ContextItemType::McpTool
+                                )
+                        });
+                        let exposed = exposed_names.contains(&call.name);
+                        if managed_context
+                            && (!context_item.is_some_and(|item| item.enabled) || !exposed)
+                        {
+                            event_log.append(Event::ContextCallRejected {
+                                call_id: call.call_id.clone(),
+                                decision_id: context_snapshot.decision_id.clone(),
+                                context_id: context_item.map(|item| item.identity.id.clone()),
+                            });
+                            let completed = event_log.append(Event::ToolCallCompleted {
+                                call_id: call.call_id.clone(),
+                                name: call.name.clone(),
+                                result:
+                                    "context_disabled: capability is not enabled for this request"
+                                        .to_owned(),
+                                is_error: true,
+                            });
+                            next_protected_event_ids.insert(completed.event_id);
+                            step_tool_errors = step_tool_errors.saturating_add(1);
+                            continue;
+                        }
+                        if matches!(
+                            call.name.as_str(),
+                            context_state::CONTEXT_UNFOLD | context_state::CONTEXT_READ
+                        ) {
+                            if let Some(item) = context_item {
+                                event_log.append(Event::ContextCallStarted {
+                                    call_id: call.call_id.clone(),
+                                    decision_id: context_snapshot.decision_id.clone(),
+                                    context_id: item.identity.id.clone(),
+                                });
+                            }
+                            let outcome = if call.name == context_state::CONTEXT_UNFOLD {
+                                run_context.unfold(&call).map(|changed| {
+                                    if let Some(id) = changed {
+                                        // Expanding new run-local context is progress, but never validation.
+                                        made_state_progress = true;
+                                        event_log.append(Event::ContextItemUnfolded { call_id: call.call_id.clone(), decision_id: context_snapshot.decision_id.clone(), context_id: id });
+                                    }
+                                    "context_unfolded: normal content is available on the next model request".to_owned()
+                                }).inspect_err(|_| {
+                                    event_log.append(Event::ContextCallRejected {
+                                        call_id: call.call_id.clone(), decision_id: context_snapshot.decision_id.clone(), context_id: run_context.requested_identity(&call),
+                                    });
+                                })
+                            } else {
+                                run_context.read(&call)
+                            };
+                            let (result, is_error) = match outcome {
+                                Ok(content) => (content, false),
+                                Err(reason) => (reason.to_owned(), true),
+                            };
+                            step_tool_errors =
+                                step_tool_errors.saturating_add(usize::from(is_error));
+                            let completed = event_log.append(Event::ToolCallCompleted {
+                                call_id: call.call_id.clone(),
+                                name: call.name.clone(),
+                                result,
+                                is_error,
+                            });
+                            next_protected_event_ids.insert(completed.event_id);
+                            continue;
+                        }
                         if call.name == RUNTIME_COMPLETE_TOOL_NAME {
+                            if let Some(item) = context_item {
+                                event_log.append(Event::ContextCallStarted {
+                                    call_id: call.call_id.clone(),
+                                    decision_id: context_snapshot.decision_id.clone(),
+                                    context_id: item.identity.id.clone(),
+                                });
+                            }
                             let completion_eligible = self.terminal_controller_policy
                                 == TerminalControllerPolicy::AdvisoryV18
                                 || completion_required;
@@ -2137,6 +2343,13 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             call.name.as_str(),
                             MEMORY_SEARCH_TOOL_NAME | MEMORY_READ_TOOL_NAME
                         ) {
+                            if let Some(item) = context_item {
+                                event_log.append(Event::ContextCallStarted {
+                                    call_id: call.call_id.clone(),
+                                    decision_id: context_snapshot.decision_id.clone(),
+                                    context_id: item.identity.id.clone(),
+                                });
+                            }
                             let memory = self
                                 .long_memory
                                 .get(&workspace_id)
@@ -2305,6 +2518,13 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     }
                                 }
                             }
+                        }
+                        if let Some(item) = context_item {
+                            event_log.append(Event::ContextCallStarted {
+                                call_id: call.call_id.clone(),
+                                decision_id: context_snapshot.decision_id.clone(),
+                                context_id: item.identity.id.clone(),
+                            });
                         }
                         if matches!(
                             call.name.as_str(),
@@ -5788,6 +6008,7 @@ mod tests {
             [
                 Event::RunStarted,
                 Event::MessageAccepted { .. },
+                Event::ContextRunResolved { .. },
                 Event::RunCancelled
             ]
         ));
@@ -5981,6 +6202,580 @@ mod tests {
                 .disclosure,
             DisclosureLevel::Detail
         );
+    }
+
+    fn readonly_context_policy() -> ContextPolicy {
+        ContextPolicy {
+            policy_id: "readonly".into(),
+            version: 1,
+            sets: BTreeMap::new(),
+            base_sets: BTreeSet::new(),
+            include: BTreeSet::from(["tool:read_file".into()]),
+            exclude: BTreeSet::new(),
+            disabled_sources: BTreeSet::new(),
+            default_mode: arabica_protocol::ContextMode::Unfolded,
+            unfolded: BTreeSet::new(),
+        }
+    }
+
+    #[derive(Debug)]
+    struct NeverExecuteRunner;
+    impl RunnerEnvironment for NeverExecuteRunner {
+        async fn execute(
+            &mut self,
+            _: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            panic!("disabled calls must never reach the runner")
+        }
+        async fn cancel(&mut self, _: &RunId) -> Result<bool, RunnerError> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn context_filters_requests_and_blocks_runner_and_internal_calls() {
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response(
+                    "write",
+                    "write_file",
+                    serde_json::json!({"path":"x", "content":"x"}),
+                ),
+                tool_response("memory", "memory_read", serde_json::json!({"path":"x"})),
+                tool_response(
+                    "finish",
+                    "runtime_complete",
+                    serde_json::json!({"summary":"done"}),
+                ),
+                tool_response("unknown", "invented", serde_json::json!({})),
+                text_response("done"),
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, NeverExecuteRunner);
+        runtime
+            .set_context_policy(Some(readonly_context_policy()))
+            .unwrap();
+        let session = SessionId::new("context-session");
+        runtime
+            .open_session(&session, &WorkspaceId::new("context-workspace"))
+            .unwrap();
+        let events = handle(
+            &mut runtime,
+            &session,
+            Some(&RunId::new("context-run")),
+            &[],
+            &Command::MessageSend {
+                content: "hello".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::ContextCallRejected { .. }))
+                .count(),
+            4
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::ContextCallStarted { .. } | Event::ToolCallPermissionRequested { .. }
+        )));
+        assert!(runtime.model.requests.iter().all(|request| {
+            request.tools.len() == 2
+                && request.tools.iter().any(|tool| tool.name == "read_file")
+                && request
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name == "context_unfold")
+        }));
+        assert!(matches!(events.last(), Some(Event::RunCompleted { .. })));
+        let history: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| history_event(i as u64 + 1, event))
+            .collect();
+        let report = context_report(&history);
+        assert_eq!(report.unknown_context_rejections, 1);
+        let read = report
+            .items
+            .iter()
+            .find(|(key, _)| key.contains("tool:read_file"))
+            .unwrap()
+            .1;
+        assert_eq!(
+            (read.eligible_runs, read.exposed_runs, read.activated_runs),
+            (1, 1, 0)
+        );
+        assert_eq!(read.completed_exposed_runs, 1);
+        let write = report
+            .items
+            .iter()
+            .find(|(key, _)| key.contains("tool:write_file"))
+            .unwrap()
+            .1;
+        assert_eq!(
+            (
+                write.exposed_runs,
+                write.rejected_calls,
+                write.started_calls
+            ),
+            (0, 1, 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn unfolding_changes_the_next_request_without_exposing_folded_skill_content() {
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("hidden", "read_file", serde_json::json!({"path":"x"})),
+                tool_response(
+                    "unfold-read",
+                    "context_unfold",
+                    serde_json::json!({"name":"read_file","type":"tool"}),
+                ),
+                tool_response("read", "read_file", serde_json::json!({"path":"x"})),
+                tool_response(
+                    "unfold-skill",
+                    "context_unfold",
+                    serde_json::json!({"name":"review","type":"skill"}),
+                ),
+                tool_response(
+                    "resource",
+                    "context_read",
+                    serde_json::json!({"name":"review","path":"checklist.md"}),
+                ),
+                tool_response(
+                    "traversal",
+                    "context_read",
+                    serde_json::json!({"name":"review","path":"../private"}),
+                ),
+                tool_response(
+                    "denied-unfold",
+                    "context_unfold",
+                    serde_json::json!({"name":"write_file","type":"tool"}),
+                ),
+                text_response("done"),
+            ]),
+        };
+        let skill = SkillDefinition {
+            identity: arabica_protocol::ContextIdentity {
+                id: "skill:review".into(),
+                kind: arabica_protocol::ContextSourceKind::Skill,
+                version: Some("v1".into()),
+                display_name: "review".into(),
+                server_id: None,
+                tool_id: None,
+            },
+            instructions: "PRIVATE_REVIEW_INSTRUCTIONS".into(),
+            requirements: BTreeSet::from(["tool:read_file".into()]),
+            resources: BTreeMap::from([("checklist.md".into(), "PRIVATE_CHECKLIST".into())]),
+        };
+        let session = SessionId::new("session-1");
+        let mut runtime = opened(model, SuccessfulValidationRunner, &session);
+        runtime.set_skills(vec![skill]);
+        let mut policy = readonly_context_policy();
+        policy.default_mode = arabica_protocol::ContextMode::Folded;
+        policy
+            .include
+            .extend(["skill:review".into(), "tool:write_file".into()]);
+        policy.exclude.insert("tool:write_file".into());
+        runtime.set_context_policy(Some(policy)).unwrap();
+        let events = handle(
+            &mut runtime,
+            &session,
+            Some(&RunId::new("run-1")),
+            &[],
+            &Command::MessageSend {
+                content: "review".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let requests = &runtime.model.requests;
+        assert!(
+            !requests[0]
+                .tools
+                .iter()
+                .any(|tool| tool.name == "read_file")
+        );
+        assert!(
+            !requests[1]
+                .tools
+                .iter()
+                .any(|tool| tool.name == "read_file")
+        );
+        assert!(
+            requests[2]
+                .tools
+                .iter()
+                .any(|tool| tool.name == "read_file")
+        );
+        assert!(requests[..4].iter().all(|request| {
+            !request
+                .system_instructions
+                .join("\n")
+                .contains("PRIVATE_REVIEW_INSTRUCTIONS")
+        }));
+        assert!(requests[4..].iter().all(|request| {
+            request
+                .system_instructions
+                .join("\n")
+                .contains("PRIVATE_REVIEW_INSTRUCTIONS")
+        }));
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.tools.iter().any(|tool| tool.name == "write_file"))
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::ContextItemUnfolded { .. }))
+                .count(),
+            2
+        );
+        assert!(events.iter().any(|event| matches!(event, Event::ToolCallCompleted { call_id, result, is_error: false, .. } if call_id == "resource" && result == "PRIVATE_CHECKLIST")));
+        assert!(events.iter().any(|event| matches!(event, Event::ToolCallCompleted { call_id, is_error: true, .. } if call_id == "traversal")));
+        let history: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| history_event(i as u64 + 1, event))
+            .collect();
+        let report = context_report(&history);
+        let skill = report
+            .items
+            .iter()
+            .find(|(key, _)| key.contains("skill:review"))
+            .unwrap()
+            .1;
+        assert_eq!(
+            (
+                skill.folded_runs,
+                skill.exposed_runs,
+                skill.unfold_count,
+                skill.activated_runs
+            ),
+            (1, 1, 1, 0)
+        );
+        let read = report
+            .items
+            .iter()
+            .find(|(key, _)| key.contains("tool:read_file"))
+            .unwrap()
+            .1;
+        assert_eq!(
+            (
+                read.folded_model_calls,
+                read.unfold_count,
+                read.started_calls,
+                read.rejected_calls
+            ),
+            (2, 1, 1, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_source_is_refreshed_once_per_run_and_modes_reset() {
+        #[derive(Debug)]
+        struct Source(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+        impl SkillSource for Source {
+            fn load(&self) -> Result<Vec<SkillDefinition>, RuntimeError> {
+                let revision = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                Ok(vec![SkillDefinition {
+                    identity: arabica_protocol::ContextIdentity {
+                        id: "skill:review".into(),
+                        kind: arabica_protocol::ContextSourceKind::Skill,
+                        version: Some(revision.to_string()),
+                        display_name: "review".into(),
+                        server_id: None,
+                        tool_id: None,
+                    },
+                    instructions: format!("REVIEW_REVISION_{revision}"),
+                    requirements: BTreeSet::new(),
+                    resources: BTreeMap::new(),
+                }])
+            }
+        }
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response(
+                    "unfold-1",
+                    "context_unfold",
+                    serde_json::json!({"name":"review","type":"skill"}),
+                ),
+                text_response("first"),
+                tool_response(
+                    "unfold-2",
+                    "context_unfold",
+                    serde_json::json!({"name":"review","type":"skill"}),
+                ),
+                text_response("second"),
+            ]),
+        };
+        let session = SessionId::new("session-1");
+        let mut runtime = opened(model, NeverExecuteRunner, &session);
+        runtime.set_skill_source(Box::new(Source(calls.clone())));
+        for run in ["run-1", "run-2"] {
+            handle(
+                &mut runtime,
+                &session,
+                Some(&RunId::new(run)),
+                &[],
+                &Command::MessageSend {
+                    content: "review".into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let requests = &runtime.model.requests;
+        assert!(
+            !requests[0]
+                .system_instructions
+                .join("\n")
+                .contains("REVIEW_REVISION_1")
+        );
+        assert!(
+            requests[1]
+                .system_instructions
+                .join("\n")
+                .contains("REVIEW_REVISION_1")
+        );
+        assert!(
+            !requests[2]
+                .system_instructions
+                .join("\n")
+                .contains("REVIEW_REVISION_1")
+        );
+        assert!(
+            !requests[2]
+                .system_instructions
+                .join("\n")
+                .contains("REVIEW_REVISION_2")
+        );
+        assert!(
+            requests[3]
+                .system_instructions
+                .join("\n")
+                .contains("REVIEW_REVISION_2")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_policy_updates_only_change_future_run_snapshots() {
+        let session = SessionId::new("session-1");
+        let mut runtime = opened(RecordingModel::successful(), NeverExecuteRunner, &session);
+        runtime
+            .set_context_policy(Some(readonly_context_policy()))
+            .unwrap();
+        let first = handle(
+            &mut runtime,
+            &session,
+            Some(&RunId::new("run-1")),
+            &[],
+            &Command::MessageSend {
+                content: "first".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let first_snapshot = first
+            .iter()
+            .find_map(|event| match event {
+                Event::ContextRunResolved { snapshot } => Some(snapshot.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let mut next = readonly_context_policy();
+        next.version = 2;
+        next.include = BTreeSet::from(["tool:write_file".into()]);
+        runtime.set_context_policy(Some(next)).unwrap();
+        let second = handle(
+            &mut runtime,
+            &session,
+            Some(&RunId::new("run-2")),
+            &[],
+            &Command::MessageSend {
+                content: "second".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let second_snapshot = second
+            .iter()
+            .find_map(|event| match event {
+                Event::ContextRunResolved { snapshot } => Some(snapshot),
+                _ => None,
+            })
+            .unwrap();
+        assert_ne!(
+            first_snapshot.policy_fingerprint,
+            second_snapshot.policy_fingerprint
+        );
+        assert_eq!(first_snapshot.policy_version, 1);
+        assert_eq!(second_snapshot.policy_version, 2);
+        assert_eq!(
+            first_snapshot
+                .items
+                .iter()
+                .filter(|item| item.enabled)
+                .map(|item| item.exposed_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["context_unfold", "read_file"]
+        );
+        assert_eq!(
+            second_snapshot
+                .items
+                .iter()
+                .filter(|item| item.enabled)
+                .map(|item| item.exposed_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["context_unfold", "write_file"]
+        );
+    }
+
+    #[tokio::test]
+    async fn context_enablement_cannot_bypass_permission_denial() {
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("read", "read_file", serde_json::json!({"path":"x"})),
+                text_response("done"),
+            ]),
+        };
+        let session = SessionId::new("session-1");
+        let mut runtime = opened(model, NeverExecuteRunner, &session);
+        runtime
+            .set_context_policy(Some(readonly_context_policy()))
+            .unwrap();
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy {
+                    default: ToolPermissionRule::Deny,
+                    by_tool: BTreeMap::new(),
+                },
+                approver: None,
+            }),
+            ..Default::default()
+        };
+        let events =
+            handle_controlled(&mut runtime, &session, &RunId::new("run-1"), &control, None).await;
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallPermissionResolved {
+                outcome: ToolPermissionOutcome::Denied,
+                ..
+            }
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::ContextCallStarted { .. }))
+        );
+        let history: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| history_event(i as u64 + 1, event))
+            .collect();
+        let report = context_report(&history);
+        let read = report
+            .items
+            .iter()
+            .find(|(key, _)| key.contains("tool:read_file"))
+            .unwrap()
+            .1;
+        assert_eq!(
+            (
+                read.exposed_runs,
+                read.activated_runs,
+                read.permission_denied_calls
+            ),
+            (1, 0, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn context_counts_reuse_separately_from_activation() {
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("read-1", "read_file", serde_json::json!({"path":"x"})),
+                tool_response("read-2", "read_file", serde_json::json!({"path":"x"})),
+                text_response("done"),
+            ]),
+        };
+        let session = SessionId::new("session-1");
+        let mut runtime = opened(model, SuccessfulValidationRunner, &session);
+        runtime
+            .set_context_policy(Some(readonly_context_policy()))
+            .unwrap();
+        let events = handle(
+            &mut runtime,
+            &session,
+            Some(&RunId::new("run-1")),
+            &[],
+            &Command::MessageSend {
+                content: "hello".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let history: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| history_event(i as u64 + 1, event))
+            .collect();
+        let report = context_report(&history);
+        let read = report
+            .items
+            .iter()
+            .find(|(key, _)| key.contains("tool:read_file"))
+            .unwrap()
+            .1;
+        assert_eq!(
+            (read.started_calls, read.successful_calls, read.reused_calls),
+            (1, 1, 1)
+        );
+        assert_eq!(
+            (
+                read.exposed_runs,
+                read.activated_runs,
+                read.exposed_model_calls
+            ),
+            (1, 1, 3)
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_completion_rejects_a_profile_without_completion_before_model_call() {
+        let mut runtime = CoreRuntime::new(RecordingModel::successful(), NeverExecuteRunner);
+        runtime
+            .set_context_policy(Some(readonly_context_policy()))
+            .unwrap();
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionV1);
+        let session = SessionId::new("context-session");
+        runtime
+            .open_session(&session, &WorkspaceId::new("context-workspace"))
+            .unwrap();
+        let error = handle(
+            &mut runtime,
+            &session,
+            Some(&RunId::new("context-run")),
+            &[],
+            &Command::MessageSend {
+                content: "hello".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), RuntimeErrorKind::InvalidConfiguration);
+        assert!(runtime.model.request.is_none());
     }
 
     #[tokio::test]

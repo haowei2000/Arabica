@@ -391,6 +391,11 @@ pub(super) fn updates_for(
         | Event::RunScheduled
         | Event::RunStarted
         | Event::MessageAccepted { .. }
+        | Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. }
         | Event::ModelRequestPrepared { .. }
         | Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }

@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::host::HostModel;
-use arabica_adapters::FileSessionStore;
 use arabica_model::{ContentBlock, RuntimeItem, RuntimeRole};
 use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, ToolPermissionOutcome,
@@ -2113,10 +2112,12 @@ async fn run_turn(
         session.manager.runtime_mut().model_mut(),
         tui_observer.sink(),
     );
-    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
         Arc::clone(&session.store) as Arc<dyn SessionEventObserver>,
         Arc::clone(&tui_observer) as Arc<dyn SessionEventObserver>,
-    ]));
+    ];
+    crate::evaluation::attach(&mut observers, &session.arabica_home);
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
     let cancellation = RunCancellation::new();
     let (permission_tx, mut permission_rx) =
         tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();
@@ -2939,11 +2940,7 @@ fn is_find_command(text: &str) -> bool {
 
 fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
     let workspace = workspace_id_for(&session.runner_root);
-    let stored = match FileSessionStore::read_session(
-        &session.arabica_home,
-        &workspace,
-        &session.session_id,
-    ) {
+    let stored = match session.session_store.read(&workspace, &session.session_id) {
         Ok(stored) => stored,
         Err(_) => return,
     };

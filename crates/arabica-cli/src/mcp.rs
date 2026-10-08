@@ -21,6 +21,7 @@ type Client = RunningService<RoleClient, ()>;
 struct RoutedTool {
     server: usize,
     original_name: String,
+    server_id: String,
 }
 
 /// Connections and tool names are scoped to a single ACP session. Nothing in
@@ -30,6 +31,7 @@ pub struct McpTools {
     clients: Vec<Client>,
     routes: HashMap<String, RoutedTool>,
     definitions: Vec<ToolDefinition>,
+    server_ids: std::collections::BTreeSet<String>,
 }
 
 /// One server's live connection plus its advertised tools, between
@@ -148,12 +150,49 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
 }
 
 impl McpTools {
+    /// Stable compound identities use original names, never flattened wire names.
+    pub fn context_identities(
+        &self,
+    ) -> std::collections::BTreeMap<String, arabica_protocol::ContextIdentity> {
+        let mut identities: std::collections::BTreeMap<_, _> = self
+            .definitions
+            .iter()
+            .filter_map(|tool| {
+                self.routes.get(&tool.name).map(|route| {
+                    (
+                        tool.name.clone(),
+                        arabica_runtime::mcp_context_identity(
+                            &route.server_id,
+                            tool,
+                            &route.original_name,
+                        ),
+                    )
+                })
+            })
+            .collect();
+        for server_id in &self.server_ids {
+            let id = arabica_runtime::mcp_server_context_id(server_id);
+            identities.insert(
+                id.clone(),
+                arabica_protocol::ContextIdentity {
+                    id,
+                    kind: arabica_protocol::ContextSourceKind::Mcp,
+                    version: None,
+                    display_name: server_id.clone(),
+                    server_id: Some(server_id.clone()),
+                    tool_id: None,
+                },
+            );
+        }
+        identities
+    }
+
     pub async fn connect(servers: Vec<McpServer>, cwd: &Path) -> Result<Self, String> {
         let mut result = Self::default();
         let mut names = HashSet::new();
         for server in servers {
             let connected = connect_server(server, cwd).await?;
-            result.register(connected, &mut names)?;
+            result.register(connected, &mut names, "session")?;
         }
         Ok(result)
     }
@@ -169,7 +208,7 @@ impl McpTools {
         for server in servers {
             match connect_server(server, cwd).await {
                 Ok(connected) => {
-                    if let Err(error) = result.register(connected, &mut names) {
+                    if let Err(error) = result.register(connected, &mut names, "configured") {
                         diagnostics.push(error);
                     }
                 }
@@ -184,16 +223,20 @@ impl McpTools {
         &mut self,
         connected: Connected,
         names: &mut HashSet<String>,
+        origin: &str,
     ) -> Result<(), String> {
         let Connected {
             name,
             client,
             tools,
         } = connected;
-        if !names.insert(name.clone()) {
+        if names.contains(&name) {
             return Err(format!("duplicate MCP server name '{name}'"));
         }
         let server_index = self.clients.len();
+        // Validate the whole server before publishing any of its routes.
+        let mut routes = HashMap::new();
+        let mut definitions = Vec::new();
         for tool in tools {
             let exposed_name = format!("mcp__{}__{}", safe_name(&name), safe_name(&tool.name));
             if tool.name.is_empty() || exposed_name.len() > 64 {
@@ -201,17 +244,18 @@ impl McpTools {
                     "MCP server '{name}' exposed a tool name that cannot be advertised to the model"
                 ));
             }
-            if self.routes.contains_key(&exposed_name) {
+            if self.routes.contains_key(&exposed_name) || routes.contains_key(&exposed_name) {
                 return Err(format!("MCP tool name collision at '{exposed_name}'"));
             }
-            self.routes.insert(
+            routes.insert(
                 exposed_name.clone(),
                 RoutedTool {
                     server: server_index,
                     original_name: tool.name.to_string(),
+                    server_id: format!("{origin}:{name}"),
                 },
             );
-            self.definitions.push(ToolDefinition {
+            definitions.push(ToolDefinition {
                 name: exposed_name,
                 description: format!(
                     "MCP server '{name}': {}",
@@ -221,6 +265,10 @@ impl McpTools {
                 strict: None,
             });
         }
+        names.insert(name.clone());
+        self.routes.extend(routes);
+        self.definitions.extend(definitions);
+        self.server_ids.insert(format!("{origin}:{name}"));
         self.clients.push(client);
         Ok(())
     }
@@ -229,6 +277,17 @@ impl McpTools {
     /// server indices; used to combine client-supplied servers with
     /// user-config ones.
     pub fn extend(&mut self, other: McpTools) -> Result<(), String> {
+        if !self.server_ids.is_disjoint(&other.server_ids) {
+            return Err("duplicate MCP server identity".to_owned());
+        }
+        if let Some(name) = other
+            .routes
+            .keys()
+            .filter(|name| self.routes.contains_key(*name))
+            .min()
+        {
+            return Err(format!("MCP tool name collision at '{name}'"));
+        }
         let offset = self.clients.len();
         for (exposed_name, route) in other.routes {
             if self.routes.contains_key(&exposed_name) {
@@ -239,9 +298,11 @@ impl McpTools {
                 RoutedTool {
                     server: route.server + offset,
                     original_name: route.original_name,
+                    server_id: route.server_id,
                 },
             );
         }
+        self.server_ids.extend(other.server_ids);
         self.definitions.extend(other.definitions);
         self.clients.extend(other.clients);
         Ok(())

@@ -313,7 +313,7 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
     // (`acp::AcpState::new_session`), so this round-trips it back rather
     // than re-deriving anything the store itself would not have used.
     let workspace_id = arabica_cli::host::workspace_id_for(&workspace_root);
-    let stored = arabica_adapters::FileSessionStore::read_session(
+    let stored = arabica_adapters::SqliteSessionStore::read_session(
         &arabica_home,
         &workspace_id,
         &arabica_protocol::SessionId::new(session_id),

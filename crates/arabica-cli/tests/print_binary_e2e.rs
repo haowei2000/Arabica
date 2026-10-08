@@ -6,7 +6,7 @@
 //!
 //! In particular this is the regression test for the "seed `session.created`"
 //! step in `run_task` (`crates/arabica-cli/src/print.rs`): a
-//! `FileSessionStore` cannot be constructed before the session_id its own
+//! `SqliteSessionStore` cannot be constructed before the session_id its own
 //! `Command::SessionCreate` dispatch allocates, so nothing observes that
 //! first event live -- `run_task` closes the gap with one manual
 //! `store.observe(&session_created, ..)` call. If that call were ever
@@ -17,7 +17,6 @@
 //! actually is `session.created` -- rather than only proving restore
 //! happens not to fail.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -62,42 +61,33 @@ fn temp_dir(label: &str) -> PathBuf {
 /// hash in the test) keeps this test decoupled from that hash's own
 /// implementation, and doubles as the "exactly one session file" assertion.
 fn find_session_file(arabica_home: &Path) -> PathBuf {
-    let sessions_root = arabica_home.join("sessions");
-    let workspace_dirs: Vec<PathBuf> = std::fs::read_dir(&sessions_root)
-        .expect("sessions dir exists")
-        .map(|entry| entry.expect("dir entry readable").path())
-        .collect();
-    assert_eq!(
-        workspace_dirs.len(),
-        1,
-        "expected exactly one workspace directory under {}",
-        sessions_root.display()
-    );
-    let session_files: Vec<PathBuf> = std::fs::read_dir(&workspace_dirs[0])
-        .expect("workspace dir exists")
-        .map(|entry| entry.expect("dir entry readable").path())
-        .collect();
-    assert_eq!(
-        session_files.len(),
-        1,
-        "expected exactly one session file under {}",
-        workspace_dirs[0].display()
-    );
-    session_files[0].clone()
+    let sessions = arabica_adapters::SqliteSessionStore::list_sessions(arabica_home, None).unwrap();
+    assert_eq!(sessions.len(), 1);
+    sessions[0].path.clone()
 }
 
 fn read_header(session_file: &Path) -> Value {
-    let content = std::fs::read_to_string(session_file).expect("session file readable");
-    let header_line = content.lines().next().expect("file has a header line");
-    serde_json::from_str(header_line).expect("header line is JSON")
+    serde_json::to_value(
+        arabica_adapters::SqliteSessionStore::read(session_file)
+            .unwrap()
+            .header,
+    )
+    .unwrap()
 }
 
 fn read_event_records(session_file: &Path) -> Vec<Value> {
-    let content = std::fs::read_to_string(session_file).expect("session file readable");
-    content
-        .lines()
-        .skip(1)
-        .map(|line| serde_json::from_str(line).expect("line is JSON"))
+    arabica_adapters::SqliteSessionStore::read(session_file)
+        .unwrap()
+        .events
+        .into_iter()
+        .map(|envelope| {
+            let visibility = if envelope.event.is_client_visible() {
+                "client"
+            } else {
+                "internal"
+            };
+            serde_json::json!({"record": "event", "visibility": visibility, "envelope": envelope})
+        })
         .collect()
 }
 
@@ -176,19 +166,13 @@ async fn continue_and_resume_append_to_the_same_session_file_across_real_process
     suspended["run_id"] = Value::Null;
     suspended["sequence"] = serde_json::json!(events_after_first.len() + 1);
     suspended["event"] = serde_json::json!({"type": "session.suspended"});
-    let record = serde_json::json!({
-        "record": "event",
-        "visibility": "client",
-        "envelope": suspended
-    });
-    writeln!(
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&session_file)
-            .expect("open session log"),
-        "{record}"
-    )
-    .expect("append suspended event");
+    let suspended: arabica_protocol::EventEnvelope = serde_json::from_value(suspended).unwrap();
+    {
+        let store = arabica_adapters::SqliteSessionStore::open_existing(&session_file).unwrap();
+        store
+            .append(&suspended, arabica_session::EventVisibility::Client)
+            .unwrap();
+    }
 
     let second = run_structure(
         &arabica_home,
