@@ -71,11 +71,55 @@ pub enum ToolPermissionRule {
 pub struct ToolPermissionPolicy {
     pub default: ToolPermissionRule,
     pub by_tool: BTreeMap<String, ToolPermissionRule>,
+    /// First matching argument rule takes precedence over the tool and default rules.
+    pub argument_rules: Vec<ToolArgumentPermissionRule>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolArgumentPermissionRule {
+    pub tool: String,
+    /// Dot-separated object path, or `*` to match the serialized arguments.
+    pub parameter: String,
+    pub pattern: String,
+    pub rule: ToolPermissionRule,
 }
 
 impl ToolPermissionPolicy {
-    pub fn rule_for(&self, tool: &str) -> ToolPermissionRule {
+    pub fn rule_for(&self, tool: &str, arguments: &serde_json::Value) -> ToolPermissionRule {
+        for rule in &self.argument_rules {
+            if rule.tool != tool {
+                continue;
+            }
+            let Some(value) = argument_value(arguments, &rule.parameter) else {
+                continue;
+            };
+            if regex::Regex::new(&rule.pattern).is_ok_and(|pattern| pattern.is_match(&value)) {
+                return rule.rule;
+            }
+        }
         self.by_tool.get(tool).copied().unwrap_or(self.default)
+    }
+}
+
+fn argument_value(arguments: &serde_json::Value, parameter: &str) -> Option<String> {
+    let value = if parameter == "*" {
+        arguments
+    } else {
+        parameter.split('.').try_fold(arguments, |value, segment| {
+            value
+                .as_object()
+                .and_then(|object| object.get(segment))
+                .or_else(|| {
+                    segment
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|index| value.get(index))
+                })
+        })?
+    };
+    match value {
+        serde_json::Value::String(value) => Some(value.clone()),
+        _ => Some(value.to_string()),
     }
 }
 

@@ -34,6 +34,10 @@ enum Palette {
 struct ArabicaDesktopApp: App {
     @StateObject private var model = DesktopModel()
 
+    init() {
+        _ = PermissionNotifications.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             DesktopView()
@@ -76,12 +80,26 @@ private struct DesktopView: View {
             conversation
         }
         .background(Palette.canvas)
+        .sheet(item: $model.permission) { prompt in
+            PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
+                .frame(minWidth: 500)
+        }
+        .onChange(of: model.permission?.id) { _, _ in
+            guard let prompt = model.permission,
+                  let sessionID = prompt.params["sessionId"] as? String else { return }
+            PermissionNotifications.shared.post(
+                sessionID: sessionID,
+                title: prompt.title,
+                detail: prompt.detail
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .arabicaPermissionNotificationOpened)) { event in
+            guard let sessionID = event.userInfo?["sessionId"] as? String else { return }
+            Task { await model.selectSession(sessionID) }
+        }
         .inspector(isPresented: $showEvaluation) {
             EvaluationPanel(model: model.evaluation, isVisible: showEvaluation)
                 .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
-        }
-        .sheet(item: $model.permission) { prompt in
-            PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -226,6 +244,14 @@ private struct DesktopView: View {
             .frame(height: 68)
             Rectangle().fill(Palette.rule).frame(height: 1)
 
+            if let prompt = model.permission {
+                PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 12)
+                Rectangle().fill(Palette.rule).frame(height: 1)
+            }
+
             if !model.plan.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("PLAN").font(AppFont.sans(10, weight: .bold)).foregroundStyle(Palette.muted)
@@ -271,7 +297,7 @@ private struct DesktopView: View {
                             if model.isRunning {
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Working…").foregroundStyle(Palette.muted)
+                                    Text(model.isWaitingForPermission ? "Waiting for permission…" : "Working…").foregroundStyle(Palette.muted)
                                 }
                                 .font(AppFont.sans(12))
                             }
@@ -688,9 +714,8 @@ private struct PermissionView: View {
             }
         }
         .padding(24)
-        .frame(width: 540)
-        .background(Palette.raised)
-        .interactiveDismissDisabled()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.raised, in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -1339,4 +1364,3 @@ private struct ContextPageView: View {
         }
     }
 }
-

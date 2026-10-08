@@ -177,6 +177,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -3339,12 +3340,16 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "structure-short-memory-benchmark"
 version = "0.1.0"
 dependencies = [
+ "arabica-adapters",
+ "arabica-cli",
  "arabica-model",
  "arabica-protocol",
  "arabica-provider",
  "arabica-runner",
  "arabica-runtime",
  "arabica-session",
+ "axum",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

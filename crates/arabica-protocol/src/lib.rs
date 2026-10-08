@@ -4,6 +4,9 @@
 //! values. Runtime, session, and runner modules must not invent parallel wire
 //! types.
 
+mod trace;
+pub use trace::*;
+
 mod context;
 pub use context::*;
 
@@ -387,6 +390,13 @@ pub enum Event {
         arguments: serde_json::Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider_state: Option<ProviderState>,
+    },
+    /// Monotonic duration of an actual runner invocation, excluding approval waits.
+    #[serde(rename = "tool.execution.observed")]
+    ToolExecutionObserved {
+        call_id: String,
+        elapsed_ms: u64,
+        outcome: ModelCallOutcome,
     },
     #[serde(rename = "tool.call.classified")]
     ToolCallClassified {

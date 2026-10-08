@@ -234,6 +234,12 @@ matcher = { type = "kind", value = "plan" }
 id = "special-read-route"
 model = "fast"
 matcher = { type = "exact_name", value = "read_file" }
+
+[[blend.policies.coding.tool_routes]]
+id = "sed-shell-route"
+model = "balanced"
+priority = 5
+matcher = { type = "event_trace_regex", value = "toolcall\\.shell\\.sed.*toolresult\\.shell\\.success" }
 ```
 
 `create_plan` and `update_plan` remain ordinary model-callable tools. The host
@@ -244,11 +250,17 @@ results are recorded as plan snapshots and mapped to ACP plan updates; failed
 generation leaves the previous plan intact.
 
 After a complete tool batch, routing checks no-progress recovery first, then a
-configured tool-error route, followed by exact tool-name rules, regex
-tool-name rules, interaction-kind rules, the success route, and the default
-model. Regex rules match tool names only. Within a matching tier, larger
-`priority` wins and configuration order breaks ties. Regex syntax and model
-aliases are validated when configuration loads. The route explanation records
+configured tool-error route, followed by exact tool-name rules, tool-name and
+event-trace regex rules, interaction-kind rules, the success route, and the
+default model. Tool-name regex rules match only a tool name. Event-trace rules
+match a space-separated sequence of normalized tokens from the current run's
+latest model step, such as `modelcall.succeeded`, `modelresponse.completed`,
+`toolcall.shell.sed`, `toolpermission.requested.shell`, and
+`toolresult.shell.success`. Shell call tokens include the first word of the
+`command` argument; other tool tokens include the tool name. Event traces omit
+argument and result contents. Within a matching tier, larger `priority` wins
+and configuration order breaks ties. Regex syntax and model aliases are
+validated when configuration loads. The route explanation records
 the rule ID, desired model, selected model, and any capability fallback.
 
 ## Evaluation: every decision, with delayed credit

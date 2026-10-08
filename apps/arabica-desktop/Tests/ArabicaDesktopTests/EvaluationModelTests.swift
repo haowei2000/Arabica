@@ -31,6 +31,24 @@ final class EvaluationModelTests: XCTestCase {
         XCTAssertEqual(try EvaluationSnapshot.decode(view(), session: "session").report?.checkpoint.sequence, 42)
     }
 
+    func testRunTimingAndUnknownAcceptanceDecodeWithoutInventingSuccess() throws {
+        var response = view()
+        var report = response["report"] as! [String: Any]
+        var snapshot: [String: Any] = ["run_id": "run", "session_id": "session", "workspace_id": "workspace",
+            "terminal_status": "completed", "timing": ["wall_ms": 2000, "approval_wait_ms": 500, "active_ms": 1500,
+                "model_call_ms_total": 900, "model_calls": 2, "usage_reported_calls": 1]]
+        report["runs"] = [["snapshot": snapshot, "acceptance": ["coverage_bps": 0, "results": []]]]
+        response["report"] = report
+        let decoded = try EvaluationSnapshot.decode(response, session: "session").report!.runs!.first!
+        XCTAssertEqual(decoded.snapshot.timing.active_ms, 1500)
+        XCTAssertNil(decoded.snapshot.timing.runner_ms_total)
+        XCTAssertNil(decoded.acceptance?.verified_success)
+        snapshot["session_id"] = "other"
+        report["runs"] = [["snapshot": snapshot]]
+        response["report"] = report
+        XCTAssertThrowsError(try EvaluationSnapshot.decode(response, session: "session"))
+    }
+
     func testRefreshAcceptanceRetainsCachedReportWhenWorkerReturnsNoReport() async {
         let model = EvaluationModel()
         var requests: [String] = []

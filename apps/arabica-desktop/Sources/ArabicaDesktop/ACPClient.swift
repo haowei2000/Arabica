@@ -37,6 +37,24 @@ private final class ACPStartupDiagnostic: @unchecked Sendable {
     }
 }
 
+enum ACPRequestID: Hashable {
+    case integer(Int)
+    case string(String)
+
+    init?(_ value: Any?) {
+        if let value = value as? String { self = .string(value) }
+        else if let value = value as? Int { self = .integer(value) }
+        else { return nil }
+    }
+
+    var jsonValue: Any {
+        switch self {
+        case .integer(let value): return value
+        case .string(let value): return value
+        }
+    }
+}
+
 enum ACPError: LocalizedError {
     case executableMissing
     case disconnected
@@ -95,7 +113,7 @@ struct ACPLineDecoder {
 @MainActor
 final class ACPClient {
     var onNotification: ((String, [String: Any]) -> Void)?
-    var onRequest: ((Int, String, [String: Any]) -> Void)?
+    var onRequest: ((ACPRequestID, String, [String: Any]) -> Void)?
     var onExit: (() -> Void)?
 
     private var process: Process?
@@ -184,19 +202,19 @@ final class ACPClient {
         try write(["jsonrpc": "2.0", "method": method, "params": params])
     }
 
-    func respond(id: Int, result: [String: Any]) throws {
-        try write(["jsonrpc": "2.0", "id": id, "result": result])
+    func respond(id: ACPRequestID, result: [String: Any]) throws {
+        try write(["jsonrpc": "2.0", "id": id.jsonValue, "result": result])
     }
 
-    func rejectUnknownRequest(id: Int) throws {
+    func rejectUnknownRequest(id: ACPRequestID) throws {
         try write([
-            "jsonrpc": "2.0", "id": id,
+            "jsonrpc": "2.0", "id": id.jsonValue,
             "error": ["code": -32601, "message": "Method not found"],
         ])
     }
 
-    func reject(id: Int, message: String, code: Int = -32602) throws {
-        try write(["jsonrpc": "2.0", "id": id,
+    func reject(id: ACPRequestID, message: String, code: Int = -32602) throws {
+        try write(["jsonrpc": "2.0", "id": id.jsonValue,
                    "error": ["code": code, "message": message]])
     }
 
@@ -225,8 +243,8 @@ final class ACPClient {
         }
     }
 
-    private func route(_ message: [String: Any]) {
-        if let id = message["id"] as? Int, let method = message["method"] as? String {
+    func route(_ message: [String: Any]) {
+        if let id = ACPRequestID(message["id"]), let method = message["method"] as? String {
             onRequest?(id, method, message["params"] as? [String: Any] ?? [:])
         } else if let id = message["id"] as? Int, let continuation = pending.removeValue(forKey: id) {
             if let error = message["error"] as? [String: Any] {

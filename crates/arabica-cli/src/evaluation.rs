@@ -34,6 +34,35 @@ pub(crate) fn attach(observers: &mut Vec<Arc<dyn SessionEventObserver>>, home: &
 
 #[derive(clap::Subcommand, Debug)]
 pub enum EvaluationAction {
+    /// Freeze and inspect per-run timing and acceptance evidence for a session.
+    Runs {
+        session_id: String,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Score immutable terminal evidence using an explicit JSON acceptance spec.
+    Score {
+        session_id: String,
+        run_id: String,
+        #[arg(long)]
+        specification: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long, default_value = "evidence-checks")]
+        scorer: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare actual scored trials listed in a JSON manifest; never replays
+    /// one policy's history as if a different policy had executed it.
+    Compare {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     /// Read the most recently persisted report without starting an Agent.
     Show {
         session_id: String,
@@ -67,6 +96,25 @@ pub enum EvaluationAction {
 
 pub async fn run(action: EvaluationAction) -> i32 {
     match action {
+        EvaluationAction::Runs {
+            session_id,
+            workspace_id,
+            json,
+        } => run_quality(session_id, workspace_id, None, json),
+        EvaluationAction::Score {
+            session_id,
+            run_id,
+            specification,
+            workspace_id,
+            scorer,
+            json,
+        } => run_quality(
+            session_id,
+            workspace_id,
+            Some((run_id, specification, scorer)),
+            json,
+        ),
+        EvaluationAction::Compare { manifest, json } => run_compare(manifest, json),
         EvaluationAction::Show {
             session_id,
             workspace_id,
@@ -80,6 +128,145 @@ pub async fn run(action: EvaluationAction) -> i32 {
         } => run_evolve(session_id, workspace_id, json),
         EvaluationAction::Daemon { capacity } => run_daemon(capacity).await,
     }
+}
+
+type QualityResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn bounded_json<T: serde::de::DeserializeOwned>(path: &Path) -> QualityResult<T> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("evaluation input exceeds one MiB".into());
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn workspace_identity(id: Option<String>) -> QualityResult<arabica_protocol::WorkspaceId> {
+    Ok(match id {
+        Some(id) => arabica_protocol::WorkspaceId::new(id),
+        None => crate::host::workspace_id_for(&std::env::current_dir()?),
+    })
+}
+
+fn session_runs(
+    home: &Path,
+    workspace: &arabica_protocol::WorkspaceId,
+    session: &arabica_protocol::SessionId,
+    db: &mut arabica_adapters::SqliteEvaluationStore,
+) -> QualityResult<Vec<arabica_runtime::RunEvaluation>> {
+    use arabica_session::SessionStore;
+    let stored = arabica_adapters::SqliteSessionRepository::new(home).read(workspace, session)?;
+    let mut runs = Vec::new();
+    for snapshot in arabica_runtime::run_evidence_snapshots(&stored.events) {
+        let snapshot = db.resolve_run_snapshot(snapshot)?;
+        let acceptance = db.latest_acceptance(&snapshot)?;
+        runs.push(arabica_runtime::RunEvaluation {
+            snapshot,
+            acceptance,
+        });
+    }
+    Ok(runs)
+}
+
+fn print_quality<T: serde::Serialize>(result: QualityResult<T>, json: bool) -> i32 {
+    match result {
+        Ok(value) => {
+            let encoded = if json {
+                serde_json::to_string(&value)
+            } else {
+                serde_json::to_string_pretty(&value)
+            };
+            match encoded {
+                Ok(encoded) => {
+                    println!("{encoded}");
+                    0
+                }
+                Err(_) => {
+                    eprintln!("error: could not serialize evaluation report");
+                    1
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("error: run evaluation failed: {error}");
+            1
+        }
+    }
+}
+
+fn run_quality(
+    session: String,
+    workspace: Option<String>,
+    score: Option<(String, PathBuf, String)>,
+    json: bool,
+) -> i32 {
+    let result = (|| -> QualityResult<Vec<arabica_runtime::RunEvaluation>> {
+        let home = arabica_adapters::default_arabica_home()?;
+        let workspace = workspace_identity(workspace)?;
+        let session = arabica_protocol::SessionId::new(session);
+        let mut db =
+            arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+        let mut runs = session_runs(&home, &workspace, &session, &mut db)?;
+        if let Some((run_id, path, scorer)) = score {
+            let specification: arabica_runtime::AcceptanceSpec = bounded_json(&path)?;
+            let run = runs
+                .iter_mut()
+                .find(|run| run.snapshot.run_id.0 == run_id)
+                .ok_or("terminal run not found in this session")?;
+            let registry = arabica_runtime::EvaluationRegistry::builtins(
+                &arabica_runtime::EvaluationConfig::default(),
+            )?;
+            let acceptance = registry.acceptance(&scorer, &run.snapshot, &specification)?;
+            db.save_acceptance(&run.snapshot, &specification, &acceptance)?;
+            run.acceptance = Some(acceptance);
+            runs.retain(|run| run.snapshot.run_id.0 == run_id);
+        }
+        Ok(runs)
+    })();
+    print_quality(result, json)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComparisonManifest {
+    trials: Vec<ComparisonReference>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComparisonReference {
+    candidate: String,
+    repetition: u32,
+    workspace_id: String,
+    session_id: String,
+    run_id: String,
+}
+
+fn run_compare(manifest: PathBuf, json: bool) -> i32 {
+    let result = (|| -> QualityResult<Vec<arabica_runtime::PolicyComparisonSummary>> {
+        let manifest: ComparisonManifest = bounded_json(&manifest)?;
+        let home = arabica_adapters::default_arabica_home()?;
+        let mut db =
+            arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+        let mut trials = Vec::new();
+        for reference in manifest.trials {
+            let workspace = arabica_protocol::WorkspaceId::new(reference.workspace_id);
+            let session = arabica_protocol::SessionId::new(reference.session_id);
+            let evaluation = session_runs(&home, &workspace, &session, &mut db)?
+                .into_iter()
+                .find(|run| run.snapshot.run_id.0 == reference.run_id)
+                .ok_or("comparison terminal run not found")?;
+            trials.push(arabica_runtime::PolicyComparisonTrial {
+                candidate: reference.candidate,
+                repetition: reference.repetition,
+                evaluation,
+            });
+        }
+        db.save_policy_comparison(&trials)
+    })();
+    print_quality(result, json)
 }
 
 fn run_show(session_id: String, workspace_id: Option<String>, json: bool) -> i32 {

@@ -8,6 +8,8 @@
 
 mod context;
 mod context_report;
+mod run_evaluation;
+pub use run_evaluation::*;
 mod evaluation;
 pub use evaluation::*;
 mod context_state;
@@ -45,8 +47,8 @@ use arabica_runner::{
     write_file_definition,
 };
 pub use control::{
-    PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
-    ToolPermissionPolicy, ToolPermissionRule,
+    PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolArgumentPermissionRule,
+    ToolPermissionGate, ToolPermissionPolicy, ToolPermissionRule,
 };
 pub use long_memory::{
     ArchivedMemory, FileArchiveStore, LongMemoryError, LongMemoryErrorKind, LongMemoryManager,
@@ -398,6 +400,8 @@ pub fn plan_tool_definitions() -> Vec<ToolDefinition> {
 pub enum BlendToolMatcher {
     ExactName(String),
     RegexName(String),
+    EventTraceRegex(String),
+    EventTraceV1Regex(String),
     Kind(ToolInteractionKind),
 }
 
@@ -548,6 +552,8 @@ enum BlendRouteReason {
     AfterToolError,
     ToolRouteExactName,
     ToolRouteRegexName,
+    ToolRouteEventTraceRegex,
+    ToolRouteEventTraceV1Regex,
     ToolRouteKind,
     NoProgressRecovery,
     MinimumDwell,
@@ -562,6 +568,8 @@ impl BlendRouteReason {
             Self::AfterToolError => "after_tool_error",
             Self::ToolRouteExactName => "tool_route_exact_name",
             Self::ToolRouteRegexName => "tool_route_regex_name",
+            Self::ToolRouteEventTraceRegex => "tool_route_event_trace_regex",
+            Self::ToolRouteEventTraceV1Regex => "tool_route_event_trace_v1_regex",
             Self::ToolRouteKind => "tool_route_kind",
             Self::NoProgressRecovery => "no_progress_recovery",
             Self::MinimumDwell => "minimum_model_dwell",
@@ -1292,6 +1300,12 @@ fn choose_tool_route(
     events: &[EventEnvelope],
     run_id: &RunId,
 ) -> Option<BlendRouteDecision> {
+    let event_trace = tool_event_trace(events, run_id);
+    let v1_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.run_id.as_ref() == Some(run_id))
+        .collect();
+    let trace_v1 = arabica_protocol::event_trace_v1(&v1_events);
     let mut calls = HashMap::<String, (String, ToolInteractionKind)>::new();
     let mut completed = Vec::<(String, ToolInteractionKind)>::new();
     for envelope in events
@@ -1321,8 +1335,17 @@ fn choose_tool_route(
     }
 
     let mut selected: Option<(u8, i32, usize, String, BlendRouteReason, String)> = None;
+    let no_completed_tools = completed.is_empty();
+    if no_completed_tools {
+        completed.push((String::new(), ToolInteractionKind::Generic));
+    }
     for (name, kind) in completed {
         for (index, route) in policy.tool_routes.iter().enumerate() {
+            if no_completed_tools
+                && !matches!(route.matcher, BlendToolMatcher::EventTraceV1Regex(_))
+            {
+                continue;
+            }
             let (tier, reason, matched) = match &route.matcher {
                 BlendToolMatcher::ExactName(expected) => {
                     (3, BlendRouteReason::ToolRouteExactName, name == *expected)
@@ -1331,6 +1354,18 @@ fn choose_tool_route(
                     2,
                     BlendRouteReason::ToolRouteRegexName,
                     Regex::new(pattern).is_ok_and(|regex| regex.is_match(&name)),
+                ),
+                BlendToolMatcher::EventTraceRegex(pattern) => (
+                    2,
+                    BlendRouteReason::ToolRouteEventTraceRegex,
+                    Regex::new(pattern).is_ok_and(|regex| regex.is_match(&event_trace)),
+                ),
+                BlendToolMatcher::EventTraceV1Regex(pattern) => (
+                    2,
+                    BlendRouteReason::ToolRouteEventTraceV1Regex,
+                    trace_v1.as_ref().is_some_and(|trace| {
+                        Regex::new(pattern).is_ok_and(|regex| regex.is_match(trace))
+                    }),
                 ),
                 BlendToolMatcher::Kind(expected) => {
                     (1, BlendRouteReason::ToolRouteKind, kind == *expected)
@@ -1360,6 +1395,72 @@ fn choose_tool_route(
             rule_id: Some(rule_id),
         },
     )
+}
+
+/// Stable, payload-light trace language used by Blend event-trace routes.
+/// The trace is scoped to this run and starts immediately after its previous
+/// model-route decision. Tool arguments and results are deliberately omitted.
+fn tool_event_trace(events: &[EventEnvelope], run_id: &RunId) -> String {
+    let mut names = HashMap::<&str, &str>::new();
+    for envelope in events {
+        if envelope.run_id.as_ref() != Some(run_id) {
+            continue;
+        }
+        if let Event::ToolCallRequested { call_id, name, .. } = &envelope.event {
+            names.insert(call_id, name);
+        }
+    }
+    let mut tokens = Vec::new();
+    for envelope in events
+        .iter()
+        .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+    {
+        let token = match &envelope.event {
+            Event::ModelCallObserved { outcome, .. } => {
+                Some(format!("modelcall.{:?}", outcome).to_ascii_lowercase())
+            }
+            Event::ModelResponseCompleted { .. } => Some("modelresponse.completed".to_owned()),
+            Event::ModelResponseRejected { .. } => Some("modelresponse.rejected".to_owned()),
+            Event::ToolCallRequested {
+                name, arguments, ..
+            } => {
+                let argument = if name == "shell" {
+                    arguments
+                        .get("command")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|command| command.split_whitespace().next())
+                } else {
+                    None
+                };
+                Some(argument.map_or_else(
+                    || format!("toolcall.{name}"),
+                    |argument| format!("toolcall.{name}.{argument}"),
+                ))
+            }
+            Event::ToolCallClassified { call_id, kind } => names
+                .get(call_id.as_str())
+                .map(|name| format!("toolclass.{name}.{:?}", kind).to_ascii_lowercase()),
+            Event::ToolCallPermissionRequested { call_id } => names
+                .get(call_id.as_str())
+                .map(|name| format!("toolpermission.requested.{name}")),
+            Event::ToolCallPermissionResolved {
+                call_id, outcome, ..
+            } => names.get(call_id.as_str()).map(|name| {
+                format!("toolpermission.resolved.{name}.{:?}", outcome).to_ascii_lowercase()
+            }),
+            Event::ToolCallCompleted { name, is_error, .. } => Some(format!(
+                "toolresult.{name}.{}",
+                if *is_error { "error" } else { "success" }
+            )),
+            Event::AgentProgressAdvisory { .. } => Some("agentprogress.advisory".to_owned()),
+            Event::AgentLoopTerminated { .. } => Some("agentloop.terminated".to_owned()),
+            _ => None,
+        };
+        if let Some(token) = token {
+            tokens.push(token);
+        }
+    }
+    tokens.join(" ")
 }
 
 fn capability_eligible_alias(
@@ -1409,7 +1510,7 @@ impl<M: ModelProvider, R> CoreRuntime<M, R> {
                 route.id.trim().is_empty()
                     || !route_ids.insert(route.id.as_str())
                     || !self.model.supports_model_alias(&route.model)
-                    || matches!(&route.matcher, BlendToolMatcher::RegexName(pattern) if Regex::new(pattern).is_err())
+                    || matches!(&route.matcher, BlendToolMatcher::RegexName(pattern) | BlendToolMatcher::EventTraceRegex(pattern) | BlendToolMatcher::EventTraceV1Regex(pattern) if Regex::new(pattern).is_err())
             });
             if policy.policy_id.trim().is_empty()
                 || policy.version == 0
@@ -2440,7 +2541,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             }
                         }
                         if let Some(gate) = control.permissions.as_ref() {
-                            let decision = match gate.policy.rule_for(&call.name) {
+                            let decision = match gate.policy.rule_for(&call.name, &call.arguments) {
                                 // Allowed calls record nothing, so a host that
                                 // gates only shell leaves reads untouched.
                                 ToolPermissionRule::Allow => None,
@@ -2684,6 +2785,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             run_id: run_id.clone(),
                             call: call.clone(),
                         };
+                        let execution_started = Instant::now();
                         let execution = match control.cancellation.as_ref() {
                             None => self.runner.execute(execution_request).await,
                             Some(cancellation) => {
@@ -2697,6 +2799,14 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 match outcome {
                                     Some(execution) => execution,
                                     None => {
+                                        event_log.append(Event::ToolExecutionObserved {
+                                            call_id: call.call_id.clone(),
+                                            elapsed_ms: u64::try_from(
+                                                execution_started.elapsed().as_millis(),
+                                            )
+                                            .unwrap_or(u64::MAX),
+                                            outcome: ModelCallOutcome::Cancelled,
+                                        });
                                         // Dropping the execution kills a
                                         // shell call's process group. The call
                                         // was requested, so it must complete.
@@ -2711,6 +2821,16 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 }
                             }
                         };
+                        event_log.append(Event::ToolExecutionObserved {
+                            call_id: call.call_id.clone(),
+                            elapsed_ms: u64::try_from(execution_started.elapsed().as_millis())
+                                .unwrap_or(u64::MAX),
+                            outcome: if execution.is_ok() {
+                                ModelCallOutcome::Succeeded
+                            } else {
+                                ModelCallOutcome::Failed
+                            },
+                        });
                         let execution = match execution {
                             Ok(execution) => execution,
                             Err(error) => {
@@ -4862,6 +4982,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn v1_trace_correlates_shell_results_and_covers_non_tool_events() {
+        let events = [
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "c1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command": "sed -n '1p' secret-file"}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "c1".into(),
+                    name: "shell".into(),
+                    result: "secret-output".into(),
+                    is_error: false,
+                },
+            ),
+            history_event(3, Event::RunCancelled),
+        ];
+        let trace = arabica_protocol::event_trace_v1(&events.iter().collect::<Vec<_>>()).unwrap();
+        assert!(
+            Regex::new(r"(?m)^toolcall\.shell\.(sed|rg)\|")
+                .unwrap()
+                .is_match(&trace)
+        );
+        assert!(trace.contains("toolresult.shell.sed.success|call=c1|"));
+        assert!(trace.contains("run.cancelled|"));
+        assert!(!trace.contains("secret"));
+    }
+
     fn history_event(sequence: u64, event: Event) -> EventEnvelope {
         EventEnvelope::new(
             EventMetadata {
@@ -4954,6 +5108,21 @@ mod tests {
         let kind = choose_tool_route(&policy, &events, &run_id).expect("kind rule matches");
         assert_eq!(kind.model_alias, "by-kind");
         assert_eq!(kind.rule_id.as_deref(), Some("plan-kind"));
+
+        policy.tool_routes = vec![BlendToolRoute {
+            id: "v1".into(),
+            matcher: BlendToolMatcher::EventTraceV1Regex(r"(?m)^run\.cancelled\|".into()),
+            model: "by-trace".into(),
+            priority: 0,
+        }];
+        let non_tool_events = vec![history_event(1, Event::RunCancelled)];
+        assert_eq!(
+            choose_tool_route(&policy, &non_tool_events, &run_id)
+                .unwrap()
+                .model_alias,
+            "by-trace"
+        );
+        assert!(choose_tool_route(&policy, &non_tool_events, &RunId::new("other-run")).is_none());
     }
 
     #[test]
@@ -5475,13 +5644,23 @@ mod tests {
         let mut policy = ToolPermissionPolicy {
             default: ToolPermissionRule::Ask,
             by_tool: BTreeMap::new(),
+            argument_rules: Vec::new(),
         };
-        assert_eq!(policy.rule_for("shell"), ToolPermissionRule::Ask);
+        assert_eq!(
+            policy.rule_for("shell", &serde_json::Value::Null),
+            ToolPermissionRule::Ask
+        );
         policy
             .by_tool
             .insert("read_file".to_owned(), ToolPermissionRule::Allow);
-        assert_eq!(policy.rule_for("read_file"), ToolPermissionRule::Allow);
-        assert_eq!(policy.rule_for("shell"), ToolPermissionRule::Ask);
+        assert_eq!(
+            policy.rule_for("read_file", &serde_json::Value::Null),
+            ToolPermissionRule::Allow
+        );
+        assert_eq!(
+            policy.rule_for("shell", &serde_json::Value::Null),
+            ToolPermissionRule::Ask
+        );
     }
 
     #[test]
@@ -5566,6 +5745,7 @@ mod tests {
                 policy: ToolPermissionPolicy {
                     default: ToolPermissionRule::Allow,
                     by_tool: BTreeMap::new(),
+                    argument_rules: Vec::new(),
                 },
                 approver: None,
             }),
@@ -5594,6 +5774,7 @@ mod tests {
                 policy: ToolPermissionPolicy {
                     default: ToolPermissionRule::Allow,
                     by_tool,
+                    argument_rules: Vec::new(),
                 },
                 approver: None,
             }),
@@ -6659,6 +6840,7 @@ mod tests {
                 policy: ToolPermissionPolicy {
                     default: ToolPermissionRule::Deny,
                     by_tool: BTreeMap::new(),
+                    argument_rules: Vec::new(),
                 },
                 approver: None,
             }),

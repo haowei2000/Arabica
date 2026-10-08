@@ -48,6 +48,7 @@ pub fn default_policy() -> ToolPermissionPolicy {
     ToolPermissionPolicy {
         default: ToolPermissionRule::Ask,
         by_tool,
+        argument_rules: Vec::new(),
     }
 }
 
@@ -162,14 +163,38 @@ mod tests {
     #[test]
     fn default_policy_allows_only_the_read_only_tools() {
         let policy = default_policy();
-        assert_eq!(policy.rule_for("read_file"), ToolPermissionRule::Allow);
-        assert_eq!(policy.rule_for("list_dir"), ToolPermissionRule::Allow);
-        assert_eq!(policy.rule_for("grep"), ToolPermissionRule::Allow);
-        assert_eq!(policy.rule_for("find_files"), ToolPermissionRule::Allow);
-        assert_eq!(policy.rule_for("write_file"), ToolPermissionRule::Ask);
-        assert_eq!(policy.rule_for("edit_files"), ToolPermissionRule::Ask);
-        assert_eq!(policy.rule_for("delete_file"), ToolPermissionRule::Ask);
-        assert_eq!(policy.rule_for("shell"), ToolPermissionRule::Ask);
+        assert_eq!(
+            policy.rule_for("read_file", &serde_json::Value::Null),
+            ToolPermissionRule::Allow
+        );
+        assert_eq!(
+            policy.rule_for("list_dir", &serde_json::Value::Null),
+            ToolPermissionRule::Allow
+        );
+        assert_eq!(
+            policy.rule_for("grep", &serde_json::Value::Null),
+            ToolPermissionRule::Allow
+        );
+        assert_eq!(
+            policy.rule_for("find_files", &serde_json::Value::Null),
+            ToolPermissionRule::Allow
+        );
+        assert_eq!(
+            policy.rule_for("write_file", &serde_json::Value::Null),
+            ToolPermissionRule::Ask
+        );
+        assert_eq!(
+            policy.rule_for("edit_files", &serde_json::Value::Null),
+            ToolPermissionRule::Ask
+        );
+        assert_eq!(
+            policy.rule_for("delete_file", &serde_json::Value::Null),
+            ToolPermissionRule::Ask
+        );
+        assert_eq!(
+            policy.rule_for("shell", &serde_json::Value::Null),
+            ToolPermissionRule::Ask
+        );
     }
 
     #[test]
