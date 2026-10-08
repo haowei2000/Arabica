@@ -14,6 +14,8 @@ readme = "../../README.md"
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true }
 serde_json.workspace = true
+rusqlite.workspace = true
+arabica-runtime = { version = "0.1.0", path = "../arabica-runtime" }
 arabica-protocol = { version = "0.1.0", path = "../arabica-protocol" }
 arabica-session = { version = "0.1.0", path = "../arabica-session" }
 

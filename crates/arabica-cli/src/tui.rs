@@ -2113,10 +2113,12 @@ async fn run_turn(
         session.manager.runtime_mut().model_mut(),
         tui_observer.sink(),
     );
-    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
         Arc::clone(&session.store) as Arc<dyn SessionEventObserver>,
         Arc::clone(&tui_observer) as Arc<dyn SessionEventObserver>,
-    ]));
+    ];
+    crate::evaluation::attach(&mut observers, &session.arabica_home);
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
     let cancellation = RunCancellation::new();
     let (permission_tx, mut permission_rx) =
         tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();

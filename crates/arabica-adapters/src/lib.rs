@@ -10,7 +10,12 @@
 //! `SessionManager::restore_session`. No host wires it in yet -- that is
 //! `arabica-cli`'s job (`P2-3` in the CLI/ACP extension plan).
 
+mod evaluation_store;
 mod file_session_store;
+pub use evaluation_store::{
+    EvaluationCheckpoint, EvaluationView, EvaluationWorker, EvaluationWorkerStatus,
+    SavedEvaluation, SqliteEvaluationStore,
+};
 
 pub use file_session_store::{
     FileSessionStore, NewSession, SessionHeader, SessionListing, StoreError, StoreErrorKind,

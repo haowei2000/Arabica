@@ -254,6 +254,7 @@ fn blend_from_json(
 pub struct AppState {
     sessions: Arc<Mutex<LocalSessionManager>>,
     events: broadcast::Sender<EventEnvelope>,
+    evaluation_home: Option<PathBuf>,
 }
 
 impl Default for AppState {
@@ -271,11 +272,17 @@ impl Default for AppState {
         Self {
             sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
             events,
+            evaluation_home: None,
         }
     }
 }
 
 impl AppState {
+    /// Explicitly opt in to reading a local host's persisted evaluations.
+    pub fn with_evaluation_home(mut self, home: PathBuf) -> Self {
+        self.evaluation_home = Some(home);
+        self
+    }
     pub fn from_api_env() -> Result<Self, ProviderError> {
         let tool_root = std::env::var("ARABICA__TOOL_ROOT").unwrap_or_else(|_| ".".to_owned());
         let providers_json = std::env::var("ARABICA__PROVIDERS_JSON")
@@ -392,6 +399,7 @@ impl AppState {
         Ok(Self {
             sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
             events,
+            evaluation_home: std::env::var_os("ARABICA__EVALUATION_HOME").map(PathBuf::from),
         })
     }
 }
@@ -400,9 +408,68 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/schema", get(schema))
+        .route("/v1/evaluations", get(query_evaluation))
         .route("/v1/commands", post(submit_command))
         .route("/v1/events", get(subscribe_events))
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvaluationQuery {
+    workspace_id: arabica_protocol::WorkspaceId,
+    session_id: arabica_protocol::SessionId,
+}
+
+#[derive(serde::Serialize)]
+struct EvaluationQueryError {
+    code: &'static str,
+}
+
+async fn query_evaluation(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<EvaluationQuery>,
+) -> Result<Json<arabica_adapters::EvaluationView>, (StatusCode, Json<EvaluationQueryError>)> {
+    let Some(home) = state.evaluation_home else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(EvaluationQueryError {
+                code: "evaluation_disabled",
+            }),
+        ));
+    };
+    tokio::task::spawn_blocking(move || {
+        let report = arabica_adapters::SqliteEvaluationStore::read_latest(
+            &home.join("evaluation.sqlite3"),
+            &query.workspace_id,
+            &query.session_id,
+        )
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(EvaluationQueryError {
+                    code: "evaluation_unavailable",
+                }),
+            )
+        })?;
+        Ok(Json(arabica_adapters::EvaluationView {
+            schema_version: 1,
+            workspace_id: query.workspace_id,
+            session_id: query.session_id,
+            worker_status: None,
+            refresh_accepted: None,
+            report,
+        }))
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(EvaluationQueryError {
+                code: "evaluation_unavailable",
+            }),
+        )
+    })?
 }
 
 async fn health() -> &'static str {
@@ -509,6 +576,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(unknown_provider.to_string().contains("unknown provider"));
+    }
+
+    #[tokio::test]
+    async fn desktop_evaluation_query_does_not_lock_agent_or_create_database() {
+        use tower::ServiceExt;
+        let home =
+            std::env::temp_dir().join(format!("arabica-desktop-evaluation-{}", std::process::id()));
+        let state = AppState::default().with_evaluation_home(home.clone());
+        let _guard = state.sessions.lock().await;
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            app(state.clone()).oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/evaluations?workspace_id=workspace&session_id=session")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("evaluation query blocked on Agent session")
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let view: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(view["schema_version"], 1);
+        assert!(view["report"].is_null());
+        assert!(!home.join("evaluation.sqlite3").exists());
+        let disabled = app(AppState::default())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/evaluations?workspace_id=w&session_id=s")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

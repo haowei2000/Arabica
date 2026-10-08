@@ -45,6 +45,7 @@ struct ArabicaDesktopApp: App {
 
 private struct DesktopView: View {
     @EnvironmentObject var model: DesktopModel
+    @AppStorage("showEvaluationInspector") private var showEvaluation = false
 
     var body: some View {
         NavigationSplitView {
@@ -54,10 +55,22 @@ private struct DesktopView: View {
             conversation
         }
         .background(Palette.canvas)
+        .inspector(isPresented: $showEvaluation) {
+            EvaluationPanel(model: model.evaluation, isVisible: showEvaluation)
+                .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
+        }
         .sheet(item: $model.permission) { prompt in
             PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showEvaluation.toggle() } label: {
+                    Label("Background evaluation", systemImage: "chart.bar.doc.horizontal")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showEvaluation ? "Hide background evaluation" : "Show background evaluation")
+                .accessibilityValue(showEvaluation ? "Visible" : "Hidden")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { Task { await model.newSession() } } label: {
                     Label("New Conversation", systemImage: "square.and.pencil")
@@ -252,6 +265,8 @@ private struct DesktopView: View {
             Spacer()
             Text(model.workspace == nil ? "Start with a workspace." : "What would you like to work on?")
                 .font(.system(size: 33, weight: .medium, design: .serif))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(Palette.ink)
             Text(model.workspace == nil
                  ? "Choose a folder to give Arabica a place to work."
@@ -269,6 +284,7 @@ private struct DesktopView: View {
             Spacer()
         }
         .frame(maxWidth: 600, alignment: .leading)
+        .padding(.horizontal, 28)
         .frame(maxWidth: .infinity)
     }
 
@@ -437,24 +453,65 @@ private struct ChatRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                if item.kind == .tool {
-                    Image(systemName: toolIcon).frame(width: 15)
-                }
-                Text(label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Palette.muted)
-                if let status = item.status {
-                    Text(status.replacingOccurrences(of: "_", with: " "))
-                        .font(.system(size: 11))
+            if item.kind == .thought {
+                Button { expanded.toggle() } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "brain").frame(width: 15)
+                            Text("Reasoning")
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.accentColor)
+                    .help(expanded ? "Hide reasoning" : "Show reasoning")
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                } else {
+                HStack(spacing: 8) {
+                    if item.kind == .tool {
+                        Image(systemName: toolIcon).frame(width: 15)
+                    }
+                    Text(label)
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Palette.muted)
+                    if let status = item.status {
+                        Text(status.replacingOccurrences(of: "_", with: " "))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.muted)
+                    }
                 }
             }
-            Text(item.text)
-                .font(.system(size: item.kind == .tool ? 12 : 14, design: item.kind == .assistant ? .serif : .default))
-                .foregroundStyle(item.kind == .thought || item.kind == .tool ? Palette.muted : Palette.ink)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if item.kind == .tool {
+                if hasDetails {
+                    Button { expanded.toggle() } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(item.text)
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.accentColor)
+                    .help(expanded ? "Hide tool output" : "Show tool output")
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                } else {
+                    Text(item.text)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Palette.muted)
+                        .textSelection(.enabled)
+                }
+            } else if item.kind != .thought || expanded {
+                MarkdownMessage(text: item.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(item.kind == .thought ? Palette.muted : Palette.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if item.kind == .tool, let path = item.path {
                 Text(path)
                     .font(.system(size: 10, design: .monospaced))
@@ -462,25 +519,25 @@ private struct ChatRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if item.kind == .tool, let detail = item.detail, !detail.isEmpty {
-                DisclosureGroup("Details", isExpanded: $expanded) {
-                    ScrollView(.horizontal) {
-                        Text(detail)
-                            .font(.system(size: 11, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(10)
-                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
+            if hasDetails, expanded, let detail = item.detail {
+                ScrollView(.horizontal) {
+                    Text(detail)
+                        .font(.system(size: 13, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.muted)
+                .padding(10)
+                .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(item.kind == .user ? 16 : 0)
         .background(item.kind == .user ? Palette.raised : .clear,
                     in: RoundedRectangle(cornerRadius: 10))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var hasDetails: Bool {
+        item.kind == .tool && !(item.detail ?? "").isEmpty
     }
 
     private var label: String {

@@ -149,19 +149,27 @@ final class ACPClient {
         errorOutput = stderr.fileHandleForReading
     }
 
-    func initialize() async throws {
+    func initialize() async throws -> [String: Any] {
         let result = try await request("initialize", params: [
             "protocolVersion": 1,
             "clientCapabilities": ["fs": ["readTextFile": true, "writeTextFile": true], "terminal": true],
             "clientInfo": ["name": "arabica-desktop", "version": "0.1.0"],
         ])
         guard result["protocolVersion"] as? Int == 1 else { throw ACPError.invalidResponse }
+        return result
     }
 
-    func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
+    func request(_ method: String, params: [String: Any], timeoutSeconds: UInt64? = nil) async throws -> [String: Any] {
         guard process?.isRunning == true else { throw ACPError.disconnected }
         let id = nextID
         nextID += 1
+        let timeout = timeoutSeconds.map { seconds in
+            Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+                self?.pending.removeValue(forKey: id)?.resume(throwing: ACPError.remote("ACP request timed out."))
+            }
+        }
+        defer { timeout?.cancel() }
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
             do {
