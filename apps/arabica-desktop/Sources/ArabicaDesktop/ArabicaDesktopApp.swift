@@ -1,5 +1,26 @@
 import SwiftUI
 
+/// Global typography system with 3 unified font styles:
+/// 1. Serif (衬线体) - Dedicated to body text (正文: chat message text, thoughts, composer draft)
+/// 2. Sans-serif (非衬线体) - Used for all UI chrome, titles, navigation, buttons, labels
+/// 3. Monospaced / Code (代码字体) - Used for code, diffs, terminal outputs, file paths, config keys
+enum AppFont {
+    /// 衬线体 (Serif) - 专用于正文
+    static func serif(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .serif)
+    }
+
+    /// 非衬线体 (Sans-Serif) - 用于正文之外的所有界面元素
+    static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .default)
+    }
+
+    /// 代码字体 (Monospaced) - 用于代码、终端、diff、路径、配置键等
+    static func code(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .monospaced)
+    }
+}
+
 private enum Palette {
     static let canvas = Color(red: 22 / 255, green: 23 / 255, blue: 25 / 255)
     static let sidebar = Color(red: 25 / 255, green: 26 / 255, blue: 29 / 255)
@@ -88,7 +109,7 @@ private struct DesktopView: View {
                     Image(nsImage: image).resizable().frame(width: 27, height: 27)
                 }
                 Text("Arabica")
-                    .font(.system(size: 25, weight: .semibold, design: .serif))
+                    .font(AppFont.sans(25, weight: .semibold))
                     .foregroundStyle(Palette.ink)
                 Spacer()
             }
@@ -102,9 +123,9 @@ private struct DesktopView: View {
                     Text(model.workspace?.lastPathComponent ?? "Open workspace")
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 10))
+                    Image(systemName: "chevron.up.chevron.down").font(AppFont.sans(10))
                 }
-                .font(.system(size: 13, weight: .medium))
+                .font(AppFont.sans(13, weight: .medium))
                 .padding(.horizontal, 12)
                 .frame(height: 38)
                 .background(Palette.raised, in: RoundedRectangle(cornerRadius: 10))
@@ -115,7 +136,7 @@ private struct DesktopView: View {
 
             HStack {
                 Text("Conversations")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(AppFont.sans(12, weight: .semibold))
                     .foregroundStyle(Palette.muted)
                 Spacer()
                 if model.isConnecting { ProgressView().controlSize(.small) }
@@ -129,10 +150,10 @@ private struct DesktopView: View {
                         Button { Task { await model.selectSession(session.id) } } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: "text.bubble")
-                                    .font(.system(size: 14))
+                                    .font(AppFont.sans(14))
                                     .foregroundStyle(Palette.muted)
                                 Text(session.title)
-                                    .font(.system(size: 13))
+                                    .font(AppFont.sans(13))
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                             }
@@ -159,14 +180,17 @@ private struct DesktopView: View {
             Rectangle().fill(Palette.rule).frame(height: 1)
             HStack(spacing: 8) {
                 Circle()
-                    .fill(model.isConnected ? Color.green.opacity(0.75) : Color.orange)
+                    .fill(model.isConnected ? Color.green.opacity(0.85) : (model.errorText != nil ? Color.red : Color.orange))
                     .frame(width: 6, height: 6)
-                Text(model.isConnected ? "Local agent" : "Connection needs attention")
-                    .font(.system(size: 11))
+                Text(model.isConnected ? "Local agent" : "Connection attention")
+                    .font(AppFont.sans(11))
                     .foregroundStyle(Palette.muted)
                 Spacer()
             }
             .padding(16)
+            .help(model.isConnected
+                  ? "Connected: Local agent ready"
+                  : (model.errorText ?? "Disconnected: Reopen the workspace to reconnect"))
         }
         .background(Palette.sidebar)
     }
@@ -176,10 +200,10 @@ private struct DesktopView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.sessions.first(where: { $0.id == model.selectedSessionID })?.title ?? "Workspace")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(AppFont.sans(15, weight: .semibold))
                     if let workspace = model.workspace {
                         Text(workspace.path)
-                            .font(.system(size: 11))
+                            .font(AppFont.code(11))
                             .foregroundStyle(Palette.muted)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -189,12 +213,13 @@ private struct DesktopView: View {
                 if let used = model.usage["used"] as? Int,
                    let size = model.usage["size"] as? Int {
                     Text("\(used) / \(size) tokens")
-                        .font(.system(size: 10))
+                        .font(AppFont.sans(10))
                         .foregroundStyle(Palette.muted)
                 }
                 if model.isRunning {
                     Button("Stop", systemImage: "stop.fill", action: model.cancel)
                         .controlSize(.small)
+                        .font(AppFont.sans(12))
                 }
             }
             .padding(.horizontal, 28)
@@ -203,13 +228,28 @@ private struct DesktopView: View {
 
             if !model.plan.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("PLAN").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.muted)
+                    Text("PLAN").font(AppFont.sans(10, weight: .bold)).foregroundStyle(Palette.muted)
                     ForEach(Array(model.plan.enumerated()), id: \.offset) { _, entry in
+                        let status = entry["status"] as? String
+                        let isCompleted = status == "completed" || status == "success"
+                        let isFailed = status == "failed" || status == "error"
                         HStack(spacing: 7) {
-                            Image(systemName: entry["status"] as? String == "completed" ? "checkmark.circle.fill" : "circle")
+                            if isCompleted {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.green.opacity(0.85))
+                                    .help("Completed")
+                            } else if isFailed {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(Color.red.opacity(0.85))
+                                    .help("Failed")
+                            } else {
+                                Image(systemName: "circle")
+                                    .foregroundStyle(Palette.muted)
+                                    .help("Pending")
+                            }
                             Text(entry["content"] as? String ?? "Step")
                         }
-                        .font(.system(size: 11))
+                        .font(AppFont.sans(11))
                         .foregroundStyle(Palette.muted)
                     }
                 }
@@ -233,7 +273,7 @@ private struct DesktopView: View {
                                     ProgressView().controlSize(.small)
                                     Text("Working…").foregroundStyle(Palette.muted)
                                 }
-                                .font(.system(size: 12))
+                                .font(AppFont.sans(12))
                             }
                         }
                         .frame(maxWidth: 760)
@@ -248,12 +288,18 @@ private struct DesktopView: View {
             }
 
             if let error = model.errorText {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 30)
-                    .padding(.bottom, 8)
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(AppFont.sans(12))
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+                .help(error)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 30)
+                .padding(.bottom, 8)
             }
             composer
         }
@@ -264,14 +310,14 @@ private struct DesktopView: View {
         VStack(alignment: .leading, spacing: 14) {
             Spacer()
             Text(model.workspace == nil ? "Start with a workspace." : "What would you like to work on?")
-                .font(.system(size: 33, weight: .medium, design: .serif))
+                .font(AppFont.sans(32, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(Palette.ink)
             Text(model.workspace == nil
-                 ? "Choose a folder to give Arabica a place to work."
+                 ? "Choose a folder to open a workspace."
                  : "Create a conversation to ask a question or start a task.")
-                .font(.system(size: 14))
+                .font(AppFont.sans(14))
                 .foregroundStyle(Palette.muted)
             Button(model.workspace == nil || !model.isConnected ? "Open workspace" : "New conversation") {
                 if model.workspace == nil || !model.isConnected { model.chooseWorkspace() }
@@ -280,6 +326,7 @@ private struct DesktopView: View {
             .buttonStyle(.borderedProminent)
             .tint(Palette.ink)
             .foregroundStyle(Palette.canvas)
+            .font(AppFont.sans(13, weight: .medium))
             .padding(.top, 9)
             Spacer()
         }
@@ -295,21 +342,23 @@ private struct DesktopView: View {
                 HStack {
                     ForEach(model.attachedFiles, id: \.self) { file in
                         Text("@\(file.lastPathComponent)")
-                            .font(.system(size: 11))
+                            .font(AppFont.code(11))
                             .padding(5)
                             .background(Palette.raised, in: RoundedRectangle(cornerRadius: 5))
                     }
                     Spacer()
-                    Button("Clear") { model.attachedFiles = [] }.font(.system(size: 11))
+                    Button("Clear") { model.attachedFiles = [] }
+                        .font(AppFont.sans(11))
                 }
                 .padding(.bottom, 8)
             }
             if hasSessionControls {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        Text("This conversation")
-                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "slider.horizontal.3")
+                            .font(AppFont.sans(11))
                             .foregroundStyle(Palette.muted)
+                            .help("This conversation: Options configured here apply to the current session")
                         ForEach(Array(model.configOptions.enumerated()), id: \.offset) { _, option in
                             if let id = option["id"] as? String,
                                let choices = option["options"] as? [[String: Any]],
@@ -369,13 +418,15 @@ private struct DesktopView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Current conversation options")
             }
-            HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
                 Button(action: model.chooseFiles) {
                     Image(systemName: "paperclip")
                         .foregroundStyle(Palette.muted)
                         .frame(width: 22, height: 31)
                 }
                 .buttonStyle(.plain)
+                .help("Attach files")
+
                 if !model.availableCommands.isEmpty {
                     Menu {
                         ForEach(Array(model.availableCommands.enumerated()), id: \.offset) { _, command in
@@ -389,16 +440,25 @@ private struct DesktopView: View {
                             .frame(width: 22, height: 31)
                     }
                     .menuStyle(.borderlessButton)
+                    .help("Commands")
                 }
-                TextField("Message Arabica", text: $model.draft, axis: .vertical)
+
+                Image(systemName: "lock.shield")
+                    .font(AppFont.sans(12))
+                    .foregroundStyle(Palette.muted.opacity(0.6))
+                    .frame(width: 20, height: 31)
+                    .help("Workspace sandbox: Files can be read and edited within this workspace. Prompts for permission before writes and commands.")
+
+                TextField("Send a message…", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 14))
+                    .font(AppFont.serif(14))
                     .lineLimit(1...6)
                     .padding(.vertical, 11)
                     .onSubmit { Task { await model.send() } }
+
                 Button { Task { await model.send() } } label: {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(AppFont.sans(14, weight: .semibold))
                         .foregroundStyle(Palette.canvas)
                         .frame(width: 31, height: 31)
                         .background(Palette.ink, in: RoundedRectangle(cornerRadius: 9))
@@ -412,11 +472,6 @@ private struct DesktopView: View {
             }
             .padding(.horizontal, 15)
             .background(Palette.raised, in: RoundedRectangle(cornerRadius: 12))
-            Text("Arabica can read and change files in this workspace. It asks before writes and commands.")
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 8)
         }
         .padding(.horizontal, 28)
         .padding(.top, 14)
@@ -436,10 +491,10 @@ private struct DesktopView: View {
             Text(name).foregroundStyle(Palette.muted)
             Text(value).foregroundStyle(Palette.ink).lineLimit(1)
             Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
+                .font(AppFont.sans(8, weight: .semibold))
                 .foregroundStyle(Palette.muted)
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(AppFont.sans(11, weight: .medium))
         .padding(.horizontal, 10)
         .frame(height: 28)
         .background(Palette.raised, in: Capsule())
@@ -455,74 +510,72 @@ private struct ChatRow: View {
         VStack(alignment: .leading, spacing: 8) {
             if item.kind == .thought {
                 Button { expanded.toggle() } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "brain").frame(width: 15)
-                            Text("Reasoning")
-                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.accentColor)
-                    .help(expanded ? "Hide reasoning" : "Show reasoning")
-                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-                } else {
-                HStack(spacing: 8) {
-                    if item.kind == .tool {
-                        Image(systemName: toolIcon).frame(width: 15)
-                    }
-                    Text(label)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Palette.muted)
-                    if let status = item.status {
-                        Text(status.replacingOccurrences(of: "_", with: " "))
-                            .font(.system(size: 11))
+                    HStack(spacing: 7) {
+                        Image(systemName: "brain")
+                            .font(AppFont.sans(12))
                             .foregroundStyle(Palette.muted)
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(AppFont.sans(9, weight: .semibold))
+                            .foregroundStyle(Palette.muted)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(expanded ? "Hide reasoning" : "Show reasoning")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            } else if item.kind == .tool {
+                HStack(spacing: 8) {
+                    Image(systemName: toolIcon)
+                        .font(AppFont.sans(12))
+                        .foregroundStyle(Palette.muted)
+                        .help("Tool: \(item.toolKind ?? "call")")
+                    if hasDetails {
+                        Button { expanded.toggle() } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text(item.text)
+                                    .font(AppFont.code(12))
+                                    .foregroundStyle(Palette.ink)
+                                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                    .font(AppFont.sans(9, weight: .semibold))
+                                    .foregroundStyle(Palette.muted)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help(expanded ? "Hide output" : "Show output")
+                        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                    } else {
+                        Text(item.text)
+                            .font(AppFont.code(12))
+                            .foregroundStyle(Palette.muted)
+                            .textSelection(.enabled)
+                    }
+
+                    if let status = item.status {
+                        statusBadge(status)
                     }
                 }
             }
-            if item.kind == .tool {
-                if hasDetails {
-                    Button { expanded.toggle() } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(item.text)
-                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.accentColor)
-                    .help(expanded ? "Hide tool output" : "Show tool output")
-                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-                } else {
-                    Text(item.text)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Palette.muted)
-                        .textSelection(.enabled)
-                }
-            } else if item.kind != .thought || expanded {
+
+            if item.kind != .tool, item.kind != .thought || expanded {
                 MarkdownMessage(text: item.text)
-                    .font(.system(size: 14))
+                    .font(AppFont.serif(14))
                     .foregroundStyle(item.kind == .thought ? Palette.muted : Palette.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+
             if item.kind == .tool, let path = item.path {
                 Text(path)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(AppFont.code(10))
                     .foregroundStyle(Palette.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+
             if hasDetails, expanded, let detail = item.detail {
                 ScrollView(.horizontal) {
                     Text(detail)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(AppFont.code(11))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -540,13 +593,45 @@ private struct ChatRow: View {
         item.kind == .tool && !(item.detail ?? "").isEmpty
     }
 
-    private var label: String {
-        switch item.kind {
-        case .user: "You"
-        case .assistant: "Arabica"
-        case .thought: "Reasoning"
-        case .tool: "Tool"
+    @ViewBuilder
+    private func statusBadge(_ status: String) -> some View {
+        let normalized = status.lowercased()
+        let isCompleted = normalized == "completed" || normalized == "success" || normalized == "ok"
+        let isRunning = normalized == "in_progress" || normalized == "running" || normalized == "started"
+        let isFailed = normalized == "failed" || normalized == "error"
+        let isCancelled = normalized == "cancelled" || normalized == "canceled"
+
+        let color: Color = {
+            if isCompleted { return Color.green.opacity(0.85) }
+            if isRunning { return Color.blue.opacity(0.85) }
+            if isFailed { return Color.red.opacity(0.85) }
+            if isCancelled { return Palette.muted.opacity(0.5) }
+            return Palette.muted
+        }()
+
+        let tooltipText: String = {
+            if isCompleted { return "Status: Completed" }
+            if isRunning { return "Status: Running…" }
+            if isFailed {
+                if let detail = item.detail, !detail.isEmpty {
+                    return "Failed: \(detail.trimmingCharacters(in: .whitespacesAndNewlines).prefix(180))"
+                }
+                return "Status: Failed"
+            }
+            if isCancelled { return "Status: Cancelled" }
+            return "Status: \(status.replacingOccurrences(of: "_", with: " ").capitalized)"
+        }()
+
+        HStack(spacing: 4) {
+            if isRunning {
+                ProgressView().controlSize(.mini)
+            } else {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+            }
         }
+        .help(tooltipText)
     }
 
     private var toolIcon: String {
@@ -572,12 +657,12 @@ private struct PermissionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Permission required")
-                .font(.system(size: 23, weight: .semibold, design: .serif))
-            Text(prompt.title).font(.system(size: 14, weight: .medium))
+                .font(AppFont.sans(23, weight: .semibold))
+            Text(prompt.title).font(AppFont.sans(14, weight: .medium))
             if !prompt.detail.isEmpty {
                 ScrollView {
                     Text(prompt.detail)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(AppFont.code(11))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -587,14 +672,17 @@ private struct PermissionView: View {
             }
             HStack {
                 Button("Cancel") { resolve(nil) }
+                    .font(AppFont.sans(13))
                 Spacer()
                 ForEach(prompt.options, id: \.id) { option in
                     if option.id == "allow_once" {
                         Button(option.name) { resolve(option.id) }
                             .buttonStyle(.borderedProminent)
+                            .font(AppFont.sans(13))
                     } else {
                         Button(option.name) { resolve(option.id) }
                             .buttonStyle(.bordered)
+                            .font(AppFont.sans(13))
                     }
                 }
             }
@@ -641,7 +729,7 @@ private struct SettingsView: View {
                     Toggle("Remove saved api_key", isOn: $config.clearSavedKey)
                 }
                 Text("The environment variable takes precedence over api_key. Secrets are never shown after saving.")
-                    .font(.system(size: 11))
+                    .font(AppFont.sans(11))
                     .foregroundStyle(Palette.muted)
                 Picker("thinking", selection: $config.thinking) {
                     Text("Provider default").tag("")
@@ -652,13 +740,18 @@ private struct SettingsView: View {
                     ForEach(values, id: \.self) { Text($0).tag($0) }
                 }
                 if let error = ConfigEditor.thinkingValidationError(apiType: config.apiType, thinking: config.thinking) {
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(error)
+                            .font(AppFont.sans(11))
+                            .foregroundStyle(.orange)
+                    }
+                    .help(error)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             } header: {
-                    configSectionHeader("[providers.\(config.providerName)]", detail: "Choose a provider first, then manage its model aliases below")
+                configSectionHeader("[providers.\(config.providerName)]", detail: "Choose a provider first, then manage its model aliases below")
             }
 
             Section {
@@ -693,12 +786,18 @@ private struct SettingsView: View {
                         }
                     }
                     if !config.modelOptions.contains(config.policyDefaultModel), !config.policyDefaultModel.isEmpty {
-                        Text("Policy default_model references missing alias \(config.policyDefaultModel). Choose a configured model below.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
+                        let warning = "Policy default_model references missing alias \(config.policyDefaultModel). Choose a configured model below."
+                        HStack(spacing: 5) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(warning)
+                                .font(AppFont.sans(11))
+                                .foregroundStyle(.orange)
+                        }
+                        .help(warning)
                     }
                     Text("New conversations use this policy. A conversation can choose another available policy in the composer.")
-                        .font(.system(size: 11))
+                        .font(AppFont.sans(11))
                         .foregroundStyle(Palette.muted)
                 } else {
                     modelAliasPicker(label: "default_model")
@@ -711,7 +810,7 @@ private struct SettingsView: View {
                 Section {
                     modelAliasPicker(label: "default_model")
                     Text("The policy's routes and capability lists remain in config.toml and are preserved when the form saves.")
-                        .font(.system(size: 11))
+                        .font(AppFont.sans(11))
                         .foregroundStyle(Palette.muted)
                 } header: {
                     configSectionHeader("[blend.policies.\(config.defaultPolicy)]", detail: "Policy fields for the selected default policy")
@@ -719,37 +818,49 @@ private struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Agent", value: "Bundled Arabica ACP")
+                LabeledContent("Agent", value: "Bundled ACP")
                 LabeledContent("Workspace", value: model.workspace?.lastPathComponent ?? "None selected")
                 Text("Runtime context is managed by the desktop app, not config.toml.")
-                    .font(.system(size: 11))
+                    .font(AppFont.sans(11))
                     .foregroundStyle(Palette.muted)
             } header: {
                 Text("Desktop context")
+                    .font(AppFont.sans(12))
             }
 
             if !config.status.isEmpty {
-                Text(config.status)
-                    .font(.system(size: 12))
-                    .foregroundStyle(config.status.hasPrefix("Saved") ? Palette.muted : .orange)
-                .textSelection(.enabled)
+                let isSaved = config.status.hasPrefix("Saved")
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(isSaved ? Color.green.opacity(0.85) : Color.orange)
+                        .frame(width: 6, height: 6)
+                    Text(config.status)
+                        .font(AppFont.sans(12))
+                        .foregroundStyle(isSaved ? Palette.muted : .orange)
+                        .textSelection(.enabled)
+                }
+                .help(config.status)
             }
 
             Text("Provider and model selectors cover every configured table. Other config.toml fields, including policy routes and [[mcp]] servers, are kept when this form saves.")
-                .font(.system(size: 11))
+                .font(AppFont.sans(11))
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 Button("Open config.toml") { config.openConfigFile() }
+                    .font(AppFont.sans(13))
                 Spacer()
                 Button("Reload") { config.reload() }
+                    .font(AppFont.sans(13))
                 Button("Save config.toml") { config.save() }
                     .buttonStyle(.borderedProminent)
+                    .font(AppFont.sans(13))
                     .disabled(config.isSaving)
             }
         }
         .formStyle(.grouped)
+        .font(AppFont.sans(13))
         .padding(18)
         .frame(width: 610, height: 650)
         .onAppear { config.reload() }
@@ -758,9 +869,9 @@ private struct SettingsView: View {
     private func configSectionHeader(_ path: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(path)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(AppFont.code(13, weight: .semibold))
             Text(detail)
-                .font(.system(size: 11))
+                .font(AppFont.sans(11))
                 .foregroundStyle(Palette.muted)
         }
     }
