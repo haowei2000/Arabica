@@ -60,10 +60,10 @@ struct MarkdownMessage: View {
                 case .paragraph:
                     inline(block.text)
                 case .heading(let level):
-                    inline(block.text).font(.system(size: CGFloat(level == 1 ? 18 : level == 2 ? 16 : 14), weight: .semibold))
+                    inline(block.text).font(AppFont.sans(CGFloat(level == 1 ? 18 : level == 2 ? 16 : 14), weight: .semibold))
                 case .code:
                     ScrollView(.horizontal) {
-                        Text(block.text).font(.system(size: 13, design: .monospaced))
+                        Text(block.text).font(AppFont.code(13))
                             .textSelection(.enabled).padding(12)
                     }
                     .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
@@ -82,7 +82,7 @@ struct MarkdownMessage: View {
                 }
             }
         }
-        .font(.system(size: 14))
+        .font(AppFont.serif(14))
         .lineSpacing(3)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
