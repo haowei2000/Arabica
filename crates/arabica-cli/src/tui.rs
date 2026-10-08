@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::host::HostModel;
-use arabica_adapters::FileSessionStore;
 use arabica_model::{ContentBlock, RuntimeItem, RuntimeRole};
 use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, ToolPermissionOutcome,
@@ -2939,11 +2938,7 @@ fn is_find_command(text: &str) -> bool {
 
 fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
     let workspace = workspace_id_for(&session.runner_root);
-    let stored = match FileSessionStore::read_session(
-        &session.arabica_home,
-        &workspace,
-        &session.session_id,
-    ) {
+    let stored = match session.session_store.read(&workspace, &session.session_id) {
         Ok(stored) => stored,
         Err(_) => return,
     };

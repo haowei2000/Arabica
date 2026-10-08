@@ -112,6 +112,37 @@ Then start the host:
 cargo run -p arabica-server
 ```
 
+### Session persistence
+
+CLI, interactive chat, ACP, and the production HTTP server store session metadata
+and ordered events in `$ARABICA_HOME/sessions.sqlite3` (default: `~/.arabica`).
+The backend-independent `SessionStore` and `SessionWriter` ports and shared
+metadata types live in `arabica-session`. `arabica-adapters::SqliteSessionRepository`
+implements the repository port; CLI and server code select it during composition
+and use IDs through the port thereafter. `SessionWriter` keeps exclusive ownership
+until its final handle (including observer handles) is dropped.
+SQLite uses WAL and full synchronous transactions. Session ownership locks remain
+per session, preventing two processes from resuming the same session concurrently.
+Legacy `sessions/<workspace>/<session>.jsonl` files are imported transactionally
+on first access and retained unchanged. After import, SQLite is authoritative;
+older binaries must not be used to continue imported sessions.
+
+Titles default to the first non-empty user message (up to 80 characters) and are
+returned in ACP session listings. To rename an inactive session in the current
+workspace, run:
+
+```bash
+arabica sessions rename <session-id> "My session title"
+```
+
+The HTTP server restores sessions for its canonical tool root on startup; the
+embedding `AppState::default()` remains ephemeral unless `with_session_store` is
+called with an `Arc<dyn SessionStore>` and a tool root. The existing snapshot restore API accepts root sessions only; persisted
+forks currently cause an explicit startup restore error rather than losing their
+inherited history. Command deduplication remains in memory across a process lifetime.
+When backing up an active database, use SQLite's backup facilities so committed
+WAL data is included.
+
 ### CLI model blend
 
 The CLI reads `~/.arabica/config.toml`. Define reusable provider settings under `[providers.<name>]`; each `[models.<alias>]` selects a provider and model ID. Blend routes continue to refer to aliases. Provider API keys come from the configured `api_key_env`, or by default from `ARABICA_PROVIDER_<NAME>_API_KEY` (provider name uppercased with non-alphanumeric characters replaced by underscores).

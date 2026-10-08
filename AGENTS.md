@@ -23,8 +23,8 @@ single experiment package; do not reintroduce a parallel implementation.
 - `crates/arabica-provider`: model-provider boundary
 - `crates/arabica-runner`: tool execution boundary
 - `crates/arabica-runtime`: orchestration and memory policies
-- `crates/arabica-session`: session lifecycle, history, and sequencing
-- `crates/arabica-adapters`: persistence adapters implementing the session ports (JSONL session store)
+- `crates/arabica-session`: session lifecycle, history, sequencing, and persistence ports
+- `crates/arabica-adapters`: persistence adapters implementing the session ports (SQLite session store with legacy JSONL import)
 - `crates/arabica-cli`: stdio composition host (interactive chat, `acp`, one-shot mode)
 - `crates/arabica-server`: HTTP and SSE transport
 - `apps/arabica-desktop`: SwiftUI/AppKit macOS client and ACP process host (outside the Cargo workspace)

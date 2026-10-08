@@ -160,6 +160,7 @@ dependencies = [
  "arabica-model",
  "arabica-protocol",
  "arabica-session",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",
@@ -266,6 +267,7 @@ dependencies = [
 name = "arabica-server"
 version = "0.1.0"
 dependencies = [
+ "arabica-adapters",
  "arabica-protocol",
  "arabica-provider",
  "arabica-runner",
@@ -279,6 +281,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower",
+ "uuid",
 ]
 
 [[package]]

@@ -433,6 +433,11 @@ pub fn build_host_runtime_with_blend(
     Ok(runtime)
 }
 
+/// Compose the production persistence adapter; entry-point behavior uses its port.
+pub(crate) fn session_store(home: &Path) -> std::sync::Arc<dyn arabica_session::SessionStore> {
+    std::sync::Arc::new(arabica_adapters::SqliteSessionRepository::new(home))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

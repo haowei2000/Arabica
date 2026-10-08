@@ -15,13 +15,16 @@ use arabica_runtime::{
     BlendRoutingPolicy, CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy,
     ShortMemoryPolicy,
 };
-use arabica_session::SessionManager;
+use arabica_session::{DispatchControl, SessionEventObserver, SessionManager};
+
+mod persistence;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::StreamExt;
+use persistence::Persistence;
 use serde::Deserialize;
 use tokio::sync::{Mutex, broadcast};
 use tokio_stream::wrappers::BroadcastStream;
@@ -254,6 +257,7 @@ fn blend_from_json(
 pub struct AppState {
     sessions: Arc<Mutex<LocalSessionManager>>,
     events: broadcast::Sender<EventEnvelope>,
+    persistence: Option<Arc<Persistence>>,
 }
 
 impl Default for AppState {
@@ -269,15 +273,79 @@ impl Default for AppState {
         runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
         runtime.set_async_file_backed_gc(true);
         Self {
-            sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
+            sessions: Arc::new(Mutex::new(SessionManager::with_ids(
+                runtime,
+                Box::new(persistence::UuidIds),
+            ))),
             events,
+            persistence: None,
         }
     }
 }
 
 impl AppState {
+    /// Attach a persistence repository and restore sessions for this tool root.
+    /// The default echo state stays ephemeral so tests and embedders can opt in.
+    pub fn with_session_store(
+        mut self,
+        repository: Arc<dyn arabica_session::SessionStore>,
+        cwd: PathBuf,
+    ) -> Result<Self, ProviderError> {
+        let cwd =
+            std::fs::canonicalize(cwd).map_err(|error| ProviderError::new(error.to_string()))?;
+        let persistence = Arc::new(Persistence {
+            repository,
+            cwd,
+            stores: Default::default(),
+            failure: Default::default(),
+        });
+        let mut manager = self
+            .sessions
+            .try_lock()
+            .map_err(|error| ProviderError::new(error.to_string()))?;
+        // Persistence spans processes and tool roots, so counters are insufficient.
+        let listings = persistence
+            .repository
+            .list(None)
+            .map_err(|error| ProviderError::new(error.to_string()))?;
+        for listing in listings {
+            if std::path::Path::new(&listing.header.cwd) != persistence.cwd {
+                continue;
+            }
+            let store = persistence
+                .repository
+                .open(&listing.header.workspace_id, &listing.header.id)
+                .map_err(|error| ProviderError::new(error.to_string()))?;
+            let snapshot = persistence
+                .repository
+                .read(&listing.header.workspace_id, &listing.header.id)
+                .map_err(|error| ProviderError::new(error.to_string()))?
+                .into_snapshot();
+            manager
+                .restore_session(
+                    snapshot,
+                    arabica_protocol::CommandId::new(format!(
+                        "server-restore-{}",
+                        listing.header.id
+                    )),
+                    Some(store.as_ref()),
+                )
+                .map_err(|error| ProviderError::new(error.to_string()))?;
+            persistence
+                .stores
+                .lock()
+                .expect("store registry poisoned")
+                .insert(listing.header.id, store);
+        }
+        drop(manager);
+        self.persistence = Some(persistence);
+        Ok(self)
+    }
+
     pub fn from_api_env() -> Result<Self, ProviderError> {
         let tool_root = std::env::var("ARABICA__TOOL_ROOT").unwrap_or_else(|_| ".".to_owned());
+        let persistence_cwd = std::fs::canonicalize(&tool_root)
+            .map_err(|error| ProviderError::new(error.to_string()))?;
         let providers_json = std::env::var("ARABICA__PROVIDERS_JSON")
             .map_err(|_| ProviderError::new("ARABICA__PROVIDERS_JSON is required"))?;
         let models_json = std::env::var("ARABICA__BLEND_MODELS_JSON")
@@ -389,10 +457,20 @@ impl AppState {
         runtime.set_pointer_gc_effort(pgc_effort);
         runtime.set_pointer_gc_continuation_probability_bps(pgc_continuation_probability_bps);
         let (events, _) = broadcast::channel(512);
-        Ok(Self {
-            sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
+        let state = Self {
+            sessions: Arc::new(Mutex::new(SessionManager::with_ids(
+                runtime,
+                Box::new(persistence::UuidIds),
+            ))),
             events,
-        })
+            persistence: None,
+        };
+        let home = arabica_adapters::default_arabica_home()
+            .map_err(|error| ProviderError::new(error.to_string()))?;
+        state.with_session_store(
+            Arc::new(arabica_adapters::SqliteSessionRepository::new(home)),
+            persistence_cwd,
+        )
     }
 }
 
@@ -422,14 +500,44 @@ async fn submit_command(
         .sessions
         .lock()
         .await
-        .handle(command)
+        .dispatch(
+            command,
+            DispatchControl {
+                observer: state
+                    .persistence
+                    .as_ref()
+                    .map(|store| Arc::clone(store) as Arc<dyn SessionEventObserver>),
+                ..DispatchControl::default()
+            },
+        )
         .await
         .map_err(|error| {
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(CommandFailure::new(command_id, error.code, error.message)),
+                Json(CommandFailure::new(
+                    command_id.clone(),
+                    error.code,
+                    error.message,
+                )),
             )
         })?;
+
+    if let Some(persistence) = &state.persistence
+        && let Some(message) = persistence
+            .failure
+            .lock()
+            .expect("persistence failure lock poisoned")
+            .as_ref()
+    {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(CommandFailure::new(
+                command_id,
+                arabica_protocol::ErrorCode::RuntimeFailure,
+                format!("session persistence failed: {message}"),
+            )),
+        ));
+    }
 
     for event in &events {
         let _ = state.events.send(event.clone());
@@ -509,6 +617,88 @@ mod tests {
         )
         .unwrap_err();
         assert!(unknown_provider.to_string().contains("unknown provider"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_sessions_survive_server_restart_and_ids_do_not_collide() {
+        let home = std::env::temp_dir().join(format!(
+            "arabica-server-sqlite-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cwd = std::fs::canonicalize(".").unwrap();
+        let state = AppState::default()
+            .with_session_store(
+                Arc::new(arabica_adapters::SqliteSessionRepository::new(home.clone())),
+                cwd.clone(),
+            )
+            .unwrap();
+        let created = submit_command(
+            State(state.clone()),
+            Json(CommandEnvelope::new(
+                CommandId::new("create"),
+                None,
+                Command::SessionCreate {
+                    workspace_id: WorkspaceId::new("server-test"),
+                },
+            )),
+        )
+        .await
+        .unwrap()
+        .0;
+        let session_id = created[0].session_id.clone();
+        let _ = submit_command(
+            State(state.clone()),
+            Json(CommandEnvelope::new(
+                CommandId::new("message"),
+                Some(session_id.clone()),
+                Command::MessageSend {
+                    content: "Persistent title".to_owned(),
+                },
+            )),
+        )
+        .await
+        .unwrap();
+        drop(state);
+        let state = AppState::default()
+            .with_session_store(
+                Arc::new(arabica_adapters::SqliteSessionRepository::new(home.clone())),
+                cwd,
+            )
+            .unwrap();
+        assert!(state.sessions.lock().await.session(&session_id).is_some());
+        let created = submit_command(
+            State(state.clone()),
+            Json(CommandEnvelope::new(
+                CommandId::new("create-next"),
+                None,
+                Command::SessionCreate {
+                    workspace_id: WorkspaceId::new("server-test"),
+                },
+            )),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_ne!(created[0].session_id, session_id);
+        let stored = arabica_adapters::SqliteSessionStore::read_session(
+            &home,
+            &WorkspaceId::new("server-test"),
+            &session_id,
+        )
+        .unwrap();
+        assert_eq!(stored.header.title.as_deref(), Some("Persistent title"));
+        assert!(
+            stored
+                .events
+                .iter()
+                .any(|event| matches!(event.event, Event::RunCompleted { .. }))
+        );
+        drop(state);
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[tokio::test]

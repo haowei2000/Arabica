@@ -34,7 +34,8 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
 };
-use arabica_adapters::{FileSessionStore, NewSession};
+#[cfg(test)]
+use arabica_adapters::SqliteSessionStore;
 use arabica_protocol::{
     Command, CommandEnvelope, CommandId, RunId as StructureRunId, SessionId as StructureSessionId,
     SessionStatus,
@@ -44,6 +45,7 @@ use arabica_session::{
     DispatchControl, EventVisibility, FanOutObserver, IdAllocator, SessionError,
     SessionEventObserver, SessionManager,
 };
+use arabica_session::{NewSession, SessionStore, SessionWriter};
 
 use crate::config::ResolvedCliConfig;
 use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_blend};
@@ -162,7 +164,7 @@ struct SessionEntry {
     /// `print.rs`'s `run_task`, which builds a fresh store for one run and
     /// drops it. `Arc` because `handle_prompt` shares it into a
     /// per-call `FanOutObserver` alongside the live `AcpObserver`.
-    store: Arc<FileSessionStore>,
+    store: Arc<dyn SessionWriter>,
     provider_config: Option<Mutex<ApiProviderConfig>>,
     model_configs: Option<Mutex<BTreeMap<String, ApiProviderConfig>>>,
     blend_policy: Option<Mutex<BlendRoutingPolicy>>,
@@ -179,6 +181,7 @@ struct AcpState {
     model_factory: Arc<ModelFactory>,
     tool_policy: LocalRunnerPolicy,
     arabica_home: PathBuf,
+    session_store: Arc<dyn SessionStore>,
     sessions: Arc<Mutex<HashMap<AcpSessionId, Arc<SessionEntry>>>>,
     provider_settings: Option<Arc<AcpProviderSettings>>,
 }
@@ -192,6 +195,7 @@ impl AcpState {
         Self {
             model_factory,
             tool_policy,
+            session_store: crate::host::session_store(&arabica_home),
             arabica_home,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             provider_settings: None,
@@ -239,7 +243,7 @@ impl AcpState {
     async fn activate_restored_session(
         manager: &mut SessionManager<HostRuntime>,
         session_id: &StructureSessionId,
-        store: &Arc<FileSessionStore>,
+        store: &Arc<dyn SessionWriter>,
     ) -> AcpResult<()> {
         let status = manager
             .session(session_id)
@@ -306,17 +310,16 @@ impl AcpState {
         let arabica_session_id = session_created.session_id.clone();
         let acp_session_id = AcpSessionId::new(arabica_session_id.to_string());
 
-        let store = FileSessionStore::create(
-            &self.arabica_home,
-            NewSession {
+        let store = self
+            .session_store
+            .create(NewSession {
                 session_id: &arabica_session_id,
                 workspace_id: &workspace_id,
                 cwd: &request.cwd,
                 profile: None,
                 instructions_sha256: Some(&instructions_sha256),
-            },
-        )
-        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+            })
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
         store.observe(session_created, EventVisibility::Client);
 
         self.sessions
@@ -329,7 +332,7 @@ impl AcpState {
                     arabica_session_id,
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
-                    store: Arc::new(store),
+                    store,
                     provider_config: self
                         .provider_settings
                         .as_ref()
@@ -368,22 +371,21 @@ impl AcpState {
         let workspace_id = crate::host::workspace_id_for(&request.cwd);
         let arabica_session_id = StructureSessionId::new(request.session_id.to_string());
 
-        let stored =
-            FileSessionStore::read_session(&self.arabica_home, &workspace_id, &arabica_session_id)
-                .map_err(|error| {
-                    AcpError::invalid_params().data(format!(
-                        "cannot load session {}: {error}",
-                        request.session_id
-                    ))
-                })?;
+        let stored = self
+            .session_store
+            .read(&workspace_id, &arabica_session_id)
+            .map_err(|error| {
+                AcpError::invalid_params().data(format!(
+                    "cannot load session {}: {error}",
+                    request.session_id
+                ))
+            })?;
         let original_events = stored.events.clone();
 
-        let path =
-            FileSessionStore::session_path(&self.arabica_home, &workspace_id, &arabica_session_id);
-        let store = Arc::new(
-            FileSessionStore::open_existing(&path)
-                .map_err(|error| AcpError::internal_error().data(error.to_string()))?,
-        );
+        let store = self
+            .session_store
+            .open(&workspace_id, &arabica_session_id)
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
 
         let model = (self.model_factory)()?;
         let mcp =
@@ -470,21 +472,20 @@ impl AcpState {
         let workspace_id = crate::host::workspace_id_for(&request.cwd);
         let arabica_session_id = StructureSessionId::new(request.session_id.to_string());
 
-        let stored =
-            FileSessionStore::read_session(&self.arabica_home, &workspace_id, &arabica_session_id)
-                .map_err(|error| {
-                    AcpError::invalid_params().data(format!(
-                        "cannot resume session {}: {error}",
-                        request.session_id
-                    ))
-                })?;
+        let stored = self
+            .session_store
+            .read(&workspace_id, &arabica_session_id)
+            .map_err(|error| {
+                AcpError::invalid_params().data(format!(
+                    "cannot resume session {}: {error}",
+                    request.session_id
+                ))
+            })?;
 
-        let path =
-            FileSessionStore::session_path(&self.arabica_home, &workspace_id, &arabica_session_id);
-        let store = Arc::new(
-            FileSessionStore::open_existing(&path)
-                .map_err(|error| AcpError::internal_error().data(error.to_string()))?,
-        );
+        let store = self
+            .session_store
+            .open(&workspace_id, &arabica_session_id)
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
 
         let model = (self.model_factory)()?;
         let mcp =
@@ -698,13 +699,15 @@ impl AcpState {
         }
         // No cwd filter means every workspace, the same "cwd absent" ->
         // "no workspace scope" mapping print mode's `structure sessions
-        // list --all` uses (`FileSessionStore::list_sessions`'s own
+        // list --all` uses (`SessionStore::list`'s own
         // `workspace_id: Option<&WorkspaceId>` parameter).
         let workspace_id = request
             .cwd
             .as_ref()
             .map(|cwd| crate::host::workspace_id_for(cwd));
-        let listings = FileSessionStore::list_sessions(&self.arabica_home, workspace_id.as_ref())
+        let listings = self
+            .session_store
+            .list(workspace_id.as_ref())
             .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
         let sessions = listings
             .into_iter()
@@ -713,7 +716,10 @@ impl AcpState {
                     AcpSessionId::new(listing.header.id.to_string()),
                     listing.header.cwd,
                 );
-                if let Some(modified_at_ms) = listing.modified_at_ms {
+                if let Some(title) = listing.header.title {
+                    info = info.title(title);
+                }
+                if let Some(modified_at_ms) = listing.updated_at_ms {
                     info = info.updated_at(time::to_iso8601(modified_at_ms));
                 }
                 info
@@ -1808,7 +1814,7 @@ mod round_trip {
         // id (`AcpState::new_session`), so this round-trips it back rather
         // than re-deriving anything the store itself would not have used.
         let workspace_id = crate::host::workspace_id_for(&root);
-        let stored = FileSessionStore::read_session(
+        let stored = SqliteSessionStore::read_session(
             &arabica_home,
             &workspace_id,
             &arabica_protocol::SessionId::new(session_id.to_string()),
@@ -2014,7 +2020,7 @@ mod round_trip {
 
         // Connection 2: an independent AcpState (same reasoning as
         // session/load's test -- avoids the first connection's still-locked
-        // FileSessionStore causing spurious lock contention) resumes the
+        // SqliteSessionStore causing spurious lock contention) resumes the
         // session and sends a new prompt. Unlike session/load, no
         // session/update notifications should arrive before the prompt: the
         // whole point of session/resume is skipping that replay.
@@ -2148,10 +2154,10 @@ mod round_trip {
                             .is_err();
                         // This probe is the one that actually depends on
                         // close_session removing its own SessionEntry: a
-                        // stale entry would keep its Arc<FileSessionStore>
+                        // stale entry would keep its Arc<dyn SessionWriter>
                         // (and the exclusive flock that comes with it) alive
                         // forever, so session/load's own
-                        // FileSessionStore::open_existing for the SAME
+                        // SqliteSessionStore::open_existing for the SAME
                         // session id would fail on lock contention with that
                         // never-released handle. Success here means no
                         // stale entry survived close.
@@ -2214,7 +2220,7 @@ mod round_trip {
             .expect("server run completed cleanly");
 
         let workspace_id = crate::host::workspace_id_for(&root);
-        let stored = FileSessionStore::read_session(
+        let stored = SqliteSessionStore::read_session(
             &arabica_home,
             &workspace_id,
             &arabica_protocol::SessionId::new(session_id.to_string()),
@@ -2284,6 +2290,13 @@ mod round_trip {
                 .expect("create connection's server run completed cleanly");
         }
 
+        for listing in SqliteSessionStore::list_sessions(&arabica_home, None).unwrap() {
+            SqliteSessionStore::open_existing(&listing.path)
+                .unwrap()
+                .set_title("Persisted title")
+                .unwrap();
+        }
+
         // A third, independent connection does the listing.
         let state = scripted_state(vec![], LocalRunnerPolicy::coding(), &arabica_home);
         let (server, client_channel) = spawn_agent(state);
@@ -2324,6 +2337,7 @@ mod round_trip {
             scoped.sessions
         );
         assert_eq!(scoped.sessions[0].cwd, root_a);
+        assert_eq!(scoped.sessions[0].title.as_deref(), Some("Persisted title"));
         assert!(
             scoped.sessions[0].updated_at.is_some(),
             "a session with a real file on disk must report updated_at"
