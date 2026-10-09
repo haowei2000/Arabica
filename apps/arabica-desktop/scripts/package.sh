@@ -41,6 +41,9 @@ else
   exit 1
 fi
 cp "$icon_work/source.png" "$bundle/Contents/Resources/arabica-icon.png"
+if [ -d "$repo_root/apps/arabica-desktop/Sources/ArabicaDesktop/Resources/tool-icons" ]; then
+  cp -R "$repo_root/apps/arabica-desktop/Sources/ArabicaDesktop/Resources/tool-icons" "$bundle/Contents/Resources/"
+fi
 for size in 16 32 128 256 512; do
   sips -z "$size" "$size" "$icon_work/source.png" \
     --out "$icon_work/Arabica.iconset/icon_${size}x${size}.png" >/dev/null

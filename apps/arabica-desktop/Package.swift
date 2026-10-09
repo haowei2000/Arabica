@@ -6,7 +6,10 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "ArabicaDesktop", targets: ["ArabicaDesktop"])],
     targets: [
-        .executableTarget(name: "ArabicaDesktop"),
+        .executableTarget(
+            name: "ArabicaDesktop",
+            resources: [.copy("Resources/tool-icons")]
+        ),
         .testTarget(name: "ArabicaDesktopTests", dependencies: ["ArabicaDesktop"]),
     ]
 )

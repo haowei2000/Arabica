@@ -50,6 +50,8 @@ struct MarkdownBlock: Equatable {
     }
 }
 
+import AppKit
+
 struct MarkdownMessage: View {
     let text: String
 
@@ -60,37 +62,88 @@ struct MarkdownMessage: View {
                 case .paragraph:
                     inline(block.text)
                 case .heading(let level):
-                    inline(block.text).font(AppFont.sans(CGFloat(level == 1 ? 18 : level == 2 ? 16 : 14), weight: .semibold))
+                    inline(block.text)
+                        .font(AppFont.sans(CGFloat(level == 1 ? 17 : level == 2 ? 15 : 13.5), weight: .semibold))
+                        .foregroundStyle(Palette.ink)
                 case .code:
-                    ScrollView(.horizontal) {
-                        Text(block.text).font(AppFont.code(13))
-                            .textSelection(.enabled).padding(12)
-                    }
-                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    CodeBlockView(code: block.text)
                 case .quote:
                     HStack(alignment: .top, spacing: 10) {
-                        Rectangle().fill(Color.secondary.opacity(0.5)).frame(width: 2)
-                        inline(block.text).foregroundStyle(.secondary)
-                    }.fixedSize(horizontal: false, vertical: true)
+                        Rectangle()
+                            .fill(Palette.accent.opacity(0.6))
+                            .frame(width: 3)
+                            .clipShape(Capsule())
+                        inline(block.text)
+                            .foregroundStyle(Palette.muted)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 case .list(let marker):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(marker).frame(minWidth: 16, alignment: .trailing)
+                        Text(marker)
+                            .font(AppFont.sans(13, weight: .medium))
+                            .foregroundStyle(Palette.muted)
+                            .frame(minWidth: 16, alignment: .trailing)
                         inline(block.text)
                     }
                 case .rule:
-                    Divider()
+                    Divider().overlay(Palette.rule)
                 }
             }
         }
-        .font(AppFont.serif(14))
-        .lineSpacing(3)
+        .font(AppFont.body(13.5))
+        .lineSpacing(3.5)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func inline(_ source: String) -> some View {
         let content = (try? AttributedString(markdown: source, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source)
-        return Text(content).textSelection(.enabled)
+        return Text(content)
+            .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CodeBlockView: View {
+    let code: String
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                        copied = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        Text(copied ? "Copied" : "Copy")
+                    }
+                    .font(AppFont.sans(11))
+                    .foregroundStyle(copied ? Color.green : Palette.muted)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 7)
+            .padding(.bottom, 4)
+
+            ScrollView(.horizontal) {
+                Text(code)
+                    .font(AppFont.code(12))
+                    .lineSpacing(2.5)
+                    .foregroundStyle(Palette.ink)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
+        }
+        .background(Palette.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
     }
 }

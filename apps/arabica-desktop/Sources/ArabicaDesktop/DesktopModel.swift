@@ -14,10 +14,18 @@ struct ChatItem: Identifiable {
     var path: String?
 }
 
-struct DesktopSession: Identifiable {
+struct DesktopSession: Identifiable, Hashable {
     let id: String
     let cwd: String
     var title: String
+    var updatedAt: String?
+}
+
+struct ProjectGroup: Identifiable {
+    var id: String { name }
+    let name: String
+    let path: String
+    var sessions: [DesktopSession]
 }
 
 struct PermissionPrompt: Identifiable {
@@ -151,14 +159,53 @@ final class DesktopModel: ObservableObject {
         isConnecting = false
     }
 
+    static func projectName(for cwd: String) -> String {
+        let parts = cwd.split(separator: "/")
+        if let wtIndex = parts.firstIndex(of: "worktrees"), wtIndex + 1 < parts.count {
+            return String(parts[wtIndex + 1])
+        }
+        if let pIndex = parts.firstIndex(of: "Projects"), pIndex + 1 < parts.count {
+            return String(parts[pIndex + 1])
+        }
+        let last = URL(fileURLWithPath: cwd).lastPathComponent
+        return last.isEmpty ? "Project" : last
+    }
+
+    var projectGroups: [ProjectGroup] {
+        var map: [String: (path: String, sessions: [DesktopSession])] = [:]
+        for session in sessions {
+            let name = Self.projectName(for: session.cwd)
+            if map[name] == nil {
+                map[name] = (path: session.cwd, sessions: [])
+            }
+            map[name]?.sessions.append(session)
+        }
+        if let currentWorkspace = workspace {
+            let currentName = Self.projectName(for: currentWorkspace.path)
+            if map[currentName] == nil {
+                map[currentName] = (path: currentWorkspace.path, sessions: [])
+            }
+        }
+        var groups = map.map { (name, value) in
+            ProjectGroup(name: name, path: value.path, sessions: value.sessions)
+        }
+        let activeProjectName = workspace.map { Self.projectName(for: $0.path) }
+        groups.sort { a, b in
+            if a.name == activeProjectName { return true }
+            if b.name == activeProjectName { return false }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+        return groups
+    }
+
     func refreshSessions() async {
-        guard let workspace else { return }
+        guard isConnected else { return }
         do {
             var entries: [[String: Any]] = []
             var cursor: String?
             var seen = Set<String>()
             repeat {
-                var params: [String: Any] = ["cwd": workspace.path]
+                var params: [String: Any] = [:]
                 if let cursor { params["cursor"] = cursor }
                 let result = try await client.request("session/list", params: params)
                 entries.append(contentsOf: result["sessions"] as? [[String: Any]] ?? [])
@@ -168,23 +215,37 @@ final class DesktopModel: ObservableObject {
             sessions = entries.compactMap { entry in
                 guard let id = entry["sessionId"] as? String,
                       let cwd = entry["cwd"] as? String else { return nil }
-                return DesktopSession(id: id, cwd: cwd, title: Self.sessionTitle(entry))
+                return DesktopSession(
+                    id: id,
+                    cwd: cwd,
+                    title: Self.sessionTitle(entry),
+                    updatedAt: entry["updatedAt"] as? String
+                )
             }
         } catch {
             errorText = error.localizedDescription
         }
     }
 
-    func newSession() async {
-        guard let workspace else { return }
+    func newSession(in cwd: String? = nil) async {
+        let targetCwd = cwd ?? workspace?.path
+        guard let targetCwd else {
+            chooseWorkspace()
+            return
+        }
         errorText = nil
         do {
             let result = try await client.request("session/new", params: [
-                "cwd": workspace.path, "mcpServers": [],
+                "cwd": targetCwd, "mcpServers": [],
             ])
             guard let id = result["sessionId"] as? String else { throw ACPError.invalidResponse }
             applySessionControls(from: result, for: id)
-            sessions.insert(DesktopSession(id: id, cwd: workspace.path, title: "New conversation"), at: 0)
+            if workspace?.path != targetCwd {
+                workspace = URL(fileURLWithPath: targetCwd)
+                UserDefaults.standard.set(targetCwd, forKey: "lastWorkspace")
+            }
+            let newSession = DesktopSession(id: id, cwd: targetCwd, title: "New conversation")
+            sessions.insert(newSession, at: 0)
             selectedSessionID = id
             loadedSessionID = id
             openSessionIDs.insert(id)
@@ -196,7 +257,7 @@ final class DesktopModel: ObservableObject {
     }
 
     func selectSession(_ id: String) async {
-        guard let workspace else { return }
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
         if id == loadedSessionID { return }
         guard !isRunning else { return }
         if let previous = loadedSessionID { itemCache[previous] = items }
@@ -204,6 +265,10 @@ final class DesktopModel: ObservableObject {
         selectedSessionID = id
         items = itemCache[id] ?? []
         errorText = nil
+        if workspace?.path != session.cwd {
+            workspace = URL(fileURLWithPath: session.cwd)
+            UserDefaults.standard.set(session.cwd, forKey: "lastWorkspace")
+        }
         if openSessionIDs.contains(id) {
             loadedSessionID = id
             restoreSessionControls(for: id)
@@ -216,7 +281,7 @@ final class DesktopModel: ObservableObject {
         do {
             let method = itemCache[id] == nil ? "session/load" : "session/resume"
             let result = try await client.request(method, params: [
-                "sessionId": id, "cwd": workspace.path, "mcpServers": [],
+                "sessionId": id, "cwd": session.cwd, "mcpServers": [],
             ])
             applySessionControls(from: result, for: id)
             loadedSessionID = id
@@ -406,27 +471,36 @@ final class DesktopModel: ObservableObject {
         case "agent_thought_chunk": appendChunk(Self.contentText(update), kind: .thought)
         case "tool_call", "tool_call_update":
             let toolID = update["toolCallId"] as? String
-            let title = update["title"] as? String
-            let status = update["status"] as? String
+            let fields = (update["fields"] as? [String: Any]) ?? [:]
+            let title = (fields["title"] as? String) ?? (update["title"] as? String)
+            let status = (fields["status"] as? String) ?? (update["status"] as? String)
+            let toolKind = (fields["kind"] as? String) ?? (update["kind"] as? String)
+            let content = (fields["content"] as? [[String: Any]]) ?? (update["content"] as? [[String: Any]])
+            let rawOutput = fields["rawOutput"] ?? update["rawOutput"]
+            let rawInput = fields["rawInput"] ?? update["rawInput"]
+            let locations = (fields["locations"] as? [[String: Any]]) ?? (update["locations"] as? [[String: Any]])
+            let path = locations?.first?["path"] as? String
+
+            let newDetail = (content != nil ? Self.toolDetail(content!) : nil)
+                ?? Self.jsonDetail(rawOutput)
+                ?? Self.jsonDetail(rawInput)
+
             if let toolID, let index = items.firstIndex(where: { $0.toolID == toolID }) {
                 if let title { items[index].text = title }
                 if let status { items[index].status = status }
-                if let toolKind = update["kind"] as? String { items[index].toolKind = toolKind }
-                if let content = update["content"] as? [[String: Any]] {
-                    items[index].detail = Self.toolDetail(content)
-                }
-                if items[index].detail == nil {
-                    items[index].detail = Self.jsonDetail(update["rawOutput"] ?? update["rawInput"])
-                }
-                if let path = (update["locations"] as? [[String: Any]])?.first?["path"] as? String {
-                    items[index].path = path
-                }
+                if let toolKind { items[index].toolKind = toolKind }
+                if let newDetail, !newDetail.isEmpty { items[index].detail = newDetail }
+                if let path { items[index].path = path }
             } else {
-                items.append(ChatItem(kind: .tool, text: title ?? "Tool call", status: status, toolID: toolID,
-                                      toolKind: update["kind"] as? String,
-                                      detail: Self.toolDetail(update["content"] as? [[String: Any]] ?? [])
-                                        ?? Self.jsonDetail(update["rawOutput"] ?? update["rawInput"]),
-                                      path: (update["locations"] as? [[String: Any]])?.first?["path"] as? String))
+                items.append(ChatItem(
+                    kind: .tool,
+                    text: title ?? "Tool call",
+                    status: status,
+                    toolID: toolID,
+                    toolKind: toolKind,
+                    detail: newDetail,
+                    path: path
+                ))
             }
         case "plan":
             plan = update["entries"] as? [[String: Any]] ?? []
@@ -472,8 +546,15 @@ final class DesktopModel: ObservableObject {
         let parts = blocks.compactMap { block -> String? in
             switch block["type"] as? String {
             case "content":
-                let content = block["content"] as? [String: Any] ?? [:]
-                return content["text"] as? String ?? (content["type"] as? String).map { "[\($0) content]" }
+                if let content = block["content"] as? [String: Any] {
+                    if let text = content["text"] as? String { return text }
+                    if let type = content["type"] as? String { return "[\(type) content]" }
+                } else if let text = block["content"] as? String {
+                    return text
+                } else if let text = block["text"] as? String {
+                    return text
+                }
+                return nil
             case "diff":
                 let path = block["path"] as? String ?? "File"
                 let old = block["oldText"] as? String
@@ -481,10 +562,14 @@ final class DesktopModel: ObservableObject {
                 return "\(path)\n\(old.map { "− \($0)\n" } ?? "")+ \(new)"
             case "terminal":
                 return (block["terminalId"] as? String).map { "Terminal \($0)" }
-            default: return nil
+            default:
+                if let text = block["text"] as? String { return text }
+                if let content = block["content"] as? String { return content }
+                return Self.jsonDetail(block)
             }
         }
-        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+        let joined = parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
     }
 
     private static func jsonDetail(_ value: Any?) -> String? {
