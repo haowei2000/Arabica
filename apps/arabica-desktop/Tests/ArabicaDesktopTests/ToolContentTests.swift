@@ -164,4 +164,42 @@ final class ToolContentTests: XCTestCase {
         let backToHex = color.toHex()
         XCTAssertEqual(backToHex.lowercased(), hex.lowercased())
     }
+
+    func testFourFontCategoriesAndManualInput() {
+        let theme = ThemeManager.shared
+
+        // 1. Set custom manual font names for all 4 categories
+        theme.fontNormal = "Inter"
+        theme.fontEvent = "JetBrains Mono"
+        theme.fontMessage = "Georgia"
+        theme.fontCode = "Fira Code"
+
+        XCTAssertEqual(theme.fontNormal, "Inter")
+        XCTAssertEqual(theme.fontEvent, "JetBrains Mono")
+        XCTAssertEqual(theme.fontMessage, "Georgia")
+        XCTAssertEqual(theme.fontCode, "Fira Code")
+
+        // 2. Resolve fonts
+        let normalFont = AppFont.normal(13)
+        let eventFont = AppFont.event(12)
+        let messageFont = AppFont.message(14)
+        let codeFont = AppFont.code(12)
+
+        XCTAssertNotNil(normalFont)
+        XCTAssertNotNil(eventFont)
+        XCTAssertNotNil(messageFont)
+        XCTAssertNotNil(codeFont)
+
+        // 3. Test fallback to system when empty or "System"
+        theme.fontNormal = "System"
+        theme.fontCode = "System Monospaced"
+        XCTAssertNotNil(AppFont.normal(13))
+        XCTAssertNotNil(AppFont.code(12))
+
+        // Reset
+        theme.fontNormal = "System"
+        theme.fontEvent = "System"
+        theme.fontMessage = "System"
+        theme.fontCode = "System Monospaced"
+    }
 }

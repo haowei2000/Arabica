@@ -63,7 +63,7 @@ struct MarkdownMessage: View {
                     inline(block.text)
                 case .heading(let level):
                     inline(block.text)
-                        .font(AppFont.sans(CGFloat(level == 1 ? 17 : level == 2 ? 15 : 13.5), weight: .semibold))
+                        .font(AppFont.message(CGFloat(level == 1 ? 17 : level == 2 ? 15 : 13.5), weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 case .code:
                     CodeBlockView(code: block.text)
@@ -80,7 +80,7 @@ struct MarkdownMessage: View {
                 case .list(let marker):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(marker)
-                            .font(AppFont.sans(13, weight: .medium))
+                            .font(AppFont.message(13, weight: .medium))
                             .foregroundStyle(Palette.muted)
                             .frame(minWidth: 16, alignment: .trailing)
                         inline(block.text)
@@ -90,7 +90,7 @@ struct MarkdownMessage: View {
                 }
             }
         }
-        .font(AppFont.body(13.5))
+        .font(AppFont.message(13.5))
         .lineSpacing(3.5)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

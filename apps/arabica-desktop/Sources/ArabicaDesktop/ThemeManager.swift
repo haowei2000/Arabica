@@ -27,7 +27,65 @@ enum ThemeMode: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Font Family
+// MARK: - Application Typography (Normal, Event, Message, Code)
+
+public enum AppFont {
+    public static func resolve(family: String, size: CGFloat, weight: Font.Weight = .regular, fallback: Font.Design = .default) -> Font {
+        let delta = ThemeManager.shared.fontSizeDelta
+        let totalSize = max(7, size + delta)
+        let trimmed = family.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty || trimmed.caseInsensitiveCompare("System") == .orderedSame || trimmed.caseInsensitiveCompare("Default") == .orderedSame {
+            return .system(size: totalSize, weight: weight, design: fallback)
+        }
+        if trimmed.caseInsensitiveCompare("System Monospaced") == .orderedSame || trimmed.caseInsensitiveCompare("Monospaced") == .orderedSame {
+            return .system(size: totalSize, weight: weight, design: .monospaced)
+        }
+        if trimmed.caseInsensitiveCompare("System Serif") == .orderedSame || trimmed.caseInsensitiveCompare("Serif") == .orderedSame {
+            return .system(size: totalSize, weight: weight, design: .serif)
+        }
+        if trimmed.caseInsensitiveCompare("System Rounded") == .orderedSame || trimmed.caseInsensitiveCompare("Rounded") == .orderedSame {
+            return .system(size: totalSize, weight: weight, design: .rounded)
+        }
+
+        return .custom(trimmed, size: totalSize).weight(weight)
+    }
+
+    /// 1. Normal: 界面基础字体 (侧栏、导航、按钮、标签、弹窗等 UI Chrome)
+    public static func normal(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        resolve(family: ThemeManager.shared.fontNormal, size: size, weight: weight, fallback: .default)
+    }
+
+    /// 2. Event: 事件与工具过程字体 (工具调用卡片、执行状态、思考过程标题、Plan 进度等)
+    public static func event(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        resolve(family: ThemeManager.shared.fontEvent, size: size, weight: weight, fallback: .default)
+    }
+
+    /// 3. Message: 消息内容字体 (输入框草稿、用户发言气泡、Agent 回复 Markdown 正文)
+    public static func message(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        resolve(family: ThemeManager.shared.fontMessage, size: size, weight: weight, fallback: .default)
+    }
+
+    /// 4. Code: 代码与技术数据字体 (代码块、文件路径、终端输出、Diff 块、配置 Key)
+    public static func code(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        resolve(family: ThemeManager.shared.fontCode, size: size, weight: weight, fallback: .monospaced)
+    }
+
+    // 快捷兼容别名
+    public static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        normal(size, weight: weight)
+    }
+
+    public static func body(_ size: CGFloat = 13.5, weight: Font.Weight = .regular) -> Font {
+        message(size, weight: weight)
+    }
+
+    public static func serif(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        resolve(family: "System Serif", size: size, weight: weight, fallback: .serif)
+    }
+}
+
+// MARK: - Legacy Font Family Compatibility
 
 enum AppFontFamily: String, CaseIterable, Identifiable {
     case system = "System (SF Pro)"
@@ -259,6 +317,42 @@ final class ThemeManager: ObservableObject, @unchecked Sendable {
     @AppStorage("arabica.theme.iconStyle") var iconStyleRaw: String = ToolIconStyle.oli.rawValue
     @AppStorage("arabica.theme.fontSizeDelta") var fontSizeDelta: Double = 0.0
     @AppStorage("arabica.theme.custom_themes_json") var customThemesJSON: String = "[]"
+    @AppStorage("arabica.theme.font_normal") var fontNormalRaw: String = "System"
+    @AppStorage("arabica.theme.font_event") var fontEventRaw: String = "System"
+    @AppStorage("arabica.theme.font_message") var fontMessageRaw: String = "System"
+    @AppStorage("arabica.theme.font_code") var fontCodeRaw: String = "System Monospaced"
+
+    var fontNormal: String {
+        get { fontNormalRaw }
+        set {
+            fontNormalRaw = newValue
+            objectWillChange.send()
+        }
+    }
+
+    var fontEvent: String {
+        get { fontEventRaw }
+        set {
+            fontEventRaw = newValue
+            objectWillChange.send()
+        }
+    }
+
+    var fontMessage: String {
+        get { fontMessageRaw }
+        set {
+            fontMessageRaw = newValue
+            objectWillChange.send()
+        }
+    }
+
+    var fontCode: String {
+        get { fontCodeRaw }
+        set {
+            fontCodeRaw = newValue
+            objectWillChange.send()
+        }
+    }
 
     var mode: ThemeMode {
         get { ThemeMode(rawValue: modeRaw) ?? .dark }

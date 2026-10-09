@@ -261,43 +261,83 @@ struct AppearancePageView: View {
                     }
                 }
 
-                // 4. Typography
-                SettingSection(title: "Typography", subtitle: "Font family and size scale for chat, chrome, and code") {
-                    SettingRow(label: "Font Family", description: "Design style applied to interface and body text") {
-                        Picker("Font Family", selection: $theme.fontFamily) {
-                            ForEach(AppFontFamily.allCases) { family in
-                                Text(family.rawValue).tag(family)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 180)
-                    }
+                // 4. Typography (Normal, Event, Message, Code)
+                SettingSection(title: "Typography", subtitle: "Independent font families for Normal, Event, Message, and Code with custom font input") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        FontCategorySettingRow(
+                            title: "Normal Font",
+                            subtitle: "Sidebar, navigation, buttons, titles & UI chrome",
+                            placeholder: "e.g. System, SF Pro, Inter",
+                            fontName: $theme.fontNormal,
+                            presets: ["System", "SF Pro", "Inter", "Helvetica Neue", "System Rounded"],
+                            sampleFont: AppFont.normal(12),
+                            sampleText: "Arabica Workspace • Project Navigation & Controls"
+                        )
 
-                    SettingRow(label: "Font Size Adjust", description: "Fine-tune UI font scale (\(theme.fontSizeDelta >= 0 ? "+\(Int(theme.fontSizeDelta))" : "\(Int(theme.fontSizeDelta))") pt)") {
-                        HStack(spacing: 8) {
-                            Button {
-                                if theme.fontSizeDelta > -3 { theme.fontSizeDelta -= 1 }
-                            } label: {
-                                Image(systemName: "minus")
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            .buttonStyle(.plain)
-                            .frame(width: 24, height: 24)
-                            .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+                        Divider().overlay(Palette.rule)
 
-                            Text("\(theme.fontSizeDelta >= 0 ? "+" : "")\(Int(theme.fontSizeDelta))")
-                                .font(AppFont.code(12))
-                                .frame(width: 28)
+                        FontCategorySettingRow(
+                            title: "Event Font",
+                            subtitle: "Tool executions, process events, thought & plan status",
+                            placeholder: "e.g. System, JetBrains Mono, Fira Code",
+                            fontName: $theme.fontEvent,
+                            presets: ["System", "JetBrains Mono", "Fira Code", "SF Pro", "Menlo"],
+                            sampleFont: AppFont.event(12),
+                            sampleText: "[Tool] Execute: cargo test --workspace (Running…)"
+                        )
 
-                            Button {
-                                if theme.fontSizeDelta < 4 { theme.fontSizeDelta += 1 }
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 11, weight: .semibold))
+                        Divider().overlay(Palette.rule)
+
+                        FontCategorySettingRow(
+                            title: "Message Font",
+                            subtitle: "Composer input draft & conversation markdown dialog",
+                            placeholder: "e.g. System, Georgia, Inter, SF Pro",
+                            fontName: $theme.fontMessage,
+                            presets: ["System", "Inter", "Georgia", "New York (Serif)", "SF Pro"],
+                            sampleFont: AppFont.message(12.5),
+                            sampleText: "How can I help you design and build your project today?"
+                        )
+
+                        Divider().overlay(Palette.rule)
+
+                        FontCategorySettingRow(
+                            title: "Code Font",
+                            subtitle: "Code blocks, file paths, terminal output & diff blocks",
+                            placeholder: "e.g. System Monospaced, JetBrains Mono",
+                            fontName: $theme.fontCode,
+                            presets: ["System Monospaced", "JetBrains Mono", "Fira Code", "Menlo", "Courier New", "Source Code Pro"],
+                            sampleFont: AppFont.code(12),
+                            sampleText: "struct Agent<T: Runner> { let runtime: T }"
+                        )
+
+                        Divider().overlay(Palette.rule)
+
+                        SettingRow(label: "Font Size Adjust", description: "Fine-tune UI font scale (\(theme.fontSizeDelta >= 0 ? "+\(Int(theme.fontSizeDelta))" : "\(Int(theme.fontSizeDelta))") pt)") {
+                            HStack(spacing: 8) {
+                                Button {
+                                    if theme.fontSizeDelta > -3 { theme.fontSizeDelta -= 1 }
+                                } label: {
+                                    Image(systemName: "minus")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .buttonStyle(.plain)
+                                .frame(width: 24, height: 24)
+                                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+
+                                Text("\(theme.fontSizeDelta >= 0 ? "+" : "")\(Int(theme.fontSizeDelta))")
+                                    .font(AppFont.code(12))
+                                    .frame(width: 28)
+
+                                Button {
+                                    if theme.fontSizeDelta < 4 { theme.fontSizeDelta += 1 }
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .buttonStyle(.plain)
+                                .frame(width: 24, height: 24)
+                                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
                             }
-                            .buttonStyle(.plain)
-                            .frame(width: 24, height: 24)
-                            .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
                         }
                     }
                 }
@@ -305,11 +345,11 @@ struct AppearancePageView: View {
                 // 5. Live Preview Card
                 SettingSection(title: "Live Preview", subtitle: "Instant preview of active theme colors, fonts, and tool icons") {
                     VStack(alignment: .leading, spacing: 12) {
-                        // User message preview
+                        // User message preview (Message Font)
                         HStack {
                             Spacer()
                             Text("Let's test theme colors and fonts!")
-                                .font(AppFont.body(13))
+                                .font(AppFont.message(13))
                                 .foregroundStyle(Palette.ink)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
@@ -317,21 +357,24 @@ struct AppearancePageView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.rule, lineWidth: 1))
                         }
 
-                        // Assistant preview
+                        // Assistant preview (Message Font)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Arabica assistant responding in **\(theme.activeTheme.name)** with **\(theme.fontFamily.rawValue)** typography.")
-                                .font(AppFont.body(13))
+                            Text("Arabica assistant responding in **\(theme.activeTheme.name)** with custom 4-way typography.")
+                                .font(AppFont.message(13))
                                 .foregroundStyle(Palette.ink)
 
-                            // Tool Card preview
+                            // Tool Card preview (Event Font + Code Font)
                             HStack(spacing: 8) {
                                 ToolIconView(kind: "read", title: "read file", size: 13)
-                                Text("Read src/theme.rs")
-                                    .font(AppFont.code(12))
+                                Text("Read file")
+                                    .font(AppFont.event(12, weight: .medium))
                                     .foregroundStyle(Palette.ink)
+                                Text("src/theme.rs")
+                                    .font(AppFont.code(11.5))
+                                    .foregroundStyle(Palette.muted)
                                 Spacer()
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(AppFont.sans(11))
+                                    .font(AppFont.normal(11))
                                     .foregroundStyle(Color.green.opacity(0.85))
                             }
                             .padding(.horizontal, 10)
@@ -339,13 +382,13 @@ struct AppearancePageView: View {
                             .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
 
-                            // Sidebar sample preview
+                            // Sidebar sample preview (Normal Font)
                             HStack(spacing: 8) {
                                 Image(systemName: "folder")
-                                    .font(AppFont.sans(11))
+                                    .font(AppFont.normal(11))
                                     .foregroundStyle(Palette.ink.opacity(0.85))
                                 Text("Sidebar Sample")
-                                    .font(AppFont.sans(11.5, weight: .medium))
+                                    .font(AppFont.normal(11.5, weight: .medium))
                                     .foregroundStyle(Palette.ink)
                                 Spacer()
                                 Text("Selected")
@@ -490,5 +533,86 @@ struct AppearancePageView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Font Category Setting Row
+
+private struct FontCategorySettingRow: View {
+    let title: String
+    let subtitle: String
+    let placeholder: String
+    @Binding var fontName: String
+    let presets: [String]
+    let sampleFont: Font
+    let sampleText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(AppFont.normal(12.5, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                    Text(subtitle)
+                        .font(AppFont.normal(10.5))
+                        .foregroundStyle(Palette.muted)
+                }
+
+                Spacer()
+
+                Menu {
+                    ForEach(presets, id: \.self) { p in
+                        Button(p) {
+                            fontName = p
+                        }
+                    }
+                    Divider()
+                    Button("Reset to Default") {
+                        fontName = presets.first ?? "System"
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "textformat")
+                            .font(.system(size: 10))
+                        Text("Presets")
+                            .font(AppFont.normal(11))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8))
+                    }
+                    .foregroundStyle(Palette.muted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .menuStyle(.borderlessButton)
+
+                TextField(placeholder, text: $fontName)
+                    .textFieldStyle(.plain)
+                    .font(AppFont.code(11.5))
+                    .foregroundStyle(Palette.ink)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .frame(width: 170)
+                    .background(Palette.card, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule, lineWidth: 1))
+            }
+
+            // Real-time sample text preview in this specific font
+            HStack(spacing: 6) {
+                Text("Sample:")
+                    .font(AppFont.normal(10))
+                    .foregroundStyle(Palette.subtle)
+                Text(sampleText)
+                    .font(sampleFont)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Palette.raised.opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
+        }
+        .padding(.vertical, 3)
     }
 }

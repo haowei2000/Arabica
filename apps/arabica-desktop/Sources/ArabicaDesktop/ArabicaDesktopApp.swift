@@ -2,35 +2,7 @@ import SwiftUI
 
 /// Global typography system with 3 unified font styles:
 /// 1. Serif (衬线体) - Dedicated to body text (正文: chat message text, thoughts, composer draft)
-/// 2. Sans-serif (非衬线体) - Used for all UI chrome, titles, navigation, buttons, labels
-/// 3. Monospaced / Code (代码字体) - Used for code, diffs, terminal outputs, file paths, config keys
-enum AppFont {
-    /// 现代正文专用字体 (Sans)
-    static func body(_ size: CGFloat = 13.5, weight: Font.Weight = .regular) -> Font {
-        let delta = ThemeManager.shared.fontSizeDelta
-        let design = ThemeManager.shared.fontFamily.design
-        return .system(size: size + delta, weight: weight, design: design)
-    }
-
-    /// 非衬线体 (Sans-Serif) - 用于界面元素与标题
-    static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        let delta = ThemeManager.shared.fontSizeDelta
-        let design = ThemeManager.shared.fontFamily.design
-        return .system(size: size + delta, weight: weight, design: design)
-    }
-
-    /// 代码字体 (Monospaced) - 用于代码、终端、diff、路径、配置键等
-    static func code(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        let delta = ThemeManager.shared.fontSizeDelta
-        return .system(size: size + delta, weight: weight, design: .monospaced)
-    }
-
-    /// 衬线体 (Serif)
-    static func serif(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        let delta = ThemeManager.shared.fontSizeDelta
-        return .system(size: size + delta, weight: weight, design: .serif)
-    }
-}
+// MARK: - Design System Tokens & Palette (Theme Aware)
 
 enum Palette {
     static var canvas: Color { ThemeManager.shared.currentColors.canvas }
@@ -739,7 +711,7 @@ private struct UserMessageView: View {
         HStack {
             Spacer(minLength: 64)
             Text(item.text)
-                .font(AppFont.body(13.5))
+                .font(AppFont.message(13.5))
                 .lineSpacing(3.5)
                 .foregroundStyle(Palette.ink)
                 .textSelection(.enabled)
@@ -782,7 +754,7 @@ private struct ThoughtCardView: View {
                     ToolIconView(kind: "think", title: "think", size: 13)
                         .foregroundStyle(Color.purple.opacity(0.85))
                     Text(isRunning && item.text.isEmpty ? "Thinking…" : "Thought process")
-                        .font(AppFont.sans(11.5, weight: .medium))
+                        .font(AppFont.event(11.5, weight: .medium))
                         .foregroundStyle(Palette.muted)
                     Spacer()
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -1018,7 +990,7 @@ private struct ToolGroupCardView: View {
                     .foregroundStyle(isAnyRunning ? Palette.accent : Palette.muted)
 
                     Text(summaryTitle)
-                        .font(AppFont.code(12))
+                        .font(AppFont.event(12, weight: .medium))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
 
@@ -1028,7 +1000,7 @@ private struct ToolGroupCardView: View {
                         HStack(spacing: 5) {
                             ProgressView().controlSize(.mini)
                             Text("Running…")
-                                .font(AppFont.sans(11))
+                                .font(AppFont.event(11))
                                 .foregroundStyle(Palette.accent)
                         }
                     } else if hasAnyFailed {
@@ -1037,7 +1009,7 @@ private struct ToolGroupCardView: View {
                                 .font(AppFont.sans(11))
                                 .foregroundStyle(.red)
                             Text("Failed")
-                                .font(AppFont.sans(11))
+                                .font(AppFont.event(11))
                                 .foregroundStyle(.red)
                         }
                     } else {
@@ -1047,7 +1019,7 @@ private struct ToolGroupCardView: View {
                                 .foregroundStyle(Color.green.opacity(0.85))
                             if tools.count > 1 {
                                 Text("\(tools.count)")
-                                    .font(AppFont.code(10))
+                                    .font(AppFont.event(10))
                                     .foregroundStyle(Palette.muted)
                             }
                         }
@@ -1104,7 +1076,7 @@ private struct ToolItemDetailView: View {
                         .foregroundStyle(Palette.muted)
 
                     Text(item.text)
-                        .font(AppFont.code(11.5))
+                        .font(AppFont.event(11.5))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1243,10 +1215,10 @@ private struct PlanProgressView: View {
                         .font(AppFont.sans(12))
                         .foregroundStyle(Palette.accent)
                     Text("Plan")
-                        .font(AppFont.sans(12, weight: .semibold))
+                        .font(AppFont.event(12, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                     Text("\(completedCount)/\(plan.count) completed")
-                        .font(AppFont.sans(11))
+                        .font(AppFont.event(11))
                         .foregroundStyle(Palette.muted)
                     Spacer()
                     ZStack(alignment: .leading) {
@@ -1289,7 +1261,7 @@ private struct PlanProgressView: View {
                                     .foregroundStyle(Palette.subtle)
                             }
                             Text(entry["content"] as? String ?? "Step")
-                                .font(AppFont.sans(11.5))
+                                .font(AppFont.event(11.5))
                                 .foregroundStyle(isCompleted ? Palette.muted : Palette.ink)
                         }
                     }
@@ -1347,7 +1319,7 @@ private struct ComposerView: View {
                 // Input text field
                 TextField("Send a message… (⏎ to send)", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(AppFont.body(13.5))
+                    .font(AppFont.message(13.5))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1...8)
                     .padding(.horizontal, 2)
