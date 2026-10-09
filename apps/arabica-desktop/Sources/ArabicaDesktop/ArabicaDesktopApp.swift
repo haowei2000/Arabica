@@ -139,11 +139,14 @@ private struct DesktopView: View {
             if columnVisibility != .detailOnly {
                 ProjectsSidebarView(model: model, columnVisibility: $columnVisibility)
                     .frame(width: sidebarWidth)
+                    .frame(maxHeight: .infinity)
+                    .id("sidebar-\(theme.activeThemeID)-\(theme.activeTheme.sidebarHex)")
                     .transition(.move(edge: .leading))
 
                 Rectangle()
                     .fill(Palette.rule)
                     .frame(width: 1)
+                    .frame(maxHeight: .infinity)
             }
 
             conversation
@@ -397,6 +400,7 @@ private struct DesktopView: View {
 private struct ProjectsSidebarView: View {
     @ObservedObject var model: DesktopModel
     @Binding var columnVisibility: NavigationSplitViewVisibility
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var expandedProjects = Set<String>()
 
     var body: some View {
@@ -524,6 +528,7 @@ private struct ProjectsSidebarView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.sidebar)
     }
 }
@@ -536,6 +541,7 @@ private struct ProjectSectionView: View {
     let onToggleExpanded: () -> Void
     let onSelectSession: (DesktopSession) -> Void
     let onNewSession: () -> Void
+    @ObservedObject private var theme = ThemeManager.shared
 
     private var visibleSessions: [DesktopSession] {
         if isExpanded || project.sessions.count <= 5 {
@@ -601,6 +607,7 @@ private struct SessionRowView: View {
     let isSelected: Bool
     let isRunning: Bool
     let onSelect: () -> Void
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var isHovered = false
 
     var body: some View {

@@ -338,6 +338,27 @@ struct AppearancePageView: View {
                             .padding(.vertical, 7)
                             .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
+
+                            // Sidebar sample preview
+                            HStack(spacing: 8) {
+                                Image(systemName: "folder")
+                                    .font(AppFont.sans(11))
+                                    .foregroundStyle(Palette.ink.opacity(0.85))
+                                Text("Sidebar Sample")
+                                    .font(AppFont.sans(11.5, weight: .medium))
+                                    .foregroundStyle(Palette.ink)
+                                Spacer()
+                                Text("Selected")
+                                    .font(AppFont.code(10))
+                                    .foregroundStyle(Palette.accent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Palette.selectionBg, in: RoundedRectangle(cornerRadius: 4))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Palette.sidebar, in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule, lineWidth: 1))
                         }
                         .padding(.top, 4)
                     }
