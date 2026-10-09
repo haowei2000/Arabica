@@ -7,48 +7,58 @@ import SwiftUI
 enum AppFont {
     /// 现代正文专用字体 (Sans)
     static func body(_ size: CGFloat = 13.5, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .default)
+        let delta = ThemeManager.shared.fontSizeDelta
+        let design = ThemeManager.shared.fontFamily.design
+        return .system(size: size + delta, weight: weight, design: design)
     }
 
     /// 非衬线体 (Sans-Serif) - 用于界面元素与标题
     static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .default)
+        let delta = ThemeManager.shared.fontSizeDelta
+        let design = ThemeManager.shared.fontFamily.design
+        return .system(size: size + delta, weight: weight, design: design)
     }
 
     /// 代码字体 (Monospaced) - 用于代码、终端、diff、路径、配置键等
     static func code(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .monospaced)
+        let delta = ThemeManager.shared.fontSizeDelta
+        return .system(size: size + delta, weight: weight, design: .monospaced)
     }
 
-    /// 衬线体 (Serif) - 兼容保留
+    /// 衬线体 (Serif)
     static func serif(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        let delta = ThemeManager.shared.fontSizeDelta
+        return .system(size: size + delta, weight: weight, design: .serif)
     }
 }
 
 enum Palette {
-    static let canvas = Color(red: 20 / 255, green: 21 / 255, blue: 24 / 255)
-    static let sidebar = Color(red: 24 / 255, green: 25 / 255, blue: 28 / 255)
-    static let raised = Color(red: 29 / 255, green: 30 / 255, blue: 34 / 255)
-    static let card = Color(red: 33 / 255, green: 34 / 255, blue: 39 / 255)
-    static let userBubble = Color(red: 36 / 255, green: 38 / 255, blue: 44 / 255)
-    static let ink = Color(red: 236 / 255, green: 235 / 255, blue: 232 / 255)
-    static let muted = Color(red: 156 / 255, green: 156 / 255, blue: 162 / 255)
-    static let subtle = Color(red: 110 / 255, green: 110 / 255, blue: 118 / 255)
-    static let rule = Color.white.opacity(0.10)
-    static let accent = Color(red: 88 / 255, green: 135 / 255, blue: 235 / 255)
+    static var canvas: Color { ThemeManager.shared.currentColors.canvas }
+    static var sidebar: Color { ThemeManager.shared.currentColors.sidebar }
+    static var raised: Color { ThemeManager.shared.currentColors.raised }
+    static var card: Color { ThemeManager.shared.currentColors.card }
+    static var userBubble: Color { ThemeManager.shared.currentColors.userBubble }
+    static var ink: Color { ThemeManager.shared.currentColors.ink }
+    static var muted: Color { ThemeManager.shared.currentColors.muted }
+    static var subtle: Color { ThemeManager.shared.currentColors.subtle }
+    static var rule: Color { ThemeManager.shared.currentColors.rule }
+    static var accent: Color { ThemeManager.shared.currentColors.accent }
+    static var codeBg: Color { ThemeManager.shared.currentColors.codeBg }
+    static var toolHeaderBg: Color { ThemeManager.shared.currentColors.toolHeaderBg }
 }
 
 @main
 struct ArabicaDesktopApp: App {
     @StateObject private var model = DesktopModel()
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some Scene {
         WindowGroup {
             DesktopView()
                 .environmentObject(model)
+                .environmentObject(theme)
                 .frame(minWidth: 540, minHeight: 480)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(theme.colorScheme)
                 .ignoresSafeArea(.all, edges: .top)
         }
         .windowStyle(.hiddenTitleBar)
@@ -74,8 +84,9 @@ struct ArabicaDesktopApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
+                .environmentObject(theme)
                 .frame(width: 660, height: 700)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(theme.colorScheme)
         }
     }
 }
@@ -101,6 +112,7 @@ final class WindowConfiguratorView: NSView {
 
 private struct DesktopView: View {
     @EnvironmentObject var model: DesktopModel
+    @ObservedObject private var theme = ThemeManager.shared
     @AppStorage("showEvaluationInspector") private var showEvaluation = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sidebarWidth: CGFloat = 260
@@ -307,6 +319,20 @@ private struct DesktopView: View {
             }
             .buttonStyle(.plain)
             .help(showEvaluation ? "Hide evaluation panel (Cmd+Opt+I)" : "Show evaluation panel (Cmd+Opt+I)")
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    theme.cycleMode()
+                }
+            } label: {
+                Image(systemName: theme.mode.icon)
+                    .font(AppFont.sans(10.5))
+                    .foregroundStyle(Palette.muted)
+                    .frame(width: 20, height: 20)
+                    .background(Palette.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+            .help("Theme: \(theme.mode.rawValue) (Click to switch)")
         }
     }
 
@@ -877,20 +903,30 @@ enum ToolVisuals {
 }
 
 struct ToolIconView: View {
+    @ObservedObject private var theme = ThemeManager.shared
     let kind: String?
     var title: String = ""
     var size: CGFloat = 13
 
     var body: some View {
-        if let nsImage = ToolVisuals.iconImage(for: kind, title: title) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .renderingMode(.template)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size, height: size)
-        } else {
-            Image(systemName: ToolVisuals.icon(for: kind, title: title))
-                .font(AppFont.sans(size))
+        let tint = theme.toolColor(for: kind)
+        Group {
+            if theme.iconStyle == .sfSymbols {
+                Image(systemName: ToolVisuals.icon(for: kind, title: title))
+                    .font(AppFont.sans(size))
+                    .foregroundStyle(tint)
+            } else if let nsImage = ToolVisuals.iconImage(for: kind, title: title) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .renderingMode(.template)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: size, height: size)
+                    .foregroundStyle(tint)
+            } else {
+                Image(systemName: ToolVisuals.icon(for: kind, title: title))
+                    .font(AppFont.sans(size))
+                    .foregroundStyle(tint)
+            }
         }
     }
 }
@@ -1491,6 +1527,7 @@ private struct SettingsView: View {
 
     private enum SettingsTab: String, CaseIterable, Identifiable {
         case config = "Config"
+        case appearance = "Appearance"
         case policy = "Policy"
         case context = "Context"
 
@@ -1498,6 +1535,7 @@ private struct SettingsView: View {
         var icon: String {
             switch self {
             case .config: return "gearshape"
+            case .appearance: return "paintpalette"
             case .policy: return "point.3.filled.connected.trianglepath.dotted"
             case .context: return "square.stack.3d.up"
             }
@@ -1522,6 +1560,8 @@ private struct SettingsView: View {
                 switch selectedTab {
                 case .config:
                     ConfigPageView(config: config, workspaceName: model.workspace?.lastPathComponent)
+                case .appearance:
+                    AppearancePageView()
                 case .policy:
                     PolicyPageView(config: config, evaluation: model.evaluation)
                 case .context:

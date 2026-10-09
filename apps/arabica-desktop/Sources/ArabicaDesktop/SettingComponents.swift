@@ -142,5 +142,125 @@ struct FlowRouteStepRow: View {
 // MARK: - Palette & Font Reference Helpers
 
 extension Palette {
-    static let cardBorder = Color.white.opacity(0.08)
+    static var cardBorder: Color { ThemeManager.shared.currentColors.rule }
+}
+
+// MARK: - Appearance Page View
+
+struct AppearancePageView: View {
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // 1. Theme Mode
+                SettingSection(title: "Color Theme", subtitle: "Choose between dark, light, or auto system appearance") {
+                    SettingRow(label: "Theme Mode", description: "Current: \(theme.mode.rawValue)") {
+                        Picker("Theme Mode", selection: $theme.mode) {
+                            ForEach(ThemeMode.allCases) { mode in
+                                Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 260)
+                    }
+                }
+
+                // 2. Tool Icons Style
+                SettingSection(title: "Tool Icons", subtitle: "Icon pack and visual rendering for agent tool calls") {
+                    SettingRow(label: "Icon Style", description: "Switch between Oli vector icons, Apple SF Symbols, or custom glyph styles") {
+                        Picker("Icon Style", selection: $theme.iconStyle) {
+                            ForEach(ToolIconStyle.allCases) { style in
+                                Text(style.rawValue).tag(style)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                    }
+                }
+
+                // 3. Typography
+                SettingSection(title: "Typography", subtitle: "Font family and size scale for chat, chrome, and code") {
+                    SettingRow(label: "Font Family", description: "Design style applied to interface and body text") {
+                        Picker("Font Family", selection: $theme.fontFamily) {
+                            ForEach(AppFontFamily.allCases) { family in
+                                Text(family.rawValue).tag(family)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                    }
+
+                    SettingRow(label: "Font Size Adjust", description: "Fine-tune UI font scale (\(theme.fontSizeDelta >= 0 ? "+\(Int(theme.fontSizeDelta))" : "\(Int(theme.fontSizeDelta))") pt)") {
+                        HStack(spacing: 8) {
+                            Button {
+                                if theme.fontSizeDelta > -3 { theme.fontSizeDelta -= 1 }
+                            } label: {
+                                Image(systemName: "minus")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: 24, height: 24)
+                            .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+
+                            Text("\(theme.fontSizeDelta >= 0 ? "+" : "")\(Int(theme.fontSizeDelta))")
+                                .font(AppFont.code(12))
+                                .frame(width: 28)
+
+                            Button {
+                                if theme.fontSizeDelta < 4 { theme.fontSizeDelta += 1 }
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: 24, height: 24)
+                            .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+                        }
+                    }
+                }
+
+                // 4. Live Preview Card
+                SettingSection(title: "Live Preview", subtitle: "Instant preview of active theme colors, fonts, and tool icons") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // User message preview
+                        HStack {
+                            Spacer()
+                            Text("Let's test theme colors and fonts!")
+                                .font(AppFont.body(13))
+                                .foregroundStyle(Palette.ink)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Palette.userBubble, in: RoundedRectangle(cornerRadius: 12))
+                        }
+
+                        // Assistant preview
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Arabica assistant responding in **\(theme.mode.rawValue)** theme with **\(theme.fontFamily.rawValue)** typography.")
+                                .font(AppFont.body(13))
+                                .foregroundStyle(Palette.ink)
+
+                            // Tool Card preview
+                            HStack(spacing: 8) {
+                                ToolIconView(kind: "read", title: "read file", size: 13)
+                                Text("Read src/theme.rs")
+                                    .font(AppFont.code(12))
+                                    .foregroundStyle(Palette.ink)
+                                Spacer()
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(AppFont.sans(11))
+                                    .foregroundStyle(Color.green.opacity(0.85))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(Palette.raised.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .padding(.top, 4)
+                    }
+                    .padding(14)
+                }
+            }
+            .padding(20)
+        }
+    }
 }

@@ -76,4 +76,56 @@ final class ToolContentTests: XCTestCase {
         XCTAssertEqual(ToolVisuals.icon(for: "custom", title: "git status"), "arrow.triangle.branch")
         XCTAssertEqual(ToolVisuals.icon(for: "unknown", title: "custom tool"), "wrench.and.screwdriver")
     }
+
+    func testThemeManagerModesAndPalettes() {
+        let theme = ThemeManager.shared
+        theme.mode = .dark
+        XCTAssertEqual(theme.colorScheme, .dark)
+        XCTAssertTrue(theme.isDark)
+
+        theme.mode = .light
+        XCTAssertEqual(theme.colorScheme, .light)
+        XCTAssertFalse(theme.isDark)
+
+        theme.mode = .system
+        XCTAssertNil(theme.colorScheme)
+
+        // Palette differences
+        let darkPalette = ThemePalette.dark
+        let lightPalette = ThemePalette.light
+        XCTAssertNotEqual(darkPalette.canvas, lightPalette.canvas)
+        XCTAssertNotEqual(darkPalette.ink, lightPalette.ink)
+
+        // Reset to dark for consistency
+        theme.mode = .dark
+    }
+
+    func testThemeToolColorAndStyles() {
+        let theme = ThemeManager.shared
+        theme.iconStyle = .monochrome
+        XCTAssertEqual(theme.toolColor(for: "read"), theme.currentColors.muted)
+
+        theme.iconStyle = .colorful
+        XCTAssertNotEqual(theme.toolColor(for: "read"), theme.currentColors.muted)
+        XCTAssertNotEqual(theme.toolColor(for: "execute"), theme.currentColors.muted)
+
+        // Reset
+        theme.iconStyle = .oli
+    }
+
+    func testThemeTypographyScale() {
+        let theme = ThemeManager.shared
+        theme.fontFamily = .system
+        XCTAssertEqual(theme.fontFamily.design, .default)
+
+        theme.fontFamily = .serif
+        XCTAssertEqual(theme.fontFamily.design, .serif)
+
+        theme.fontSizeDelta = 2.0
+        XCTAssertEqual(theme.fontSizeDelta, 2.0)
+
+        // Reset
+        theme.fontFamily = .system
+        theme.fontSizeDelta = 0.0
+    }
 }
