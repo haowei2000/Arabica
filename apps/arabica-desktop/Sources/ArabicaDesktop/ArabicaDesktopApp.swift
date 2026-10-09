@@ -45,6 +45,9 @@ enum Palette {
     static var accent: Color { ThemeManager.shared.currentColors.accent }
     static var codeBg: Color { ThemeManager.shared.currentColors.codeBg }
     static var toolHeaderBg: Color { ThemeManager.shared.currentColors.toolHeaderBg }
+    static var composerBg: Color { ThemeManager.shared.currentColors.composerBg }
+    static var hoverBg: Color { ThemeManager.shared.currentColors.hoverBg }
+    static var selectionBg: Color { ThemeManager.shared.currentColors.selectionBg }
 }
 
 @main
@@ -92,21 +95,35 @@ struct ArabicaDesktopApp: App {
 }
 
 struct WindowConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        WindowConfiguratorView()
+    @ObservedObject var theme = ThemeManager.shared
+
+    func makeNSView(context: Context) -> WindowConfiguratorView {
+        let view = WindowConfiguratorView()
+        view.updateWindowAppearance()
+        return view
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func updateNSView(_ nsView: WindowConfiguratorView, context: Context) {
+        nsView.updateWindowAppearance()
+    }
 }
 
 final class WindowConfiguratorView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateWindowAppearance()
+    }
+
+    func updateWindowAppearance() {
         guard let window = self.window else { return }
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         window.toolbar = nil
         window.isMovableByWindowBackground = true
+
+        let isDark = ThemeManager.shared.isDark
+        window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
     }
 }
 
@@ -622,8 +639,8 @@ private struct SessionRowView: View {
             .padding(.vertical, 6)
             .background(
                 isSelected
-                    ? Palette.raised.opacity(0.95)
-                    : (isHovered ? Color.white.opacity(0.04) : Color.clear),
+                    ? Palette.selectionBg
+                    : (isHovered ? Palette.hoverBg : Color.clear),
                 in: RoundedRectangle(cornerRadius: 6)
             )
         }
@@ -767,7 +784,8 @@ private struct ThoughtCardView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Palette.raised.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Palette.rule, lineWidth: 1))
             }
             .buttonStyle(.plain)
 
@@ -782,7 +800,8 @@ private struct ThoughtCardView: View {
                         .padding(10)
                 }
                 .frame(maxHeight: 220)
-                .background(Palette.canvas.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
+                .background(Palette.codeBg, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1033,7 +1052,8 @@ private struct ToolGroupCardView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(Palette.raised.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                .background(Palette.card, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
             }
             .buttonStyle(.plain)
 
@@ -1044,7 +1064,8 @@ private struct ToolGroupCardView: View {
                     }
                 }
                 .padding(6)
-                .background(Palette.raised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+                .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
                 .padding(.top, 4)
             }
         }
@@ -1087,7 +1108,7 @@ private struct ToolItemDetailView: View {
                             .foregroundStyle(Palette.muted)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(Palette.raised.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                            .background(Palette.raised, in: RoundedRectangle(cornerRadius: 4))
                     }
 
                     Spacer(minLength: 4)
@@ -1102,7 +1123,7 @@ private struct ToolItemDetailView: View {
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
-                .background(isHovered ? Color.white.opacity(0.04) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .background(isHovered ? Palette.hoverBg : Color.clear, in: RoundedRectangle(cornerRadius: 5))
             }
             .buttonStyle(.plain)
             .onHover { isHovered = $0 }
@@ -1152,7 +1173,8 @@ private struct ToolItemDetailView: View {
                             .padding(8)
                     }
                     .frame(maxHeight: 260)
-                    .background(Palette.canvas.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Palette.codeBg, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule, lineWidth: 1))
                 }
                 .padding(.horizontal, 4)
                 .padding(.top, 2)
@@ -1221,7 +1243,7 @@ private struct PlanProgressView: View {
                         .foregroundStyle(Palette.muted)
                     Spacer()
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.10)).frame(width: 60, height: 4)
+                        Capsule().fill(Palette.rule).frame(width: 60, height: 4)
                         Capsule()
                             .fill(completedCount == plan.count ? Color.green : Palette.accent)
                             .frame(width: max(4, 60 * progressRatio), height: 4)
@@ -1281,6 +1303,7 @@ private struct PlanProgressView: View {
 
 private struct ComposerView: View {
     @ObservedObject var model: DesktopModel
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1318,6 +1341,7 @@ private struct ComposerView: View {
                 TextField("Send a message… (⏎ to send)", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(AppFont.body(13.5))
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(1...8)
                     .padding(.horizontal, 2)
                     .padding(.top, 2)
@@ -1465,8 +1489,9 @@ private struct ComposerView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Palette.raised, in: RoundedRectangle(cornerRadius: 14))
+            .background(Palette.composerBg, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.rule, lineWidth: 1))
+            .shadow(color: themeManager.isDark ? Color.clear : Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
         }
         .padding(.horizontal, 24)
         .padding(.top, 8)

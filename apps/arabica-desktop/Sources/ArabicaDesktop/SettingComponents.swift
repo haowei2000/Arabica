@@ -127,7 +127,7 @@ struct FlowRouteStepRow: View {
                         .foregroundStyle(Palette.ink)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08)))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Palette.codeBg))
                 }
             } else {
                 Text("Default / None")
@@ -147,26 +147,108 @@ extension Palette {
 
 // MARK: - Appearance Page View
 
+// MARK: - Appearance Page View
+
 struct AppearancePageView: View {
     @ObservedObject private var theme = ThemeManager.shared
+    @State private var isCreatingTheme = false
+    @State private var newThemeName = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // 1. Theme Mode
-                SettingSection(title: "Color Theme", subtitle: "Choose between dark, light, or auto system appearance") {
-                    SettingRow(label: "Theme Mode", description: "Current: \(theme.mode.rawValue)") {
-                        Picker("Theme Mode", selection: $theme.mode) {
-                            ForEach(ThemeMode.allCases) { mode in
-                                Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                // 1. Theme Presets & Custom Themes
+                SettingSection(title: "Themes", subtitle: "Select a built-in theme or create your own custom palette") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Theme cards grid
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 10)], spacing: 10) {
+                            ForEach(theme.allThemes) { item in
+                                let isSelected = theme.activeThemeID == item.id
+                                Button {
+                                    theme.selectTheme(item)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(spacing: 5) {
+                                            Circle().fill(Color(hex: item.canvasHex)).frame(width: 14, height: 14)
+                                                .overlay(Circle().stroke(Palette.rule, lineWidth: 1))
+                                            Circle().fill(Color(hex: item.sidebarHex)).frame(width: 14, height: 14)
+                                                .overlay(Circle().stroke(Palette.rule, lineWidth: 1))
+                                            Circle().fill(Color(hex: item.accentHex)).frame(width: 14, height: 14)
+                                            Spacer()
+                                            if isSelected {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.system(size: 12))
+                                                    .foregroundStyle(Palette.accent)
+                                            }
+                                        }
+
+                                        Text(item.name)
+                                            .font(AppFont.sans(11.5, weight: isSelected ? .semibold : .medium))
+                                            .foregroundStyle(isSelected ? Palette.ink : Palette.muted)
+                                            .lineLimit(1)
+
+                                        HStack(spacing: 4) {
+                                            Text(item.isDark ? "Dark" : "Light")
+                                                .font(AppFont.sans(9.5))
+                                                .foregroundStyle(Palette.subtle)
+                                            if item.isCustom {
+                                                Text("• Custom")
+                                                    .font(AppFont.sans(9.5))
+                                                    .foregroundStyle(Palette.accent)
+                                            }
+                                        }
+                                    }
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(isSelected ? Palette.raised : Palette.card, in: RoundedRectangle(cornerRadius: 8))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(isSelected ? Palette.accent : Palette.rule, lineWidth: isSelected ? 1.5 : 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        .pickerStyle(.segmented)
-                        .frame(width: 260)
+
+                        // Action: Create Custom Theme
+                        HStack(spacing: 10) {
+                            Button {
+                                let created = theme.createCustomTheme(name: "Custom Theme \(theme.customThemes.count + 1)")
+                                theme.selectTheme(created)
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "plus.circle.fill")
+                                    Text("New Custom Theme")
+                                }
+                                .font(AppFont.sans(11.5, weight: .medium))
+                                .foregroundStyle(Palette.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+
+                            Spacer()
+
+                            Picker("Mode", selection: $theme.mode) {
+                                ForEach(ThemeMode.allCases) { mode in
+                                    Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 200)
+                        }
+                        .padding(.top, 4)
                     }
+                    .padding(14)
                 }
 
-                // 2. Tool Icons Style
+                // 2. Custom Theme Editor (Active only when editing a custom theme)
+                if theme.activeTheme.isCustom {
+                    customThemeEditorSection
+                }
+
+                // 3. Tool Icons Style
                 SettingSection(title: "Tool Icons", subtitle: "Icon pack and visual rendering for agent tool calls") {
                     SettingRow(label: "Icon Style", description: "Switch between Oli vector icons, Apple SF Symbols, or custom glyph styles") {
                         Picker("Icon Style", selection: $theme.iconStyle) {
@@ -179,7 +261,7 @@ struct AppearancePageView: View {
                     }
                 }
 
-                // 3. Typography
+                // 4. Typography
                 SettingSection(title: "Typography", subtitle: "Font family and size scale for chat, chrome, and code") {
                     SettingRow(label: "Font Family", description: "Design style applied to interface and body text") {
                         Picker("Font Family", selection: $theme.fontFamily) {
@@ -220,7 +302,7 @@ struct AppearancePageView: View {
                     }
                 }
 
-                // 4. Live Preview Card
+                // 5. Live Preview Card
                 SettingSection(title: "Live Preview", subtitle: "Instant preview of active theme colors, fonts, and tool icons") {
                     VStack(alignment: .leading, spacing: 12) {
                         // User message preview
@@ -232,11 +314,12 @@ struct AppearancePageView: View {
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .background(Palette.userBubble, in: RoundedRectangle(cornerRadius: 12))
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.rule, lineWidth: 1))
                         }
 
                         // Assistant preview
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Arabica assistant responding in **\(theme.mode.rawValue)** theme with **\(theme.fontFamily.rawValue)** typography.")
+                            Text("Arabica assistant responding in **\(theme.activeTheme.name)** with **\(theme.fontFamily.rawValue)** typography.")
                                 .font(AppFont.body(13))
                                 .foregroundStyle(Palette.ink)
 
@@ -253,7 +336,8 @@ struct AppearancePageView: View {
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
-                            .background(Palette.raised.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+                            .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
                         }
                         .padding(.top, 4)
                     }
@@ -261,6 +345,129 @@ struct AppearancePageView: View {
                 }
             }
             .padding(20)
+        }
+    }
+
+    // MARK: - Custom Theme Editor Section
+
+    private var customThemeEditorSection: some View {
+        SettingSection(title: "Customize Theme: \(theme.activeTheme.name)", subtitle: "Modify colors, base appearance, and palette values") {
+            VStack(spacing: 1) {
+                // Name Row
+                SettingRow(label: "Theme Name", description: "Display name for this custom theme") {
+                    TextField("Theme Name", text: Binding(
+                        get: { theme.activeTheme.name },
+                        set: {
+                            var t = theme.activeTheme
+                            t.name = $0
+                            theme.updateCustomTheme(t)
+                        }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                }
+
+                // Appearance Base
+                SettingRow(label: "Appearance Base", description: "Base styling for traffic lights and menus") {
+                    Picker("Base Mode", selection: Binding(
+                        get: { theme.activeTheme.isDark },
+                        set: {
+                            var t = theme.activeTheme
+                            t.isDark = $0
+                            theme.updateCustomTheme(t)
+                        }
+                    )) {
+                        Text("Dark").tag(true)
+                        Text("Light").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
+
+                // Color: Canvas Background
+                SettingRow(label: "Canvas Background", description: "Main chat background color") {
+                    ColorPicker("", selection: Binding(
+                        get: { Color(hex: theme.activeTheme.canvasHex) },
+                        set: {
+                            var t = theme.activeTheme
+                            t.canvasHex = $0.toHex()
+                            theme.updateCustomTheme(t)
+                        }
+                    ), supportsOpacity: false)
+                }
+
+                // Color: Sidebar Background
+                SettingRow(label: "Sidebar Background", description: "Project list sidebar background") {
+                    ColorPicker("", selection: Binding(
+                        get: { Color(hex: theme.activeTheme.sidebarHex) },
+                        set: {
+                            var t = theme.activeTheme
+                            t.sidebarHex = $0.toHex()
+                            theme.updateCustomTheme(t)
+                        }
+                    ), supportsOpacity: false)
+                }
+
+                // Color: Card Background
+                SettingRow(label: "Card / Input Background", description: "Background for cards and composer") {
+                    ColorPicker("", selection: Binding(
+                        get: { Color(hex: theme.activeTheme.cardHex) },
+                        set: {
+                            var t = theme.activeTheme
+                            t.cardHex = $0.toHex()
+                            t.composerBgHex = $0.toHex()
+                            theme.updateCustomTheme(t)
+                        }
+                    ), supportsOpacity: false)
+                }
+
+                // Color: Text (Ink)
+                SettingRow(label: "Primary Text (Ink)", description: "Main text and headings") {
+                    ColorPicker("", selection: Binding(
+                        get: { Color(hex: theme.activeTheme.inkHex) },
+                        set: {
+                            var t = theme.activeTheme
+                            t.inkHex = $0.toHex()
+                            theme.updateCustomTheme(t)
+                        }
+                    ), supportsOpacity: false)
+                }
+
+                // Color: Accent Color
+                SettingRow(label: "Accent Color", description: "Primary brand accent and highlights") {
+                    ColorPicker("", selection: Binding(
+                        get: { Color(hex: theme.activeTheme.accentHex) },
+                        set: {
+                            var t = theme.activeTheme
+                            t.accentHex = $0.toHex()
+                            theme.updateCustomTheme(t)
+                        }
+                    ), supportsOpacity: false)
+                }
+
+                // Color: User Bubble
+                SettingRow(label: "User Bubble Color", description: "Background for user prompt bubble") {
+                    ColorPicker("", selection: Binding(
+                        get: { Color(hex: theme.activeTheme.userBubbleHex) },
+                        set: {
+                            var t = theme.activeTheme
+                            t.userBubbleHex = $0.toHex()
+                            theme.updateCustomTheme(t)
+                        }
+                    ), supportsOpacity: false)
+                }
+
+                // Delete Theme Row
+                SettingRow(label: "Delete Theme", description: "Permanently delete this custom theme") {
+                    Button(role: .destructive) {
+                        theme.deleteCustomTheme(id: theme.activeTheme.id)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 }

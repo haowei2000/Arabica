@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import ArabicaDesktop
 
 @MainActor
@@ -127,5 +128,40 @@ final class ToolContentTests: XCTestCase {
         // Reset
         theme.fontFamily = .system
         theme.fontSizeDelta = 0.0
+    }
+
+    func testCustomThemeLifecycle() {
+        let theme = ThemeManager.shared
+        let originalThemeID = theme.activeThemeID
+        let originalCustomCount = theme.customThemes.count
+
+        // 1. Create custom theme
+        let newTheme = theme.createCustomTheme(name: "Test Forest Theme", baseOn: .defaultDark)
+        XCTAssertEqual(theme.customThemes.count, originalCustomCount + 1)
+        XCTAssertEqual(newTheme.name, "Test Forest Theme")
+        XCTAssertTrue(newTheme.isCustom)
+        XCTAssertTrue(newTheme.isDark)
+        XCTAssertEqual(theme.activeThemeID, newTheme.id)
+
+        // 2. Modify theme color
+        var updated = newTheme
+        updated.accentHex = "#2ECC71"
+        theme.updateCustomTheme(updated)
+        XCTAssertEqual(theme.activeTheme.accentHex, "#2ECC71")
+
+        // 3. Delete theme
+        theme.deleteCustomTheme(id: newTheme.id)
+        XCTAssertEqual(theme.customThemes.count, originalCustomCount)
+        XCTAssertNotEqual(theme.activeThemeID, newTheme.id)
+
+        // Reset
+        theme.activeThemeID = originalThemeID
+    }
+
+    func testHexColorConversion() {
+        let hex = "#ff8800"
+        let color = Color(hex: hex)
+        let backToHex = color.toHex()
+        XCTAssertEqual(backToHex.lowercased(), hex.lowercased())
     }
 }

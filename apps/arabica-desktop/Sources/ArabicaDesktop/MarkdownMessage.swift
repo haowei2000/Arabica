@@ -99,6 +99,7 @@ struct MarkdownMessage: View {
         let content = (try? AttributedString(markdown: source, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source)
         return Text(content)
+            .foregroundStyle(Palette.ink)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -143,7 +144,7 @@ private struct CodeBlockView: View {
                     .padding(.bottom, 10)
             }
         }
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 8))
+        .background(Palette.codeBg, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
     }
 }
