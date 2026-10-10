@@ -256,7 +256,7 @@ impl CorrectnessGates {
                 "source EventEnvelope serialization is unchanged",
             ),
             determinism: GateCheck::boolean(
-                first == second,
+                projections_equal_ignoring_timings(first, second),
                 "two projections of the same trace and baseline are identical",
             ),
             provenance: GateCheck::zero_failures(
@@ -311,6 +311,21 @@ impl CorrectnessGates {
             && self.evidence_recall.passed
             && self.model_input_non_expansion.passed
     }
+}
+
+fn projections_equal_ignoring_timings(
+    first: &BenchmarkProjection,
+    second: &BenchmarkProjection,
+) -> bool {
+    let mut first = first.clone();
+    let mut second = second.clone();
+    if let Some(compaction) = first.compaction.as_mut() {
+        compaction.timing = None;
+    }
+    if let Some(compaction) = second.compaction.as_mut() {
+        compaction.timing = None;
+    }
+    first == second
 }
 
 #[derive(Clone, Copy)]

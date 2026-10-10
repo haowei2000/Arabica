@@ -8,8 +8,6 @@
 //! reconstruct exact Runtime history, which restoring a session needs
 //! (`docs/runtime_core_architecture.md`'s CLI/ACP extension plan, P2-2).
 
-use std::error::Error;
-use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -17,51 +15,14 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arabica_protocol::{Event, EventEnvelope, PROTOCOL_VERSION, SessionId, WorkspaceId};
-use arabica_session::{EventVisibility, SessionEventObserver, SessionSnapshot};
+use arabica_session::{EventVisibility, SessionEventObserver};
+pub use arabica_session::{NewSession, SessionHeader, StoreError, StoreErrorKind, StoredSession};
 use serde::{Deserialize, Serialize};
 
 /// `$ARABICA_HOME`'s default name inside the user's home directory.
 const HOME_DIR_NAME: &str = ".arabica";
 const SESSIONS_DIR_NAME: &str = "sessions";
 const SCHEMA: &str = "structure.session/v1";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StoreErrorKind {
-    /// `$ARABICA_HOME` could not be resolved (no `$ARABICA_HOME` and no `$HOME`).
-    NoHome,
-    /// A session or workspace id was not safe to use as a path component.
-    InvalidId,
-    /// The session file, or a directory on its path, could not be created,
-    /// opened, or locked.
-    Io,
-}
-
-#[derive(Debug)]
-pub struct StoreError {
-    kind: StoreErrorKind,
-    message: String,
-}
-
-impl StoreError {
-    fn new(kind: StoreErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    pub fn kind(&self) -> StoreErrorKind {
-        self.kind
-    }
-}
-
-impl Display for StoreError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        self.message.fmt(formatter)
-    }
-}
-
-impl Error for StoreError {}
 
 /// The default `$ARABICA_HOME`: the `ARABICA_HOME` environment variable
 /// if set, otherwise `$HOME/.arabica`.
@@ -92,7 +53,7 @@ fn arabica_home_from(lookup: impl Fn(&str) -> Option<String>) -> Result<PathBuf,
 /// current caller mints ids internally (`IdAllocator`), so this is
 /// defense in depth against a future caller that does not, not a response
 /// to an observed problem.
-fn validate_path_component(value: &str, field: &str) -> Result<(), StoreError> {
+pub(crate) fn validate_path_component(value: &str, field: &str) -> Result<(), StoreError> {
     if value.is_empty() || value == "." || value == ".." || value.contains(['/', '\\']) {
         return Err(StoreError::new(
             StoreErrorKind::InvalidId,
@@ -100,45 +61,6 @@ fn validate_path_component(value: &str, field: &str) -> Result<(), StoreError> {
         ));
     }
     Ok(())
-}
-
-/// The header fields a caller supplies when starting a new session's file.
-/// `schema`, `created_at_ms`, and `protocol_version` are the store's own to
-/// set, not the caller's, since a caller could otherwise write an
-/// inconsistent value.
-pub struct NewSession<'a> {
-    pub session_id: &'a SessionId,
-    pub workspace_id: &'a WorkspaceId,
-    pub cwd: &'a Path,
-    /// The provider profile in effect, once `arabica-cli` has profiles
-    /// (`P2-4`). `None` until then; a host without profiles yet has nothing
-    /// honest to put here.
-    pub profile: Option<&'a str>,
-    /// A hash of the system instructions in effect at session creation:
-    /// `arabica-cli` fills this from its `AGENTS.md` discovery; hosts
-    /// without project instructions pass `None`. The full text is never
-    /// stored here -- it is already exact in the `model.request.prepared`
-    /// Event; this is a cheap "did the effective instructions change"
-    /// signal for tooling, not a second copy of the prompt.
-    pub instructions_sha256: Option<&'a str>,
-}
-
-/// A session file's header line, parsed or about to be written. Owned (not
-/// borrowed like the rest of this module's write path) because it is also
-/// this module's read-side return value, where there is no caller-owned
-/// data to borrow from.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct SessionHeader {
-    pub schema: String,
-    pub id: SessionId,
-    pub workspace_id: WorkspaceId,
-    pub cwd: String,
-    pub created_at_ms: u64,
-    pub protocol_version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions_sha256: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -163,28 +85,9 @@ struct StoredEventRecord {
     envelope: EventEnvelope,
 }
 
-/// One session file's header and however much of its Event history could be
-/// read. `events` may be shorter than what was truly written if the file's
-/// last line was left mid-write by a crash -- see [`FileSessionStore::read`].
-#[derive(Debug)]
-pub struct StoredSession {
-    pub header: SessionHeader,
-    pub events: Vec<EventEnvelope>,
-}
-
-impl StoredSession {
-    /// This session's Events as a [`SessionSnapshot`], ready for
-    /// `arabica_session::SessionManager::restore_session`.
-    pub fn into_snapshot(self) -> SessionSnapshot {
-        SessionSnapshot {
-            events: self.events,
-        }
-    }
-}
-
 /// One session's header plus where its file lives and when it was last
 /// touched, for listing sessions without reading each one's full history.
-pub struct SessionListing {
+pub struct FileSessionListing {
     pub header: SessionHeader,
     pub path: PathBuf,
     /// The file's own modification time, read from filesystem metadata as a
@@ -297,6 +200,7 @@ impl FileSessionStore {
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0);
         let record = SessionHeader {
+            title: None,
             schema: SCHEMA.to_owned(),
             id: header.session_id.clone(),
             workspace_id: header.workspace_id.clone(),
@@ -402,7 +306,7 @@ impl FileSessionStore {
     pub fn list_sessions(
         arabica_home: &Path,
         workspace_id: Option<&WorkspaceId>,
-    ) -> Result<Vec<SessionListing>, StoreError> {
+    ) -> Result<Vec<FileSessionListing>, StoreError> {
         let sessions_dir = arabica_home.join(SESSIONS_DIR_NAME);
         if !sessions_dir.is_dir() {
             return Ok(Vec::new());
@@ -436,7 +340,7 @@ impl FileSessionStore {
                     .and_then(|metadata| metadata.modified().ok())
                     .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
                     .map(|duration| duration.as_millis() as u64);
-                listings.push(SessionListing {
+                listings.push(FileSessionListing {
                     header,
                     path,
                     modified_at_ms,
@@ -481,7 +385,7 @@ fn io_error(path: &Path, action: &str, error: std::io::Error) -> StoreError {
 /// if it does, brings its permissions to `0700` regardless of how it got
 /// there, since every other decision in this module assumes the directory
 /// only a Arabica session's own files, readable only by their owner.
-fn create_private_dir(path: &Path) -> Result<(), StoreError> {
+pub(crate) fn create_private_dir(path: &Path) -> Result<(), StoreError> {
     if path.is_dir() {
         return set_permissions(path, 0o700);
     }
@@ -528,7 +432,7 @@ fn set_permissions(_path: &Path, _mode: u32) -> Result<(), StoreError> {
 /// second writer queueing behind it would still corrupt turn-by-turn
 /// ordering once both eventually write.
 #[cfg(unix)]
-fn lock_exclusive(file: &File, path: &Path) -> Result<(), StoreError> {
+pub(crate) fn lock_exclusive(file: &File, path: &Path) -> Result<(), StoreError> {
     rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockExclusive).map_err(|error| {
         StoreError::new(
             StoreErrorKind::Io,
@@ -541,7 +445,7 @@ fn lock_exclusive(file: &File, path: &Path) -> Result<(), StoreError> {
 }
 
 #[cfg(not(unix))]
-fn lock_exclusive(_file: &File, _path: &Path) -> Result<(), StoreError> {
+pub(crate) fn lock_exclusive(_file: &File, _path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
@@ -836,18 +740,64 @@ mod tests {
         store.observe(&envelope(1, Event::RunScheduled), EventVisibility::Client);
         store.observe(&envelope(2, Event::RunStarted), EventVisibility::Client);
 
+        let context = Event::ContextRunResolved {
+            snapshot: arabica_protocol::ContextRunSnapshot {
+                decision_id: "run-1:context".into(),
+                policy_id: "readonly".into(),
+                policy_version: 1,
+                policy_fingerprint: "policy-hash".into(),
+                catalog_fingerprint: "catalog-hash".into(),
+                selected_sets: vec!["files".into()],
+                included_ids: Vec::new(),
+                excluded_ids: Vec::new(),
+                disabled_sources: Vec::new(),
+                items: vec![arabica_protocol::ContextDecision {
+                    identity: arabica_protocol::ContextIdentity {
+                        id: "tool:read_file".into(),
+                        kind: arabica_protocol::ContextSourceKind::Tool,
+                        version: Some("schema-hash".into()),
+                        display_name: "read_file".into(),
+                        server_id: None,
+                        tool_id: Some("read_file".into()),
+                    },
+                    exposed_name: "read_file".into(),
+                    enabled: true,
+                    reason: arabica_protocol::ContextDecisionReason::Included,
+                    sets: vec!["files".into()],
+                    initial_mode: arabica_protocol::ContextMode::Folded,
+                }],
+            },
+        };
+        store.observe(&envelope(3, context.clone()), EventVisibility::Internal);
+        let unfold = Event::ContextItemUnfolded {
+            call_id: "unfold-1".into(),
+            decision_id: "run-1:context".into(),
+            context_id: "tool:read_file".into(),
+        };
+        store.observe(&envelope(4, unfold.clone()), EventVisibility::Internal);
+        let exposure = Event::ContextRequestExposed {
+            model_step: 1,
+            decision_id: "run-1:context".into(),
+            context_ids: vec!["tool:read_file".into()],
+            folded_ids: Vec::new(),
+        };
+        store.observe(&envelope(5, exposure.clone()), EventVisibility::Internal);
         let stored = FileSessionStore::read(store.path()).expect("file reads back");
         assert_eq!(stored.header.id, session_id);
         assert_eq!(stored.header.workspace_id, workspace_id);
         assert_eq!(stored.header.cwd, "/repo");
         assert_eq!(stored.header.profile.as_deref(), Some("default"));
         assert_eq!(stored.header.instructions_sha256.as_deref(), Some("abc123"));
-        assert_eq!(stored.events.len(), 2);
+        assert_eq!(stored.events.len(), 5);
         assert!(matches!(stored.events[0].event, Event::RunScheduled));
         assert!(matches!(stored.events[1].event, Event::RunStarted));
 
+        assert_eq!(stored.events[2].event, context);
         let snapshot = stored.into_snapshot();
-        assert_eq!(snapshot.events.len(), 2);
+        assert_eq!(snapshot.events.len(), 5);
+        assert_eq!(snapshot.events[2].event, context);
+        assert_eq!(snapshot.events[3].event, unfold);
+        assert_eq!(snapshot.events[4].event, exposure);
 
         std::fs::remove_dir_all(&home).ok();
     }

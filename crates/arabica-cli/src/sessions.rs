@@ -1,13 +1,15 @@
 //! `arabica sessions list`: show sessions stored under `$ARABICA_HOME`
-//! (`arabica_adapters::FileSessionStore`), the same files `-p`'s
+//! (`arabica_adapters::SqliteSessionStore`), the same database `-p`'s
 //! `--continue`/`--resume <id>` (`crates/arabica-cli/src/print.rs`) pick
 //! back up.
 
-use arabica_adapters::{FileSessionStore, SessionListing};
+use arabica_session::{SessionListing, SessionStore};
 use clap::Subcommand;
 
 #[derive(Subcommand, Debug)]
 pub enum SessionsAction {
+    /// Persist a session title in the current workspace.
+    Rename { id: String, title: String },
     /// List stored sessions, most recently active first.
     List {
         /// List sessions from every workspace, not just this one.
@@ -17,8 +19,28 @@ pub enum SessionsAction {
 }
 
 pub fn run(action: SessionsAction) -> i32 {
-    let SessionsAction::List { all } = action;
-    list(all)
+    match action {
+        SessionsAction::List { all } => list(all),
+        SessionsAction::Rename { id, title } => {
+            let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+                let home = arabica_adapters::default_arabica_home()?;
+                let cwd = std::fs::canonicalize(std::env::current_dir()?)?;
+                let workspace = crate::host::workspace_id_for(&cwd);
+                let session_id = arabica_protocol::SessionId::new(id);
+                crate::host::session_store(&home)
+                    .open(&workspace, &session_id)?
+                    .set_title(&title)?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
+    }
 }
 
 fn list(all: bool) -> i32 {
@@ -39,7 +61,8 @@ fn list(all: bool) -> i32 {
     let workspace_id = crate::host::workspace_id_for(&runner_root);
     let scope = if all { None } else { Some(&workspace_id) };
 
-    let lines = match listing_lines(&arabica_home, scope) {
+    let store = crate::host::session_store(&arabica_home);
+    let lines = match listing_lines(store.as_ref(), scope) {
         Ok(lines) => lines,
         Err(error) => {
             eprintln!("error: {error}");
@@ -66,10 +89,10 @@ pub(crate) struct SessionEntry {
 /// what `arabica sessions list` prints and what the terminal `/sessions`
 /// command shows. Empty when nothing is stored.
 pub(crate) fn listing_lines(
-    arabica_home: &std::path::Path,
+    session_store: &dyn SessionStore,
     scope: Option<&arabica_protocol::WorkspaceId>,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    Ok(listing_entries(arabica_home, scope)?
+    Ok(listing_entries(session_store, scope)?
         .into_iter()
         .map(|entry| entry.line)
         .collect())
@@ -79,10 +102,10 @@ pub(crate) fn listing_lines(
 /// alongside its formatted line so an interactive picker can act on the
 /// selection.
 pub(crate) fn listing_entries(
-    arabica_home: &std::path::Path,
+    session_store: &dyn SessionStore,
     scope: Option<&arabica_protocol::WorkspaceId>,
 ) -> Result<Vec<SessionEntry>, Box<dyn std::error::Error>> {
-    let listings = FileSessionStore::list_sessions(arabica_home, scope)?;
+    let listings = session_store.list(scope)?;
     let now_ms = now_ms();
     Ok(listings
         .into_iter()
@@ -104,16 +127,29 @@ fn now_ms() -> u64 {
 }
 
 fn format_listing(listing: &SessionListing, show_workspace: bool, now_ms: u64) -> String {
-    let last_active = relative_time(listing.modified_at_ms, now_ms);
+    let last_active = relative_time(listing.updated_at_ms, now_ms);
     if show_workspace {
         format!(
             "{:<40}  {:<10}  {:<20}  {}",
-            listing.header.id, last_active, listing.header.workspace_id, listing.header.cwd
+            listing.header.id,
+            last_active,
+            listing.header.workspace_id,
+            listing
+                .header
+                .title
+                .as_deref()
+                .unwrap_or(&listing.header.cwd)
         )
     } else {
         format!(
             "{:<40}  {:<10}  {}",
-            listing.header.id, last_active, listing.header.cwd
+            listing.header.id,
+            last_active,
+            listing
+                .header
+                .title
+                .as_deref()
+                .unwrap_or(&listing.header.cwd)
         )
     }
 }
@@ -166,8 +202,9 @@ mod tests {
         assert_eq!(relative_time(Some(now + 5_000), now), "just now");
     }
 
-    fn header(id: &str, workspace_id: &str, cwd: &str) -> arabica_adapters::SessionHeader {
-        arabica_adapters::SessionHeader {
+    fn header(id: &str, workspace_id: &str, cwd: &str) -> arabica_session::SessionHeader {
+        arabica_session::SessionHeader {
+            title: None,
             schema: "structure.session/v1".to_owned(),
             id: arabica_protocol::SessionId::new(id),
             workspace_id: arabica_protocol::WorkspaceId::new(workspace_id),
@@ -183,8 +220,7 @@ mod tests {
     fn format_listing_omits_the_workspace_column_unless_asked_for_all() {
         let listing = SessionListing {
             header: header("session-1", "ws-1", "/repo"),
-            path: "/home/sessions/ws-1/session-1.jsonl".into(),
-            modified_at_ms: Some(0),
+            updated_at_ms: Some(0),
         };
         let scoped = format_listing(&listing, false, 0);
         assert!(!scoped.contains("ws-1"));

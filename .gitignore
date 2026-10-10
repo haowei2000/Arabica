@@ -1,5 +1,7 @@
 # Rust build output
 target/
+/apps/arabica-desktop/.build/
+/apps/arabica-desktop/dist/
 
 # Environment and credentials
 .env

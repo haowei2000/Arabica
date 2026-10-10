@@ -488,6 +488,18 @@ fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
     let mut active_tool_by_run = HashMap::<String, String>::new();
 
     for event in events {
+        // Governance is audit-only evidence, not agent memory or archive content.
+        if matches!(
+            event.event,
+            Event::ContextRunResolved { .. }
+                | Event::ContextRequestExposed { .. }
+                | Event::ContextItemUnfolded { .. }
+                | Event::ContextCallStarted { .. }
+                | Event::ContextCallRejected { .. }
+        ) {
+            continue;
+        }
+
         let (context_key, context_kind) = batch_identity(event, &mut active_tool_by_run);
         let index = if let Some(index) = batch_indexes.get(&context_key) {
             *index
@@ -668,6 +680,14 @@ fn batch_identity(
         .as_ref()
         .map_or_else(|| "none".to_owned(), ToString::to_string);
     match &envelope.event {
+        Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. } => (
+            format!("run:{run}:context-audit"),
+            MemoryBatchKind::Transient,
+        ),
         Event::MessageAccepted { .. }
         | Event::RunScheduled
         | Event::RunStarted
@@ -710,7 +730,9 @@ fn batch_identity(
             MemoryBatchKind::Transient,
         ),
         Event::ModelRouteSelected { model_step, .. }
-        | Event::ModelCallObserved { model_step, .. } => (
+        | Event::ModelRouteExplained { model_step, .. }
+        | Event::ModelCallObserved { model_step, .. }
+        | Event::PlanDelegationObserved { model_step, .. } => (
             format!("run:{run}:model-routing:{model_step}"),
             MemoryBatchKind::Transient,
         ),
@@ -731,6 +753,7 @@ fn batch_identity(
             }
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
         }
+        Event::PlanUpdated { .. } => (format!("run:{run}:plan"), MemoryBatchKind::Task),
         Event::CommandOutput { .. } => active_tool_by_run.get(&run).map_or_else(
             || {
                 (
@@ -941,6 +964,12 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         Event::AgentProgressAdvisory { message, .. } => ShortMemoryItem::Observation {
             content: message.clone(),
         },
+        Event::PlanUpdated { plan_id, entries } => ShortMemoryItem::Observation {
+            content: format!(
+                "plan_id={plan_id}\n{}",
+                serde_json::to_string(entries).unwrap_or_default()
+            ),
+        },
         Event::RunCancelled => ShortMemoryItem::RunCancelled,
         Event::ContextRead { entry } | Event::ContextUpdated { entry } => {
             ShortMemoryItem::Observation {
@@ -967,8 +996,15 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::SessionClosed
         | Event::RunScheduled
         | Event::RunStarted
+        | Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. }
         | Event::ModelRouteSelected { .. }
+        | Event::ModelRouteExplained { .. }
         | Event::ModelCallObserved { .. }
+        | Event::PlanDelegationObserved { .. }
         | Event::ModelRequestPrepared { .. }
         | Event::ModelResponseItem { .. }
         | Event::ModelResponseCompleted { .. }
@@ -1084,6 +1120,7 @@ pub fn exact_transcript_entries(
 
 fn tool_interaction_memory_class(kind: ToolInteractionKind) -> MemoryClass {
     match kind {
+        ToolInteractionKind::Plan => MemoryClass::Working,
         ToolInteractionKind::Inspection => MemoryClass::ToolInspection,
         ToolInteractionKind::Mutation | ToolInteractionKind::MutationWithValidation => {
             MemoryClass::ToolMutation
@@ -1115,8 +1152,15 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         | Event::ModelResponseRejected { .. }
         | Event::ModelResponseNormalized { .. } => (MemoryClass::Control, None, false),
         Event::ModelRequestPrepared { .. }
+        | Event::ContextRunResolved { .. }
+        | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. }
+        | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. }
         | Event::ModelRouteSelected { .. }
-        | Event::ModelCallObserved { .. } => (MemoryClass::Control, None, false),
+        | Event::ModelRouteExplained { .. }
+        | Event::ModelCallObserved { .. }
+        | Event::PlanDelegationObserved { .. } => (MemoryClass::Control, None, false),
         Event::ToolCallRequested { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
         }
@@ -1125,6 +1169,7 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
             Some(format!("tool:{call_id}")),
             false,
         ),
+        Event::PlanUpdated { .. } => (MemoryClass::Anchor, Some("agent:plan".to_owned()), false),
         Event::ToolCallReused { call_id, .. } | Event::ToolCallLoopBlocked { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
         }
@@ -1175,6 +1220,11 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
 
 fn event_type_name(event: &Event) -> &'static str {
     match event {
+        Event::ContextRunResolved { .. } => "context.run.resolved",
+        Event::ContextRequestExposed { .. } => "context.request.exposed",
+        Event::ContextItemUnfolded { .. } => "context.item.unfolded",
+        Event::ContextCallStarted { .. } => "context.call.started",
+        Event::ContextCallRejected { .. } => "context.call.rejected",
         Event::SessionCreated { .. } => "session.created",
         Event::SessionForked { .. } => "session.forked",
         Event::SessionResumed => "session.resumed",
@@ -1184,6 +1234,7 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::RunStarted => "run.started",
         Event::MessageAccepted { .. } => "message.accepted",
         Event::ModelRouteSelected { .. } => "model.route.selected",
+        Event::ModelRouteExplained { .. } => "model.route.explained",
         Event::ModelCallObserved { .. } => "model.call.observed",
         Event::ModelRequestPrepared { .. } => "model.request.prepared",
         Event::ModelResponseItem { .. } => "model.response.item",
@@ -1192,6 +1243,8 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::ModelResponseNormalized { .. } => "model.response.normalized",
         Event::ToolCallRequested { .. } => "tool.call.requested",
         Event::ToolCallClassified { .. } => "tool.call.classified",
+        Event::PlanUpdated { .. } => "plan.updated",
+        Event::PlanDelegationObserved { .. } => "plan.delegation.observed",
         Event::ToolCallPermissionRequested { .. } => "tool.call.permission_requested",
         Event::ToolCallPermissionResolved { .. } => "tool.call.permission_resolved",
         Event::ToolCallReused { .. } => "tool.call.reused",
@@ -1307,7 +1360,12 @@ fn build_key_content(batch: &EventBatch, content_budget_bytes: usize) -> String 
 fn event_semantic_key(event: &Event) -> Option<String> {
     match event {
         Event::MessageAccepted { content } => Some(compact_user_message(content)),
-        Event::ModelRouteSelected { .. } | Event::ModelCallObserved { .. } => None,
+        Event::ModelRouteSelected { .. }
+        | Event::ModelRouteExplained { .. }
+        | Event::ModelCallObserved { .. } => None,
+        Event::ContextRunResolved { .. } | Event::ContextRequestExposed { .. }
+        | Event::ContextItemUnfolded { .. } | Event::ContextCallStarted { .. }
+        | Event::ContextCallRejected { .. } => None,
         Event::ModelResponseItem {
             model_step,
             item_index,
@@ -1380,6 +1438,13 @@ fn event_semantic_key(event: &Event) -> Option<String> {
         Event::ToolCallClassified { call_id, kind } => {
             Some(format!("tool_class call_id={call_id} kind={kind:?}").to_lowercase())
         }
+        Event::PlanUpdated { plan_id, entries } => Some(format!(
+            "plan_updated id={plan_id} entries={}",
+            entries.iter().map(|entry| entry.content.as_str()).collect::<Vec<_>>().join(" | ")
+        )),
+        Event::PlanDelegationObserved { model_step, model_alias, succeeded, .. } => Some(format!(
+            "plan_delegation step={model_step} model={model_alias} succeeded={succeeded}"
+        )),
         Event::ToolCallPermissionRequested { call_id } => {
             Some(format!("tool_permission call_id={call_id} state=requested"))
         }
@@ -1554,6 +1619,39 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn context_audit_does_not_enter_memory_batches_or_transcript() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ContextRequestExposed {
+                    model_step: 0,
+                    decision_id: "d".into(),
+                    context_ids: vec!["tool:private-context".into()],
+                    folded_ids: Vec::new(),
+                },
+            ),
+            envelope(
+                2,
+                Event::ContextCallStarted {
+                    call_id: "c".into(),
+                    decision_id: "d".into(),
+                    context_id: "tool:private-context".into(),
+                },
+            ),
+            envelope(
+                3,
+                Event::ContextCallRejected {
+                    call_id: "x".into(),
+                    decision_id: "d".into(),
+                    context_id: None,
+                },
+            ),
+        ];
+        assert!(build_batches(&events).is_empty());
+        assert!(exact_transcript_entries(&events, &RunId::new("other-run")).is_empty());
+    }
 
     fn envelope(sequence: u64, event: Event) -> EventEnvelope {
         envelope_for_run(sequence, "run-1", event)

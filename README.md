@@ -1,5 +1,7 @@
 # Arabica
 
+[Website](https://haowei2000.github.io/Arabica/) · [Configuration](https://haowei2000.github.io/Arabica/configuration.html) · [Apache-2.0 license](LICENSE)
+
 <p align="center">
   <img src="static/arabica-icon.svg" width="120" alt="Arabica icon: roasted coffee beans">
 </p>
@@ -8,8 +10,9 @@ Arabica is a headless AI-agent runtime written in Rust. The project defines a
 canonical command/event protocol, session lifecycle, model-provider boundary,
 tool runner, memory policies, and an HTTP/SSE host.
 
-> Status: active development (`0.1.0`). There is no GUI in this repository;
-> `arabica-cli` (below) is the only client-facing surface.
+> Status: active development (`0.1.1`). A first native macOS client lives in
+> [`apps/arabica-desktop`](apps/arabica-desktop/README.md). The Rust runtime
+> remains headless.
 
 ## Architecture
 
@@ -31,6 +34,11 @@ layer validates and sequences the operation, and the runtime emits canonical
 `EventEnvelope` values. The HTTP host exposes the same contract without adding
 client-specific state.
 
+The macOS desktop client uses SwiftUI and AppKit. It launches the CLI's ACP
+agent as a bundled process and presents conversations, live updates, and tool
+permission requests. Build instructions are in its
+[README](apps/arabica-desktop/README.md).
+
 ## HTTP API
 
 `arabica-server` currently exposes:
@@ -47,7 +55,35 @@ The server listens on `127.0.0.1:4096` by default.
 ## Requirements
 
 - Rust 1.88 or newer
-- An OpenAI-compatible model endpoint when running the HTTP server or the CLI
+- A supported model-provider endpoint when running the HTTP server or the CLI
+
+## Install the CLI
+
+On macOS or Linux, download the latest release with curl. The installer selects
+the matching CPU architecture, verifies the published SHA-256 checksum, and
+installs `arabica` to `~/.local/bin` by default:
+
+```bash
+curl -fsSL https://haowei2000.github.io/Arabica/install.sh -o install-arabica.sh
+sh install-arabica.sh
+~/.local/bin/arabica --help
+```
+
+Set `ARABICA_INSTALL_DIR` to choose another directory or
+`ARABICA_VERSION=v0.1.1` to pin a release. Windows ZIP archives are on
+[GitHub Releases](https://github.com/haowei2000/Arabica/releases).
+
+With Rust 1.88 or newer, install the published package from crates.io:
+
+```bash
+cargo install arabica-cli --locked
+arabica --help
+```
+
+The package is named `arabica-cli`; its executable is `arabica`. See the
+[configuration guide](https://haowei2000.github.io/Arabica/configuration.html)
+for provider credentials, precedence, Blend routing, MCP tools, and server
+settings.
 
 ## Build and Test
 
@@ -60,12 +96,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Run the Server
 
-Configure the model provider:
+Configure named provider and model candidates. Keys stay in the environment:
 
 ```bash
-export OPENAI__API_KEY="..."
-export OPENAI__BASE_URL="https://api.openai.com/v1"
-export OPENAI__MODEL="..."
+export ARABICA_PROVIDER_OPENAI_API_KEY="..."
+export ARABICA_PROVIDER_ANTHROPIC_API_KEY="..."
+export ARABICA__PROVIDERS_JSON='{"openai":{"api_type":"open_ai_responses","base_url":"https://api.openai.com/v1"},"anthropic":{"api_type":"anthropic_messages","base_url":"https://api.anthropic.com/v1"}}'
+export ARABICA__BLEND_MODELS_JSON='{"fast":{"provider":"openai","model_id":"gpt-4.1-mini"},"strong":{"provider":"anthropic","model_id":"claude-sonnet-4-5"}}'
+export ARABICA__BLEND_DEFAULT="fast"
 ```
 
 Then start the host:
@@ -74,23 +112,109 @@ Then start the host:
 cargo run -p arabica-server
 ```
 
+### Session persistence
+
+CLI, interactive chat, ACP, and the production HTTP server store session metadata
+and ordered events in `$ARABICA_HOME/sessions.sqlite3` (default: `~/.arabica`).
+The backend-independent `SessionStore` and `SessionWriter` ports and shared
+metadata types live in `arabica-session`. `arabica-adapters::SqliteSessionRepository`
+implements the repository port; CLI and server code select it during composition
+and use IDs through the port thereafter. `SessionWriter` keeps exclusive ownership
+until its final handle (including observer handles) is dropped.
+SQLite uses WAL and full synchronous transactions. Session ownership locks remain
+per session, preventing two processes from resuming the same session concurrently.
+Legacy `sessions/<workspace>/<session>.jsonl` files are imported transactionally
+on first access and retained unchanged. After import, SQLite is authoritative;
+older binaries must not be used to continue imported sessions.
+
+Titles default to the first non-empty user message (up to 80 characters) and are
+returned in ACP session listings. To rename an inactive session in the current
+workspace, run:
+
+```bash
+arabica sessions rename <session-id> "My session title"
+```
+
+The HTTP server restores sessions for its canonical tool root on startup; the
+embedding `AppState::default()` remains ephemeral unless `with_session_store` is
+called with an `Arc<dyn SessionStore>` and a tool root. The existing snapshot restore API accepts root sessions only; persisted
+forks currently cause an explicit startup restore error rather than losing their
+inherited history. Command deduplication remains in memory across a process lifetime.
+When backing up an active database, use SQLite's backup facilities so committed
+WAL data is included.
+
+### CLI model blend
+
+The CLI reads `~/.arabica/config.toml`. Define reusable provider settings under `[providers.<name>]`; each `[models.<alias>]` selects a provider and model ID. Blend routes continue to refer to aliases. Provider API keys come from the configured `api_key_env`, or by default from `ARABICA_PROVIDER_<NAME>_API_KEY` (provider name uppercased with non-alphanumeric characters replaced by underscores).
+
+```toml
+[providers.openai]
+api_type = "open_ai_responses"
+base_url = "https://api.openai.com/v1"
+api_key_env = "ARABICA_PROVIDER_OPENAI_API_KEY"
+max_tokens = 8192
+thinking = "high"
+
+[providers.anthropic]
+api_type = "anthropic_messages"
+base_url = "https://api.anthropic.com/v1"
+api_key_env = "ARABICA_PROVIDER_ANTHROPIC_API_KEY"
+max_tokens = 8192
+request_timeout_secs = 180
+anthropic_cache_static_prefix = true
+
+[models.fast]
+provider = "openai"
+model_id = "gpt-4.1-mini"
+
+[models.strong]
+provider = "anthropic"
+model_id = "claude-sonnet-4-5"
+
+[blend]
+default_policy = "coding"
+
+[blend.policies.coding]
+version = 1
+default_model = "fast"
+after_tool_success = "fast"
+after_tool_error = "strong"
+recovery_after_no_progress_steps = 2
+recovery_model = "strong"
+minimum_model_dwell_steps = 2
+tool_call_capable_models = ["fast", "strong"]
+typed_completion_capable_models = ["fast"]
+
+[blend.policies.precise]
+version = 1
+default_model = "strong"
+after_tool_error = "strong"
+minimum_model_dwell_steps = 2
+```
+
+The CLI validates every provider reference, alias, credential source, and API-specific setting at startup. A TOML `api_key` is accepted as a fallback to the environment variable; a config file containing keys must be owner-only (`chmod 600`). `arabica auth login` remains a saved-key fallback for the default provider. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes configured policy IDs and model aliases as session selectors. Selecting a policy changes the current session's routing rules; selecting a model changes that policy's session default. For one policy, the earlier flat `[blend]` fields remain accepted.
+
 Optional configuration:
 
 - `ARABICA__PORT`: listening port, default `4096`
-- `ARABICA__BLEND_MODELS`: optional comma-separated `alias=model-id` entries;
-  candidates share the API type, base URL, and key above
-- `ARABICA__BLEND_DEFAULT`: default alias, defaults to the first candidate
+- `ARABICA__PROVIDERS_JSON`: server provider definitions, keyed by provider name
+- `ARABICA__BLEND_MODELS_JSON`: server alias entries with `provider` and `model_id`
+- `ARABICA__BLEND_DEFAULT`: default alias, defaults to the first alias in sorted order
 - `ARABICA__BLEND_AFTER_TOOL_SUCCESS`: optional alias for the next call after
   a successful tool result
 - `ARABICA__BLEND_AFTER_TOOL_ERROR`: optional alias after a tool error
 - `ARABICA__BLEND_RECOVERY_MODEL`: optional alias after repeated no-progress
   steps (threshold defaults to 2 and is set by
   `ARABICA__BLEND_RECOVERY_AFTER_NO_PROGRESS_STEPS`)
+- `ARABICA__BLEND_MINIMUM_MODEL_DWELL_STEPS`: minimum consecutive calls to
+  keep a selected model before ordinary routing can switch; error and recovery
+  routes bypass this hold, default `1`
+- `ARABICA__BLEND_TOOL_CALL_MODELS`: comma-separated aliases certified for
+  tool calling
+- `ARABICA__BLEND_TYPED_COMPLETION_MODELS`: comma-separated aliases certified
+  for typed terminal completion
 - `ARABICA__BLEND_POLICY_ID` and `ARABICA__BLEND_POLICY_VERSION`: immutable
   policy identity recorded with each route
-- `ARABICA__API_TYPE`: provider API dialect, default
-  `open_ai_chat_completions`; `open_ai_responses` enables stateless Responses
-  replay with exact reasoning/output-item retention
 - `ARABICA__TOOL_ROOT`: root directory available to the local runner
 - `ARABICA__COMPACTION_STRATEGY`: `file_backed_gc` (default), `pointer_gc`,
   or `disabled`
@@ -107,8 +231,9 @@ not selected by either executable.
 
 `arabica-cli` builds a `structure` binary with two entry points: `structure
 acp` (Agent Client Protocol v1 over stdio, for editors like Zed) and
-`structure -p "task"` (one-shot execution). Both read the same environment
-variables as the server above. See [`docs/cli.md`](docs/cli.md) for flags,
+`structure -p "task"` (one-shot execution). Both read provider-specific key
+environment variables and the model configuration from `~/.arabica/config.toml`.
+See [`docs/cli.md`](docs/cli.md) for flags,
 exit codes, and a Zed configuration snippet.
 
 ```bash
@@ -147,4 +272,6 @@ No browser UI, React application, or other frontend is currently maintained.
 
 ## License
 
-Licensed under the Apache License 2.0. See `LICENSE` and `NOTICE`.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE). Contributions are accepted under the same license unless
+explicitly stated otherwise.

@@ -4,6 +4,9 @@
 //! values. Runtime, session, and runner modules must not invent parallel wire
 //! types.
 
+mod context;
+pub use context::*;
+
 use arabica_model::{
     FinishReason, ProviderResponseState, ProviderState, RuntimeItem, RuntimeRequest, RuntimeUsage,
 };
@@ -135,6 +138,8 @@ pub enum RunStatus {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolInteractionKind {
+    /// Planning work that changes or reports the agent's structured plan.
+    Plan,
     Inspection,
     Mutation,
     /// A single ordered runner action that changes state and then validates
@@ -250,6 +255,34 @@ pub enum TerminalControllerTransitionReason {
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum Event {
+    #[serde(rename = "context.run.resolved")]
+    ContextRunResolved { snapshot: ContextRunSnapshot },
+    #[serde(rename = "context.request.exposed")]
+    ContextRequestExposed {
+        model_step: usize,
+        decision_id: String,
+        context_ids: Vec<String>,
+        #[serde(default)]
+        folded_ids: Vec<String>,
+    },
+    #[serde(rename = "context.item.unfolded")]
+    ContextItemUnfolded {
+        call_id: String,
+        decision_id: String,
+        context_id: String,
+    },
+    #[serde(rename = "context.call.started")]
+    ContextCallStarted {
+        call_id: String,
+        decision_id: String,
+        context_id: String,
+    },
+    #[serde(rename = "context.call.rejected")]
+    ContextCallRejected {
+        call_id: String,
+        decision_id: String,
+        context_id: Option<String>,
+    },
     #[serde(rename = "session.created")]
     SessionCreated { workspace_id: WorkspaceId },
     #[serde(rename = "session.forked")]
@@ -274,8 +307,23 @@ pub enum Event {
         decision_id: String,
         policy_id: String,
         policy_version: u64,
+        /// Content hash of the effective policy pinned for this run.
+        #[serde(default)]
+        policy_fingerprint: String,
+        /// Stable aliases and model IDs; excludes credentials and endpoints.
+        #[serde(default)]
+        model_registry_snapshot: String,
         model_alias: Option<String>,
         reason: String,
+    },
+    #[serde(rename = "model.route.explained")]
+    ModelRouteExplained {
+        model_step: usize,
+        desired_model_alias: String,
+        selected_model_alias: String,
+        rule_id: Option<String>,
+        reason: String,
+        fallback_reason: Option<String>,
     },
     /// Immediate call-level measurement. Run quality is evaluated separately
     /// after downstream tool outcomes or terminal task evidence are available.
@@ -285,6 +333,8 @@ pub enum Event {
         decision_id: String,
         elapsed_ms: u64,
         provider_succeeded: bool,
+        #[serde(default)]
+        outcome: ModelCallOutcome,
         usage: Option<RuntimeUsage>,
     },
     /// Exact provider-neutral request immediately before wire encoding.
@@ -342,6 +392,20 @@ pub enum Event {
     ToolCallClassified {
         call_id: String,
         kind: ToolInteractionKind,
+    },
+    /// Current structured plan snapshot for replay and ACP plan updates.
+    #[serde(rename = "plan.updated")]
+    PlanUpdated {
+        plan_id: String,
+        entries: Vec<PlanEntry>,
+    },
+    #[serde(rename = "plan.delegation.observed")]
+    PlanDelegationObserved {
+        model_step: usize,
+        model_alias: String,
+        succeeded: bool,
+        elapsed_ms: u64,
+        usage: Option<RuntimeUsage>,
     },
     /// Runtime is asking the host's approver whether this call may run. The
     /// tool name and arguments are in the matching `tool.call.requested`.
@@ -421,6 +485,33 @@ pub enum Event {
     Error { code: ErrorCode, message: String },
 }
 
+/// One durable item in the agent's current plan.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct PlanEntry {
+    pub id: String,
+    pub content: String,
+    pub status: PlanEntryStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallOutcome {
+    Succeeded,
+    Failed,
+    Cancelled,
+    #[default]
+    Unknown,
+}
+
 impl Event {
     /// Model exchange events are canonical audit/runtime facts but can contain
     /// system prompts, disclosed memory, and provider reasoning state. They
@@ -428,7 +519,12 @@ impl Event {
     pub const fn is_client_visible(&self) -> bool {
         !matches!(
             self,
-            Self::ModelRequestPrepared { .. }
+            Self::ContextRunResolved { .. }
+                | Self::ContextRequestExposed { .. }
+                | Self::ContextItemUnfolded { .. }
+                | Self::ContextCallStarted { .. }
+                | Self::ContextCallRejected { .. }
+                | Self::ModelRequestPrepared { .. }
                 | Self::ModelRouteSelected { .. }
                 | Self::ModelCallObserved { .. }
                 | Self::ModelResponseItem { .. }
@@ -550,6 +646,46 @@ mod tests {
             serde_json::from_value::<CommandEnvelope>(value).expect("command deserializes"),
             command
         );
+    }
+
+    #[test]
+    fn blend_events_deserialize_older_records_with_unknown_new_fields() {
+        let route: Event = serde_json::from_value(serde_json::json!({
+            "type": "model.route.selected",
+            "payload": {
+                "model_step": 1,
+                "decision_id": "run:1",
+                "policy_id": "legacy",
+                "policy_version": 1,
+                "model_alias": "fast",
+                "reason": "default"
+            }
+        }))
+        .expect("legacy route event deserializes");
+        assert!(
+            matches!(route, Event::ModelRouteSelected { policy_fingerprint, model_registry_snapshot, .. }
+            if policy_fingerprint.is_empty() && model_registry_snapshot.is_empty())
+        );
+
+        let observed: Event = serde_json::from_value(serde_json::json!({
+            "type": "model.call.observed",
+            "payload": {
+                "model_step": 1,
+                "decision_id": "run:1",
+                "elapsed_ms": 9,
+                "provider_succeeded": true,
+                "usage": null
+            }
+        }))
+        .expect("legacy observation event deserializes");
+        assert!(matches!(
+            observed,
+            Event::ModelCallObserved {
+                outcome: ModelCallOutcome::Unknown,
+                usage: None,
+                ..
+            }
+        ));
     }
 
     #[test]

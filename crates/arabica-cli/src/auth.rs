@@ -108,7 +108,7 @@ pub fn run(action: AuthAction) -> i32 {
     };
     let result = match action {
         AuthAction::Login => {
-            let key = match rpassword::prompt_password("OpenAI API key: ") {
+            let key = match rpassword::prompt_password("Default provider API key: ") {
                 Ok(key) => key,
                 Err(error) => {
                     eprintln!("error: reading API key: {error}");
@@ -119,9 +119,11 @@ pub fn run(action: AuthAction) -> i32 {
                 println!("API key saved to {}", auth_path(&home).display());
             })
         }
-        AuthAction::Status => {
-            if std::env::var("OPENAI__API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
-                println!("API key: environment (OPENAI__API_KEY)");
+        AuthAction::Status => crate::config::user_config_api_key_env(&home).and_then(|name| {
+            if let Some(name) = name
+                && std::env::var(&name).is_ok_and(|key| !key.trim().is_empty())
+            {
+                println!("API key: environment ({name})");
                 Ok(())
             } else {
                 crate::config::user_config_key(&home).and_then(|key| {
@@ -142,7 +144,7 @@ pub fn run(action: AuthAction) -> i32 {
                     }
                 })
             }
-        }
+        }),
         AuthAction::Logout => match fs::remove_file(auth_path(&home)) {
             Ok(()) => {
                 println!("Saved API key removed");

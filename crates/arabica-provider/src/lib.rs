@@ -151,6 +151,12 @@ pub trait ModelProvider {
         None
     }
 
+    /// Stable, non-secret description of the configured model candidates.
+    /// Implementations should omit credentials and endpoint values.
+    fn model_registry_snapshot(&self) -> String {
+        self.model_id().unwrap_or("unknown").to_owned()
+    }
+
     fn supports_model_alias(&self, alias: &str) -> bool {
         self.model_id() == Some(alias)
     }
@@ -186,6 +192,19 @@ pub struct BlendProvider {
 }
 
 impl BlendProvider {
+    /// Build a model pool whose aliases may use different API dialects,
+    /// endpoints, credentials, and generation settings.
+    pub fn from_configs(
+        default_alias: impl Into<String>,
+        candidates: impl IntoIterator<Item = (String, ApiProviderConfig)>,
+    ) -> Result<Self, ProviderError> {
+        let providers = candidates
+            .into_iter()
+            .map(|(alias, config)| ApiModelProvider::new(config).map(|provider| (alias, provider)))
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(default_alias, providers)
+    }
+
     pub fn from_shared_config(
         base_config: ApiProviderConfig,
         default_alias: impl Into<String>,
@@ -250,6 +269,16 @@ impl ModelProvider for BlendProvider {
 
     fn supports_model_alias(&self, alias: &str) -> bool {
         self.candidates.contains_key(alias)
+    }
+
+    fn model_registry_snapshot(&self) -> String {
+        self.candidates
+            .iter()
+            .map(|(alias, provider)| {
+                format!("{alias}={}", provider.model_id().unwrap_or("unknown"))
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     async fn complete(
@@ -3553,6 +3582,65 @@ impl ModelProvider for EchoModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blend_accepts_distinct_provider_configs_without_exposing_secrets() {
+        let providers = BlendProvider::from_configs(
+            "fast",
+            [
+                (
+                    "fast".to_owned(),
+                    ApiProviderConfig::new(
+                        ApiType::OpenAiChatCompletions,
+                        "fast-secret",
+                        "https://fast.example/v1",
+                        "mini",
+                    ),
+                ),
+                (
+                    "strong".to_owned(),
+                    ApiProviderConfig::new(
+                        ApiType::AnthropicMessages,
+                        "strong-secret",
+                        "https://strong.example/v1",
+                        "opus",
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(providers.model_id(), Some("mini"));
+        assert!(providers.supports_model_alias("strong"));
+        let snapshot = providers.model_registry_snapshot();
+        assert!(snapshot.contains("fast=mini"));
+        assert!(snapshot.contains("strong=opus"));
+        assert!(!snapshot.contains("secret"));
+        assert!(!snapshot.contains("example"));
+    }
+
+    #[test]
+    fn blend_rejects_duplicate_aliases_with_per_alias_configs() {
+        let config = ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "key",
+            "https://example.test/v1",
+            "model",
+        );
+        let result = BlendProvider::from_configs(
+            "same",
+            [
+                ("same".to_owned(), config.clone()),
+                ("same".to_owned(), config),
+            ],
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate Blend model alias")
+        );
+    }
 
     fn sample_request() -> ModelRunRequest {
         ModelRunRequest {

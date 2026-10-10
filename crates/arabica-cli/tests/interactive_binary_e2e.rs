@@ -36,13 +36,24 @@ async fn run_binary_with_args(
     input: &str,
     args: &[&str],
 ) -> std::process::Output {
+    std::fs::create_dir_all(home).unwrap();
+    let config_path = home.join("config.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if !config.contains("[providers.mock]") {
+        std::fs::write(
+            &config_path,
+            format!(
+                "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.default]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[blend]\ndefault_model = 'default'\ntool_call_capable_models = ['default']\n\n{config}"
+            ),
+        )
+        .unwrap();
+    }
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
         .args(args)
         .current_dir(root)
         .env("ARABICA_HOME", home)
-        .env("OPENAI__API_KEY", "test-key")
-        .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
-        .env("OPENAI__MODEL", "test-model")
+        .env("ARABICA_PROVIDER_MOCK_API_KEY", "test-key")
+        .env("ARABICA__BASE_URL", format!("http://{address}/v1"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -141,6 +152,12 @@ async fn terminal_commands_change_the_next_model_request() {
     let root = temp_dir("config-root");
     let home = temp_dir("config-home");
     std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.\"test-model\"]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[models.\"other-model\"]\nprovider = 'mock'\nmodel_id = 'other-model'\n\n[blend]\ndefault_model = 'test-model'\ntool_call_capable_models = ['test-model', 'other-model']\n",
+    )
+    .unwrap();
     let result = run_binary(
         &root,
         &home,
@@ -176,7 +193,7 @@ async fn terminal_commands_change_the_next_model_request() {
             .join("config.toml"),
     )
     .unwrap();
-    assert!(saved.contains("model = \"other-model\""));
+    assert!(saved.contains("model_alias = \"other-model\""));
     assert!(saved.contains("thinking = \"on\""));
     assert!(!saved.contains("test-key"));
     std::fs::remove_dir_all(root).ok();
@@ -317,13 +334,18 @@ async fn saved_auth_starts_chat_without_an_api_key_environment_variable() {
     let root = temp_dir("saved-auth-root");
     let home = temp_dir("saved-auth-home");
     std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        "[providers.mock]\napi_key_env = 'ARABICA_PROVIDER_MOCK_API_KEY'\nbase_url = 'http://unused/v1'\n\n[models.default]\nprovider = 'mock'\nmodel_id = 'test-model'\n\n[blend]\ndefault_model = 'default'\ntool_call_capable_models = ['default']\n",
+    )
+    .unwrap();
     save_key(&home, "saved-test-key").unwrap();
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
         .current_dir(&root)
         .env("ARABICA_HOME", &home)
-        .env_remove("OPENAI__API_KEY")
-        .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
-        .env("OPENAI__MODEL", "test-model")
+        .env_remove("ARABICA_PROVIDER_MOCK_API_KEY")
+        .env("ARABICA__BASE_URL", format!("http://{address}/v1"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -451,29 +473,9 @@ fn system_message_contents(request: &Value) -> Vec<&str> {
 /// Reads the single session file's header line under `home`, the way
 /// `arabica sessions list` does.
 fn session_file_header(home: &std::path::Path) -> Value {
-    fn walk(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path
-                .extension()
-                .is_some_and(|extension| extension == "jsonl")
-            {
-                found.push(path);
-            }
-        }
-    }
-    let mut found = Vec::new();
-    walk(home, &mut found);
-    assert_eq!(found.len(), 1, "expected exactly one session file");
-    let first_line = std::fs::read_to_string(&found[0])
-        .unwrap()
-        .lines()
-        .next()
-        .unwrap()
-        .to_owned();
-    serde_json::from_str(&first_line).unwrap()
+    let sessions = arabica_adapters::SqliteSessionStore::list_sessions(home, None).unwrap();
+    assert_eq!(sessions.len(), 1);
+    serde_json::to_value(&sessions[0].header).unwrap()
 }
 
 #[tokio::test]
@@ -721,21 +723,11 @@ async fn resume_switches_sessions_inside_one_terminal_run() {
     // its cwd canonically (macOS /var -> /private/var), so the id must be
     // computed from the canonical path.
     let canonical_root = std::fs::canonicalize(&root).unwrap();
-    let workspace_dir = home
-        .join("sessions")
-        .join(arabica_cli::host::workspace_id_for(&canonical_root).to_string());
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&workspace_dir)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .collect();
-    files.sort_by_key(|path| {
-        std::fs::metadata(path)
-            .and_then(|metadata| metadata.modified())
-            .unwrap()
-    });
-    assert_eq!(files.len(), 2, "two sessions expected");
-    let session_a = files[0].file_stem().unwrap().to_string_lossy().to_string();
+    let workspace_id = arabica_cli::host::workspace_id_for(&canonical_root);
+    let listings =
+        arabica_adapters::SqliteSessionStore::list_sessions(&home, Some(&workspace_id)).unwrap();
+    assert_eq!(listings.len(), 2, "two sessions expected");
+    let session_a = listings.last().unwrap().header.id.to_string();
     // In one run: /sessions lists both, /resume <A> switches, and the next
     // turn continues A's history.
     let third = run_binary(
@@ -790,7 +782,7 @@ async fn resume_switches_sessions_inside_one_terminal_run() {
     // file) was suspended cleanly and still resumes by explicit id. (It is
     // no longer the most recent session -- the switch itself touched A --
     // so --continue would rightly pick A, not B.)
-    let session_b = files[1].file_stem().unwrap().to_string_lossy().to_string();
+    let session_b = listings.first().unwrap().header.id.to_string();
     let resumed_b = run_binary_with_args(
         &root,
         &home,

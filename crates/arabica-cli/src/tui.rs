@@ -8,20 +8,21 @@
 //! status flips in place, results are status lines, and file edits show a
 //! colored diff. Ctrl+O toggles verbose printing for later events.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use arabica_adapters::FileSessionStore;
+use crate::host::HostModel;
 use arabica_model::{ContentBlock, RuntimeItem, RuntimeRole};
 use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, ToolPermissionOutcome,
     ToolPermissionScope, ToolPermissionSource,
 };
 use arabica_provider::{ApiProviderConfig, ModelProgress, ModelProgressSink};
+use arabica_runtime::BlendRoutingPolicy;
 use arabica_runtime::{
     PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
 };
@@ -852,19 +853,7 @@ fn workspace_files(root: &Path) -> Vec<String> {
 }
 
 fn configured_models(current: &str) -> Vec<String> {
-    let mut models = vec![current.to_owned()];
-    if let Ok(configured) = std::env::var("ARABICA__MODELS") {
-        for model in configured
-            .split(',')
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-        {
-            if !models.iter().any(|known| known == model) {
-                models.push(model.to_owned());
-            }
-        }
-    }
-    models
+    vec![current.to_owned()]
 }
 
 struct CompletionView {
@@ -1286,8 +1275,13 @@ impl App {
     }
 
     fn new(session: &InteractiveSession) -> Self {
+        let models = if session.model_configs.is_empty() {
+            configured_models(&session.config.model)
+        } else {
+            session.model_configs.keys().cloned().collect()
+        };
         Self {
-            models: configured_models(&session.config.model),
+            models,
             ..Self::default()
         }
     }
@@ -2118,10 +2112,12 @@ async fn run_turn(
         session.manager.runtime_mut().model_mut(),
         tui_observer.sink(),
     );
-    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+    let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
         Arc::clone(&session.store) as Arc<dyn SessionEventObserver>,
         Arc::clone(&tui_observer) as Arc<dyn SessionEventObserver>,
-    ]));
+    ];
+    crate::evaluation::attach(&mut observers, &session.arabica_home);
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(observers));
     let cancellation = RunCancellation::new();
     let (permission_tx, mut permission_rx) =
         tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();
@@ -2944,11 +2940,7 @@ fn is_find_command(text: &str) -> bool {
 
 fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
     let workspace = workspace_id_for(&session.runner_root);
-    let stored = match FileSessionStore::read_session(
-        &session.arabica_home,
-        &workspace,
-        &session.session_id,
-    ) {
+    let stored = match session.session_store.read(&workspace, &session.session_id) {
         Ok(stored) => stored,
         Err(_) => return,
     };
@@ -3054,7 +3046,34 @@ async fn run_inner(
     config: ApiProviderConfig,
     options: InteractiveOptions,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    let mut session = InteractiveSession::open(config, options).await?;
+    let model = HostModel::Api(arabica_provider::ApiModelProvider::new(config.clone())?);
+    run_inner_with_model(config, model, None, options).await
+}
+
+async fn run_inner_with_model(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    options: InteractiveOptions,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    run_inner_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
+}
+
+async fn run_inner_with_model_configs(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    model_configs: BTreeMap<String, ApiProviderConfig>,
+    options: InteractiveOptions,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let mut session = InteractiveSession::open_with_model_configs(
+        config,
+        model,
+        blend_policy,
+        model_configs,
+        options,
+    )
+    .await?;
     let mut app = App::new(&session);
     app.status = format!("session {}", session.session_id);
 
@@ -3305,6 +3324,35 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
         return 2;
     }
     match run_inner(config, options).await {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    }
+}
+
+pub async fn run_with_model(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    options: InteractiveOptions,
+) -> i32 {
+    run_with_model_configs(config, model, blend_policy, BTreeMap::new(), options).await
+}
+
+pub async fn run_with_model_configs(
+    config: ApiProviderConfig,
+    model: HostModel,
+    blend_policy: Option<BlendRoutingPolicy>,
+    model_configs: BTreeMap<String, ApiProviderConfig>,
+    options: InteractiveOptions,
+) -> i32 {
+    if options.allow_shell && options.read_only {
+        eprintln!("error: --allow-shell and --read-only are mutually exclusive");
+        return 2;
+    }
+    match run_inner_with_model_configs(config, model, blend_policy, model_configs, options).await {
         Ok(code) => code,
         Err(error) => {
             eprintln!("error: {error}");

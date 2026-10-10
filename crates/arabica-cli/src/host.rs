@@ -7,12 +7,13 @@
 //! policy a coding CLI needs. Terminal chat, `arabica acp`, and `structure -p` build on
 //! this; neither adds a second way to do it.
 
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use arabica_protocol::{RunId, SessionId};
 use arabica_provider::{
-    ApiModelProvider, ApiProviderConfig, ApiType, ModelProgressSink, ModelProvider,
+    ApiModelProvider, ApiProviderConfig, BlendProvider, ModelProgressSink, ModelProvider,
     ModelRunRequest, ModelRunResult, ProviderError,
 };
 pub use arabica_runner::LocalRunnerPolicy;
@@ -46,75 +47,57 @@ impl IdAllocator for UuidIds {
     }
 }
 
-/// Environment variables read by [`resolve_provider_config`], reusing
-/// `arabica-server`'s names (`crates/arabica-server/src/lib.rs`) so a
-/// provider configured for one host works unchanged for the other.
-mod env {
-    pub const API_KEY: &str = "OPENAI__API_KEY";
-    pub const BASE_URL: &str = "OPENAI__BASE_URL";
-    pub const MODEL: &str = "OPENAI__MODEL";
-    pub const API_TYPE: &str = "ARABICA__API_TYPE";
-}
-
-/// Model selection, deliberately not the credential. A `--api-key` flag would
-/// put the key in shell history and process listings. ACP reads the key from
-/// the environment; terminal chat and print mode can also use saved auth.
+/// Invocation overrides for the default Blend alias. Credentials have no CLI
+/// flag so they cannot enter shell history or process listings.
 #[derive(Args, Clone, Debug, Default)]
 pub struct HostConfigArgs {
-    /// Override OPENAI__MODEL.
+    /// Override the default Blend alias model ID (ARABICA__MODEL).
     #[arg(long)]
     pub model: Option<String>,
-    /// Override ARABICA__API_TYPE (open_ai_chat_completions, open_ai_responses,
-    /// anthropic_messages, gemini_generate_content, gemini_interactions).
+    /// Override ARABICA__API_TYPE for the default alias's provider.
     #[arg(long)]
     pub api_type: Option<String>,
-    /// Override OPENAI__BASE_URL.
+    /// Override ARABICA__BASE_URL for the default alias's provider.
     #[arg(long)]
     pub base_url: Option<String>,
 }
 
-fn require(value: Option<String>, var: &str, flag: &str) -> Result<String, ProviderError> {
-    value.ok_or_else(|| ProviderError::new(format!("{var} is required (or pass --{flag})")))
+/// Shared model-pool configuration consumed by terminal, one-shot, and ACP
+/// hosts. Protocol adapters may expose different controls, but model
+/// construction and alias validation stay here.
+#[derive(Clone, Debug)]
+pub struct HostModelCatalog {
+    pub provider: ApiProviderConfig,
+    pub models: BTreeMap<String, String>,
+    pub blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+    pub model_configs: BTreeMap<String, ApiProviderConfig>,
 }
 
-/// Resolve provider configuration: a CLI flag overrides its matching
-/// environment variable; `OPENAI__API_KEY` has no flag and must be exported.
-///
-/// Reads through `lookup` rather than `std::env::var` directly, so tests can
-/// supply a fixed map instead of mutating the real process environment
-/// (`std::env::set_var` is `unsafe` as of Rust 2024, and this workspace
-/// forbids `unsafe` outright).
-pub fn resolve_provider_config(
-    args: &HostConfigArgs,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Result<ApiProviderConfig, ProviderError> {
-    let api_type = args
-        .api_type
-        .clone()
-        .or_else(|| lookup(env::API_TYPE))
-        .unwrap_or_else(|| ApiType::OpenAiChatCompletions.to_string())
-        .parse::<ApiType>()?;
-    let api_key = lookup(env::API_KEY).ok_or_else(|| {
-        ProviderError::new(format!(
-            "{} is required; export it in your shell, it is never a flag",
-            env::API_KEY
-        ))
-    })?;
-    let base_url = require(
-        args.base_url.clone().or_else(|| lookup(env::BASE_URL)),
-        env::BASE_URL,
-        "base-url",
-    )?;
-    let model = require(
-        args.model.clone().or_else(|| lookup(env::MODEL)),
-        env::MODEL,
-        "model",
-    )?;
-    Ok(ApiProviderConfig::new(api_type, api_key, base_url, model))
+impl HostModelCatalog {
+    pub fn build_model(&self) -> Result<HostModel, ProviderError> {
+        if self.models.is_empty() {
+            return ApiModelProvider::new(self.provider.clone()).map(HostModel::Api);
+        }
+        let default_alias = self
+            .blend_policy
+            .as_ref()
+            .map(|policy| policy.default_model.as_str())
+            .unwrap_or_else(|| self.models.keys().next().expect("non-empty model catalog"));
+        if self.model_configs.is_empty() {
+            BlendProvider::from_shared_config(
+                self.provider.clone(),
+                default_alias,
+                self.models.clone(),
+            )
+            .map(HostModel::Blend)
+        } else {
+            BlendProvider::from_configs(default_alias, self.model_configs.clone())
+                .map(HostModel::Blend)
+        }
+    }
 }
 
-/// The real environment, for `main` to pass as `resolve_provider_config`'s
-/// `lookup`.
+/// The real environment, for the CLI configuration resolver's `lookup`.
 pub fn process_environment(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
@@ -128,6 +111,7 @@ pub fn process_environment(name: &str) -> Option<String> {
 #[derive(Debug)]
 pub enum HostModel {
     Api(ApiModelProvider),
+    Blend(BlendProvider),
     StreamingApi(ApiModelProvider, ModelProgressSink),
     /// A fixed sequence of responses, consumed one per call. Used by this
     /// crate's own tests; never selected from user-facing configuration.
@@ -138,13 +122,23 @@ impl ModelProvider for HostModel {
     fn model_id(&self) -> Option<&str> {
         match self {
             Self::Api(model) | Self::StreamingApi(model, _) => model.model_id(),
+            Self::Blend(model) => model.model_id(),
             Self::Scripted(model) => model.model_id(),
+        }
+    }
+
+    fn model_registry_snapshot(&self) -> String {
+        match self {
+            Self::Blend(model) => model.model_registry_snapshot(),
+            Self::Api(model) | Self::StreamingApi(model, _) => model.model_registry_snapshot(),
+            Self::Scripted(model) => model.model_registry_snapshot(),
         }
     }
 
     fn supports_model_alias(&self, alias: &str) -> bool {
         match self {
             Self::Api(model) | Self::StreamingApi(model, _) => model.supports_model_alias(alias),
+            Self::Blend(model) => model.supports_model_alias(alias),
             Self::Scripted(model) => model.supports_model_alias(alias),
         }
     }
@@ -155,6 +149,7 @@ impl ModelProvider for HostModel {
     ) -> Result<ModelRunResult, ProviderError> {
         match self {
             Self::Api(model) => model.complete(request).await,
+            Self::Blend(model) => model.complete(request).await,
             Self::StreamingApi(model, progress) => {
                 model.complete_with_progress(request, progress).await
             }
@@ -162,9 +157,24 @@ impl ModelProvider for HostModel {
         }
     }
 
+    async fn complete_with_model(
+        &mut self,
+        request: ModelRunRequest,
+        model_alias: &str,
+    ) -> Result<ModelRunResult, ProviderError> {
+        match self {
+            Self::Blend(model) => model.complete_with_model(request, model_alias).await,
+            Self::Api(model) | Self::StreamingApi(model, _) => {
+                model.complete_with_model(request, model_alias).await
+            }
+            Self::Scripted(model) => model.complete_with_model(request, model_alias).await,
+        }
+    }
+
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
         match self {
             Self::Api(model) => model.cancel(run_id).await,
+            Self::Blend(model) => model.cancel(run_id).await,
             Self::StreamingApi(model, _) => model.cancel(run_id).await,
             Self::Scripted(model) => model.cancel(run_id).await,
         }
@@ -276,7 +286,12 @@ impl RunnerEnvironment for HostRunner {
         &self,
         call: &arabica_model::ToolCallItem,
     ) -> arabica_protocol::ToolInteractionKind {
-        if self.mcp.contains(&call.name) {
+        if matches!(
+            call.name.as_str(),
+            arabica_runtime::CREATE_PLAN_TOOL_NAME | arabica_runtime::UPDATE_PLAN_TOOL_NAME
+        ) {
+            arabica_protocol::ToolInteractionKind::Plan
+        } else if self.mcp.contains(&call.name) {
             self.mcp.classify(call)
         } else {
             self.local.classify(call)
@@ -342,7 +357,7 @@ pub fn system_instructions(root: &Path) -> Vec<String> {
 /// like the same workspace regardless of which binding opened it.
 pub fn workspace_id_for(cwd: &Path) -> arabica_protocol::WorkspaceId {
     let digest = Sha256::digest(cwd.to_string_lossy().as_bytes());
-    arabica_protocol::WorkspaceId::new(format!("ws-{:.16}", format!("{digest:x}")))
+    arabica_protocol::WorkspaceId::new(format!("ws-{:.16}", hex::encode(digest)))
 }
 
 /// Build a [`HostRuntime`] fixed to the CLI profile: provider-safe Policy
@@ -373,9 +388,11 @@ pub fn build_host_runtime_with_mcp(
     mcp: crate::mcp::McpTools,
 ) -> HostRuntime {
     let mut tools = arabica_runner::tool_definitions(&tool_policy);
+    tools.extend(arabica_runtime::plan_tool_definitions());
     tools.push(memory_search_definition());
     tools.push(memory_read_definition());
     tools.extend_from_slice(mcp.definitions());
+    let context_identities = mcp.context_identities();
     let runner = HostRunner {
         local: LocalRunner::with_policy(runner_root, tool_policy),
         mcp,
@@ -397,80 +414,55 @@ pub fn build_host_runtime_with_mcp(
     runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
     runtime.set_async_file_backed_gc(true);
     runtime.set_tools(tools);
+    runtime.set_context_identities(context_identities);
     runtime.set_max_model_steps_per_run(MAX_MODEL_STEPS_PER_RUN);
     runtime.set_max_model_steps_without_progress(usize::MAX);
     runtime.set_system_instructions(system_instructions(runner_root));
     runtime
 }
 
+pub fn build_host_runtime_with_blend(
+    model: HostModel,
+    runner_root: &Path,
+    tool_policy: LocalRunnerPolicy,
+    arabica_home: &Path,
+    mcp: crate::mcp::McpTools,
+    blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+) -> Result<HostRuntime, arabica_runtime::RuntimeError> {
+    let mut runtime =
+        build_host_runtime_with_mcp(model, runner_root, tool_policy, arabica_home, mcp);
+    runtime.set_blend_policy(blend_policy)?;
+    let context_policy = crate::config::user_config_context(arabica_home).map_err(|_| {
+        arabica_runtime::RuntimeError::new(
+            arabica_runtime::RuntimeErrorKind::InvalidConfiguration,
+            "invalid context configuration",
+        )
+    })?;
+    runtime.set_context_policy(context_policy)?;
+    let roots = crate::config::user_config_skill_roots(arabica_home).map_err(|_| {
+        arabica_runtime::RuntimeError::new(
+            arabica_runtime::RuntimeErrorKind::InvalidConfiguration,
+            "invalid skill source configuration",
+        )
+    })?;
+    if !roots.is_empty() {
+        let source = crate::skills::LocalSkillSource::new(roots);
+        // Validate before advertising a session; refresh and pin on every run.
+        let _ = arabica_runtime::SkillSource::load(&source)?;
+        runtime.set_skill_source(Box::new(source));
+    }
+    Ok(runtime)
+}
+
+/// Compose the production persistence adapter; entry-point behavior uses its port.
+pub(crate) fn session_store(home: &Path) -> std::sync::Arc<dyn arabica_session::SessionStore> {
+    std::sync::Arc::new(arabica_adapters::SqliteSessionRepository::new(home))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use arabica_runtime::HistoryProjection;
-
-    fn args(model: Option<&str>, api_type: Option<&str>, base_url: Option<&str>) -> HostConfigArgs {
-        HostConfigArgs {
-            model: model.map(str::to_owned),
-            api_type: api_type.map(str::to_owned),
-            base_url: base_url.map(str::to_owned),
-        }
-    }
-
-    /// A fixed environment for tests: no real process state is touched, so
-    /// these run with cargo test's default parallelism like anything else.
-    fn env_map(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
-        let vars: std::collections::HashMap<String, String> = vars
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect();
-        move |name: &str| vars.get(name).cloned()
-    }
-
-    #[test]
-    fn a_cli_flag_overrides_its_matching_environment_variable() {
-        let lookup = env_map(&[
-            (env::API_KEY, "test-key"),
-            (env::BASE_URL, "https://env.example/v1"),
-            (env::MODEL, "env-model"),
-        ]);
-        let config = resolve_provider_config(&args(Some("flag-model"), None, None), lookup)
-            .expect("config resolves");
-        assert_eq!(config.model, "flag-model");
-        assert_eq!(config.base_url, "https://env.example/v1");
-        assert_eq!(config.api_type, ApiType::OpenAiChatCompletions);
-    }
-
-    #[test]
-    fn a_missing_flag_falls_back_to_the_environment_variable() {
-        let lookup = env_map(&[
-            (env::API_KEY, "test-key"),
-            (env::BASE_URL, "u"),
-            (env::MODEL, "env-model"),
-        ]);
-        let config = resolve_provider_config(&args(None, None, None), lookup)
-            .expect("config resolves from the environment alone");
-        assert_eq!(config.model, "env-model");
-    }
-
-    #[test]
-    fn a_missing_required_setting_names_both_the_variable_and_the_flag() {
-        let lookup = env_map(&[(env::API_KEY, "test-key"), (env::MODEL, "m")]);
-        let error = resolve_provider_config(&args(None, None, None), lookup)
-            .expect_err("base_url is missing");
-        let message = error.to_string();
-        assert!(message.contains("OPENAI__BASE_URL"), "{message}");
-        assert!(message.contains("--base-url"), "{message}");
-    }
-
-    #[test]
-    fn the_api_key_has_no_flag_and_must_come_from_the_environment() {
-        let lookup = env_map(&[(env::BASE_URL, "u"), (env::MODEL, "m")]);
-        let error = resolve_provider_config(&args(None, None, None), lookup)
-            .expect_err("the key is missing");
-        assert!(error.to_string().contains("OPENAI__API_KEY"));
-        // HostConfigArgs simply has no api_key field: the absence of a flag
-        // is the safeguard, not a runtime check to bypass.
-    }
 
     #[tokio::test]
     async fn host_model_dispatches_to_the_scripted_variant() {
@@ -535,8 +527,8 @@ mod tests {
         assert!(runtime.system_instructions()[0].contains(&root.display().to_string()));
         assert!(runtime.system_instructions()[0].contains(std::env::consts::OS));
 
-        // The CLI advertises recovery tools but does not expose the
-        // unrelated runtime_complete control tool.
+        // The CLI advertises the coding and planning tools but does not
+        // expose the unrelated runtime_complete control tool.
         let names: Vec<&str> = runtime
             .tools()
             .iter()
@@ -552,6 +544,8 @@ mod tests {
                 "write_file",
                 "edit_files",
                 "delete_file",
+                "create_plan",
+                "update_plan",
                 "memory_search",
                 "memory_read",
             ]

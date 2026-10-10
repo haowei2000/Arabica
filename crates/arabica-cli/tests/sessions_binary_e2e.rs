@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use arabica_adapters::{FileSessionStore, NewSession};
+use arabica_adapters::{NewSession, SqliteSessionStore};
 use arabica_protocol::SessionId;
 
 /// Creates the directory and returns its canonicalized path. Canonicalizing
@@ -34,7 +34,7 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn seed_session(arabica_home: &Path, workspace_root: &Path, session_id: &str) {
     let workspace_id = arabica_cli::host::workspace_id_for(workspace_root);
-    FileSessionStore::create(
+    SqliteSessionStore::create(
         arabica_home,
         NewSession {
             session_id: &SessionId::new(session_id),
@@ -109,4 +109,31 @@ fn sessions_list_scopes_to_the_current_workspace_unless_all_is_passed() {
 
     std::fs::remove_dir_all(&workspace_a).ok();
     std::fs::remove_dir_all(&workspace_b).ok();
+}
+
+#[test]
+fn rename_persists_a_title_across_binary_invocations() {
+    let home = temp_dir("rename-home");
+    let root = temp_dir("rename-root");
+    seed_session(&home, &root, "session-rename");
+    let output = run_sessions(
+        &home,
+        &root,
+        &["rename", "session-rename", "My saved title"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listing = run_sessions(&home, &root, &["list"]);
+    assert!(listing.status.success());
+    assert!(String::from_utf8_lossy(&listing.stdout).contains("My saved title"));
+    let workspace = arabica_cli::host::workspace_id_for(&root);
+    let stored =
+        SqliteSessionStore::read_session(&home, &workspace, &SessionId::new("session-rename"))
+            .unwrap();
+    assert_eq!(stored.header.title.as_deref(), Some("My saved title"));
+    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(home).unwrap();
 }
