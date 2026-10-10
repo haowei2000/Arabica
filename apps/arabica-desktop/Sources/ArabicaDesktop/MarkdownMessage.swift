@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MarkdownBlock: Equatable {
-    enum Kind: Equatable { case paragraph, heading(Int), code, quote, list(String), rule }
+    enum Kind: Equatable { case paragraph, heading(Int), code, quote, list(String), rule, table([[String]]) }
     let kind: Kind
     let text: String
 
@@ -16,13 +16,32 @@ struct MarkdownBlock: Equatable {
                 paragraph.removeAll()
             }
         }
-        for line in source.components(separatedBy: "\n") {
+        let lines = source.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            index += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if code != nil {
                 if trimmed.hasPrefix(fence) {
                     blocks.append(Self(kind: .code, text: code!.joined(separator: "\n")))
                     code = nil
                 } else { code!.append(line) }
+                continue
+            }
+            if index < lines.count, line.contains("|"),
+               let header = tableCells(line), let separator = tableCells(lines[index]),
+               header.count == separator.count,
+               separator.allSatisfy({ $0.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil }) {
+                flush()
+                index += 1
+                var rows = [header]
+                while index < lines.count, lines[index].contains("|"),
+                      let cells = tableCells(lines[index]) {
+                    rows.append(Array((cells + Array(repeating: "", count: header.count)).prefix(header.count)))
+                    index += 1
+                }
+                blocks.append(Self(kind: .table(rows), text: ""))
                 continue
             }
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
@@ -48,6 +67,33 @@ struct MarkdownBlock: Equatable {
         if let code { blocks.append(Self(kind: .code, text: code.joined(separator: "\n"))) }
         return blocks
     }
+
+    private static func tableCells(_ line: String) -> [String]? {
+        var source = line.trimmingCharacters(in: .whitespaces)
+        if source.hasPrefix("|") { source.removeFirst() }
+        if source.hasSuffix("|"), !source.hasSuffix("\\|") { source.removeLast() }
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        var inCode = false
+        for character in source {
+            if escaped {
+                if character != "|" { cell.append("\\") }
+                cell.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "`" {
+                inCode.toggle(); cell.append(character)
+            } else if character == "|", !inCode {
+                cells.append(cell.trimmingCharacters(in: .whitespaces)); cell = ""
+            } else { cell.append(character) }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells.count > 1 ? cells : nil
+    }
+
 }
 
 import AppKit
@@ -84,6 +130,24 @@ struct MarkdownMessage: View {
                             .foregroundStyle(Palette.muted)
                             .frame(minWidth: 16, alignment: .trailing)
                         inline(block.text)
+                    }
+                case .table(let rows):
+                    ScrollView(.horizontal) {
+                        Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                                GridRow {
+                                    ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                        inline(cell)
+                                            .fontWeight(rowIndex == 0 ? .semibold : .regular)
+                                            .frame(minWidth: 100, maxWidth: 280, alignment: .leading)
+                                            .padding(10)
+                                            .background(Color.primary.opacity(rowIndex == 0 ? 0.08 : 0.03))
+                                            .overlay(Rectangle().stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
+                                    }
+                                }
+                            }
+                        }
+                        .padding(1)
                     }
                 case .rule:
                     Divider().overlay(Palette.rule)
