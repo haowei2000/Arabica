@@ -537,6 +537,7 @@ async fn query_evaluation(
             worker_status: None,
             refresh_accepted: None,
             report,
+            policies: Vec::new(),
         }))
     })
     .await

@@ -109,7 +109,7 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the evaluations subcommand");
             2
         } else {
-            arabica_cli::evaluation::run(action)
+            arabica_cli::evaluation::run(action).await
         };
     }
     if let Some(Commands::Sessions { action }) = command {

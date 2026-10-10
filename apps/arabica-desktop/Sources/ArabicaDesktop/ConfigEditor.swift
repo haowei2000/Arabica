@@ -5,6 +5,7 @@ import Foundation
 
 @MainActor
 final class ConfigEditor: ObservableObject {
+    @Published var providerOptions: [String] = []
     @Published var providerName = "primary"
     @Published var apiType = "open_ai_responses"
     @Published var baseURL = "https://api.openai.com/v1"
@@ -12,33 +13,46 @@ final class ConfigEditor: ObservableObject {
     @Published var apiKey = ""
     @Published var hasSavedKey = false
     @Published var clearSavedKey = false
+    @Published var modelOptions: [String] = []
+    @Published var modelProviders: [String: String] = [:]
     @Published var modelAlias = "default"
+    @Published var modelProvider = "primary"
     @Published var modelID = ""
     @Published var defaultPolicy = ""
+    @Published var policyDefaultModel = "default"
     @Published var policyOptions: [String] = []
-    @Published var policyStatus = ""
+    @Published var configuredPolicies: [ConfiguredPolicyItem] = []
     @Published var thinking = ""
     @Published var status = ""
-    @Published var isUnsupported = false
+    @Published var canAddEntries = false
     @Published var isSaving = false
+    @Published var mcpServers: [MCPServerItem] = []
+    @Published var skillRoots: [SkillRootItem] = []
+    @Published var discoveredSkills: [DiscoveredSkillItem] = []
+
+    var modelsForSelectedProvider: [String] {
+        modelOptions.filter { modelProviders[$0] == providerName }
+    }
 
     private var original = ""
     private var originalKey: String?
-    private var providerSection = "provider"
+    private var providerSection = "providers.primary"
     private var modelSection: String?
-    private var configURL: URL {
+    var configURL: URL {
         let home = ProcessInfo.processInfo.environment["ARABICA_HOME"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".arabica", isDirectory: true)
         return home.appendingPathComponent("config.toml")
     }
 
+    var arabicaHomeURL: URL {
+        configURL.deletingLastPathComponent()
+    }
+
     init() { reload() }
 
     func reload() {
         status = ""
-        isUnsupported = false
-        policyStatus = ""
         originalKey = nil
         hasSavedKey = false
         clearSavedKey = false
@@ -55,59 +69,170 @@ final class ConfigEditor: ObservableObject {
 
         let document = ConfigDocument(original)
         let blend = document.values(in: "blend")
+        let providerSections = document.sectionNames.filter { $0.hasPrefix("providers.") }.sorted()
+        providerOptions = providerSections.map { String($0.dropFirst("providers.".count)) }
+        let modelSections = document.sectionNames.filter { $0.hasPrefix("models.") }.sorted()
+        modelOptions = modelSections.map { String($0.dropFirst("models.".count)) }
+        modelProviders = modelSections.reduce(into: [:]) { providers, section in
+            guard let provider = document.values(in: section)["provider"] else { return }
+            providers[String(section.dropFirst("models.".count))] = provider
+        }
         policyOptions = document.sectionNames
             .filter { $0.hasPrefix("blend.policies.") }
             .map { String($0.dropFirst("blend.policies.".count)) }
-        defaultPolicy = blend["default_policy"] ?? policyOptions.first ?? ""
-        let providers = document.sectionNames.filter { $0.hasPrefix("providers.") }
-        let models = document.sectionNames.filter { $0.hasPrefix("models.") }
-        if providers.count > 1 || models.count > 1 || document.sectionNames.contains(where: { $0.hasPrefix("provider.") }) {
-            isUnsupported = true
-            status = "This form edits one default provider and model. Your file has multiple providers or model aliases; use the advanced config file instead."
-            return
-        }
-
-        if let current = providers.first {
-            providerSection = current
-            providerName = String(current.dropFirst("providers.".count))
-        } else if document.sectionNames.contains("provider") {
+            .sorted()
+        let configuredPolicy = blend["default_policy"]
+        defaultPolicy = configuredPolicy.flatMap { policyOptions.contains($0) ? $0 : nil } ?? policyOptions.first ?? ""
+        if providerOptions.isEmpty, document.sectionNames.contains("provider") {
+            providerOptions = ["primary"]
             providerSection = "provider"
             providerName = "primary"
         } else {
-            providerSection = "providers.primary"
-            providerName = "primary"
-        }
-        modelSection = models.first
-        if !policyOptions.isEmpty, !defaultPolicy.isEmpty {
-            let policy = document.values(in: "blend.policies.\(defaultPolicy)")
-            let alias = policy["default_model"]
-            if let alias, document.sectionNames.contains("models.\(alias)") {
-                modelSection = "models.\(alias)"
+            if !providerOptions.contains(providerName) {
+                providerName = providerOptions.first ?? "primary"
             }
-        } else if let alias = blend["default_model"], document.sectionNames.contains("models.\(alias)") {
-            modelSection = "models.\(alias)"
+            providerSection = "providers.\(providerName)"
         }
-        modelAlias = modelSection.map { String($0.dropFirst("models.".count)) } ?? "default"
-
-        let provider = document.values(in: providerSection)
-        apiType = provider["api_type"] ?? apiType
-        baseURL = provider["base_url"] ?? baseURL
-        apiKeyEnv = provider["api_key_env"] ?? "ARABICA_PROVIDER_\(providerName.uppercased().replacingOccurrences(of: "[^A-Z0-9]", with: "_", options: .regularExpression))_API_KEY"
-        originalKey = provider["api_key"]
-        hasSavedKey = originalKey != nil
-        thinking = provider["thinking"] ?? provider["reasoning_effort"] ?? ""
-
-        if let modelSection {
-            let model = document.values(in: modelSection)
-            modelID = model["model_id"] ?? ""
-            if providerSection.hasPrefix("providers."), let configuredProvider = model["provider"],
-               configuredProvider != providerName {
-                isUnsupported = true
-                status = "The default model points to a different provider. Edit the advanced config file to avoid changing its routing."
-            }
+        let initialPolicy = policyOptions.contains(defaultPolicy) ? defaultPolicy : policyOptions.first
+        if let initialPolicy {
+            policyDefaultModel = document.values(in: "blend.policies.\(initialPolicy)")["default_model"] ?? ""
         } else {
-            modelID = provider["model"] ?? ""
+            policyDefaultModel = blend["default_model"] ?? ""
         }
+        if modelOptions.isEmpty { modelOptions = ["default"] }
+        if policyDefaultModel.isEmpty { policyDefaultModel = modelOptions.first ?? "default" }
+        if !modelOptions.contains(modelAlias) {
+            modelAlias = modelOptions.contains(policyDefaultModel) ? policyDefaultModel : modelOptions.first ?? "default"
+        }
+        modelSection = modelOptions.contains(modelAlias) ? "models.\(modelAlias)" : nil
+        let model = modelSection.map { document.values(in: $0) } ?? [:]
+        modelProvider = model["provider"] ?? providerName
+        if providerOptions.contains(modelProvider) {
+            providerName = modelProvider
+            providerSection = "providers.\(providerName)"
+        }
+        loadProvider(from: document)
+        modelID = model["model_id"] ?? (providerSection == "provider" ? document.values(in: providerSection)["model"] : nil) ?? ""
+        canAddEntries = !providerSections.isEmpty && !modelSections.isEmpty
+
+        // Policy items parsing
+        configuredPolicies = document.configuredPolicies()
+
+        // MCP and Skills discovery
+        mcpServers = document.mcpServers()
+        let roots = document.skillRoots(relativeTo: arabicaHomeURL)
+        skillRoots = roots
+        discoveredSkills = scanDiscoveredSkills(in: roots)
+    }
+
+    func selectProvider(_ name: String) {
+        guard name != providerName else { return }
+        guard saveBeforeSwitch() else { return }
+        providerName = name
+        providerSection = "providers.\(name)"
+        loadProvider(from: ConfigDocument(original))
+        if let alias = modelOptions.first(where: { modelProviders[$0] == name }) {
+            modelAlias = alias
+            modelSection = "models.\(alias)"
+            modelID = ConfigDocument(original).values(in: modelSection!)["model_id"] ?? ""
+        } else {
+            modelProvider = name
+            modelAlias = ""
+            modelSection = nil
+            modelID = ""
+        }
+        status = ""
+    }
+
+    func selectModel(_ alias: String) {
+        guard alias != modelAlias else { return }
+        guard saveBeforeSwitch() else { return }
+        modelAlias = alias
+        modelSection = "models.\(alias)"
+        let model = ConfigDocument(original).values(in: modelSection!)
+        modelProvider = model["provider"] ?? providerName
+        modelID = model["model_id"] ?? ""
+        if providerOptions.contains(modelProvider) {
+            providerName = modelProvider
+            providerSection = "providers.\(providerName)"
+            loadProvider(from: ConfigDocument(original))
+        }
+        status = ""
+    }
+
+    func selectPolicy(_ policy: String) {
+        guard policy != defaultPolicy else { return }
+        defaultPolicy = policy
+        policyDefaultModel = ConfigDocument(original).values(in: "blend.policies.\(policy)")["default_model"] ?? modelOptions.first ?? ""
+    }
+
+    func addProvider() {
+        guard canAddEntries, saveBeforeSwitch() else {
+            if !canAddEntries { status = "Save one provider and model before adding another entry." }
+            return
+        }
+        let name = nextName(prefix: "provider", options: providerOptions)
+        providerOptions.append(name)
+        providerName = name
+        providerSection = "providers.\(name)"
+        modelProvider = name
+        let alias = nextName(prefix: "model", options: modelOptions)
+        modelOptions.append(alias)
+        modelProviders[alias] = name
+        modelAlias = alias
+        modelSection = nil
+        modelID = ""
+        apiType = "open_ai_responses"
+        baseURL = "https://api.openai.com/v1"
+        apiKeyEnv = Self.defaultAPIKeyEnvironmentVariable(providerName: name)
+        apiKey = ""
+        originalKey = nil
+        hasSavedKey = false
+        clearSavedKey = false
+        thinking = ""
+        status = "New [providers.\(name)] and [models.\(alias)] will be written when you save."
+    }
+
+    func addModel() {
+        guard canAddEntries, (modelAlias.isEmpty || saveBeforeSwitch()) else {
+            if !canAddEntries { status = "Save one provider and model before adding another entry." }
+            return
+        }
+        let alias = nextName(prefix: "model", options: modelOptions)
+        modelOptions.append(alias)
+        modelProviders[alias] = providerName
+        modelAlias = alias
+        modelSection = nil
+        modelProvider = providerName
+        modelID = ""
+        status = "New [models.\(alias)] will be written when you save."
+    }
+
+    private func saveBeforeSwitch() -> Bool {
+        save()
+        return status.hasPrefix("Saved to ")
+    }
+
+    private func loadProvider(from document: ConfigDocument) {
+        let values = document.values(in: providerSection)
+        apiType = values["api_type"] ?? "open_ai_responses"
+        baseURL = values["base_url"] ?? "https://api.openai.com/v1"
+        apiKeyEnv = values["api_key_env"] ?? Self.defaultAPIKeyEnvironmentVariable(providerName: providerName)
+        originalKey = values["api_key"]
+        hasSavedKey = originalKey != nil
+        apiKey = ""
+        clearSavedKey = false
+        thinking = values["thinking"] ?? values["reasoning_effort"] ?? ""
+    }
+
+    private static func defaultAPIKeyEnvironmentVariable(providerName: String) -> String {
+        "ARABICA_PROVIDER_\(providerName.uppercased().replacingOccurrences(of: "[^A-Z0-9]", with: "_", options: .regularExpression))_API_KEY"
+    }
+
+    private func nextName(prefix: String, options: [String]) -> String {
+        var suffix = 2
+        while options.contains("\(prefix)\(suffix)") { suffix += 1 }
+        return "\(prefix)\(suffix)"
     }
 
     func openConfigFile() {
@@ -123,17 +248,24 @@ final class ConfigEditor: ObservableObject {
     }
 
     func save() {
-        guard !isSaving, !isUnsupported else { return }
+        guard !isSaving else { return }
         let cleanProvider = providerName.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanAlias = modelAlias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanModelProvider = modelProvider.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanModel = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPolicyDefaultModel = policyDefaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
         if let thinkingError = Self.thinkingValidationError(apiType: apiType, thinking: thinking) {
             status = thinkingError
             return
         }
-        guard !cleanProvider.isEmpty, !cleanAlias.isEmpty, !cleanModel.isEmpty,
+        guard !cleanProvider.isEmpty, !cleanAlias.isEmpty, !cleanModelProvider.isEmpty, !cleanModel.isEmpty,
               !apiType.isEmpty, let url = URL(string: baseURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             status = "Enter a provider name, model alias, model ID, API type, and a valid HTTP(S) base URL."
+            return
+        }
+        let defaultModel = cleanPolicyDefaultModel.isEmpty ? cleanAlias : cleanPolicyDefaultModel
+        guard modelOptions.contains(defaultModel) || defaultModel == cleanAlias else {
+            status = "The blend default_model must reference a model alias in [models.<alias>]."
             return
         }
         guard !apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -159,43 +291,16 @@ final class ConfigEditor: ObservableObject {
                 modelValues: ["provider": ConfigDocument.quote(cleanProvider), "model_id": ConfigDocument.quote(cleanModel)],
                 thinking: thinking.trimmingCharacters(in: .whitespacesAndNewlines),
                 defaultPolicy: defaultPolicy,
+                defaultModelAlias: defaultModel,
                 newAPIKey: apiKey.isEmpty ? nil : apiKey,
                 removeAPIKey: clearSavedKey
             )
             try writeSecurely(result, to: configURL)
             original = result
-            providerSection = "providers.\(cleanProvider)"
-            modelSection = "models.\(cleanAlias)"
-            providerName = cleanProvider
-            modelAlias = cleanAlias
-            if let key = apiKey.isEmpty ? (clearSavedKey ? nil : originalKey) : apiKey {
-                originalKey = key
-            } else {
-                originalKey = nil
-            }
-            apiKey = ""
-            hasSavedKey = originalKey != nil
-            clearSavedKey = false
-            isUnsupported = false
+            reload()
             status = "Saved to \(configURL.path). Reopen the workspace to reconnect Arabica."
         } catch {
             status = "Could not save config: \(error.localizedDescription)"
-        }
-    }
-
-    func saveDefaultPolicy() {
-        guard policyOptions.contains(defaultPolicy) else {
-            policyStatus = "Choose a policy reported in this configuration."
-            return
-        }
-        do {
-            let current = try String(contentsOf: configURL, encoding: .utf8)
-            let result = try ConfigDocument(current).settingDefaultPolicy(defaultPolicy)
-            try writeSecurely(result, to: configURL)
-            original = result
-            policyStatus = "Default policy saved. New conversations will start with \(defaultPolicy)."
-        } catch {
-            policyStatus = "Could not save default policy: \(error.localizedDescription)"
         }
     }
 
@@ -273,6 +378,7 @@ struct ConfigDocument {
         modelValues: [String: String],
         thinking: String,
         defaultPolicy: String,
+        defaultModelAlias: String,
         newAPIKey: String?,
         removeAPIKey: Bool
     ) throws -> String {
@@ -307,7 +413,6 @@ struct ConfigDocument {
         }
         for (key, value) in modelValues { result.set(key, value: value, in: newModelSection) }
         if result.range(of: "blend") == nil { result.appendSection("blend") }
-        let alias = String(newModelSection.dropFirst("models.".count))
         let namedPolicies = result.sectionNames.filter { $0.hasPrefix("blend.policies.") }
         if !namedPolicies.isEmpty {
             let policySection = "blend.policies.\(defaultPolicy)"
@@ -315,9 +420,9 @@ struct ConfigDocument {
                 throw EditorError.multipleManagedSections
             }
             result.set("default_policy", value: Self.quote(defaultPolicy), in: "blend")
-            result.set("default_model", value: Self.quote(alias), in: policySection)
+            result.set("default_model", value: Self.quote(defaultModelAlias), in: policySection)
         } else {
-            result.set("default_model", value: Self.quote(alias), in: "blend")
+            result.set("default_model", value: Self.quote(defaultModelAlias), in: "blend")
         }
         return result.lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"
     }
@@ -429,9 +534,264 @@ struct ConfigDocument {
         encoded += "\""
         return encoded
     }
+
+    func mcpServers() -> [MCPServerItem] {
+        var servers: [MCPServerItem] = []
+        var currentLines: [String] = []
+        var inMcp = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "[[mcp]]" {
+                if inMcp {
+                    if let item = Self.parseMcpItem(from: currentLines) {
+                        servers.append(item)
+                    }
+                    currentLines.removeAll()
+                }
+                inMcp = true
+                continue
+            } else if trimmed.hasPrefix("[") && inMcp {
+                if !trimmed.hasPrefix("[mcp.") {
+                    if let item = Self.parseMcpItem(from: currentLines) {
+                        servers.append(item)
+                    }
+                    currentLines.removeAll()
+                    inMcp = false
+                }
+            }
+            if inMcp {
+                currentLines.append(line)
+            }
+        }
+        if inMcp, let item = Self.parseMcpItem(from: currentLines) {
+            servers.append(item)
+        }
+        return servers
+    }
+
+    private static func parseMcpItem(from lines: [String]) -> MCPServerItem? {
+        var name = ""
+        var command: String?
+        var args: [String] = []
+        var url: String?
+        var envKeys: [String] = []
+        var inEnv = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "[mcp.env]" {
+                inEnv = true
+                continue
+            } else if trimmed.hasPrefix("[") {
+                inEnv = false
+            }
+            if inEnv {
+                if let (key, _) = keyValue(line) {
+                    envKeys.append(key)
+                }
+            } else {
+                guard let (key, rawValue) = keyValue(line) else { continue }
+                if key == "name" {
+                    name = decode(rawValue) ?? rawValue
+                } else if key == "command" {
+                    command = decode(rawValue) ?? rawValue
+                } else if key == "url" {
+                    url = decode(rawValue) ?? rawValue
+                } else if key == "args" {
+                    if let decoded = decodeStringArray(rawValue) {
+                        args = decoded
+                    }
+                }
+            }
+        }
+        guard !name.isEmpty else { return nil }
+        return MCPServerItem(
+            name: name,
+            command: command,
+            args: args,
+            url: url,
+            envKeys: envKeys
+        )
+    }
+
+    func skillRoots(relativeTo arabicaHome: URL) -> [SkillRootItem] {
+        guard let range = range(of: "skills") else { return [] }
+        var roots: [SkillRootItem] = []
+        for line in lines[range] {
+            guard let (key, value) = Self.keyValue(line), key == "roots" else { continue }
+            guard let paths = Self.decodeStringArray(value) else { continue }
+            for pathStr in paths {
+                let resolvedURL: URL
+                if pathStr.hasPrefix("/") {
+                    resolvedURL = URL(fileURLWithPath: pathStr, isDirectory: true)
+                } else {
+                    resolvedURL = arabicaHome.appendingPathComponent(pathStr, isDirectory: true)
+                }
+                var isDir: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: resolvedURL.path, isDirectory: &isDir) && isDir.boolValue
+                roots.append(SkillRootItem(rawPath: pathStr, resolvedURL: resolvedURL, exists: exists))
+            }
+        }
+        return roots
+    }
+
+    func configuredPolicies() -> [ConfiguredPolicyItem] {
+        let policySections = sectionNames.filter { $0.hasPrefix("blend.policies.") }
+        return policySections.map { section in
+            let id = String(section.dropFirst("blend.policies.".count))
+            let vals = values(in: section)
+            let version = vals["version"].flatMap { UInt64($0) }
+            let defaultModel = vals["default_model"] ?? ""
+            let afterSuccess = vals["after_tool_success"]
+            let afterError = vals["after_tool_error"]
+            let recoveryModel = vals["recovery_model"]
+            let planningModel = vals["planning_model"]
+            let stallThreshold = vals["recovery_after_no_progress_steps"].flatMap { Int($0) }
+            let dwellSteps = vals["minimum_model_dwell_steps"].flatMap { Int($0) }
+            return ConfiguredPolicyItem(
+                id: id,
+                version: version,
+                defaultModel: defaultModel,
+                afterToolSuccess: afterSuccess,
+                afterToolError: afterError,
+                recoveryModel: recoveryModel,
+                planningModel: planningModel,
+                stallThreshold: stallThreshold,
+                dwellSteps: dwellSteps
+            )
+        }.sorted(by: { $0.id < $1.id })
+    }
+
+    private static func decodeStringArray(_ raw: String) -> [String]? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("["), trimmed.hasSuffix("]") else { return nil }
+        guard let data = trimmed.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            return nil
+        }
+        return json
+    }
+}
+
+struct ConfiguredPolicyItem: Identifiable, Equatable {
+    let id: String
+    let version: UInt64?
+    let defaultModel: String
+    let afterToolSuccess: String?
+    let afterToolError: String?
+    let recoveryModel: String?
+    let planningModel: String?
+    let stallThreshold: Int?
+    let dwellSteps: Int?
 }
 
 private enum EditorError: LocalizedError {
     case multipleManagedSections
     var errorDescription: String? { "The config contains multiple provider/model sections. Open it in a text editor to avoid losing custom routing." }
 }
+
+struct MCPServerItem: Identifiable, Equatable {
+    var id: String { name }
+    let name: String
+    let command: String?
+    let args: [String]
+    let url: String?
+    let envKeys: [String]
+
+    var transportType: String {
+        if command != nil { return "stdio" }
+        if url != nil { return "http" }
+        return "unknown"
+    }
+
+    var summary: String {
+        if let command {
+            return ([command] + args).joined(separator: " ")
+        }
+        if let url {
+            return url
+        }
+        return "unconfigured"
+    }
+}
+
+struct SkillRootItem: Identifiable, Equatable {
+    var id: String { resolvedURL.path }
+    let rawPath: String
+    let resolvedURL: URL
+    let exists: Bool
+}
+
+struct DiscoveredSkillItem: Identifiable, Equatable {
+    var id: String { directoryURL.path }
+    let name: String
+    let description: String
+    let directoryURL: URL
+    let rootPath: String
+}
+
+private func scanDiscoveredSkills(in roots: [SkillRootItem]) -> [DiscoveredSkillItem] {
+    var skills: [DiscoveredSkillItem] = []
+    let fm = FileManager.default
+
+    for root in roots where root.exists {
+        let rootURL = root.resolvedURL
+        let directSkillMD = rootURL.appendingPathComponent("SKILL.md")
+        if fm.fileExists(atPath: directSkillMD.path) {
+            let (name, desc) = parseSkillMetadata(from: directSkillMD, fallbackName: rootURL.lastPathComponent)
+            skills.append(DiscoveredSkillItem(name: name, description: desc, directoryURL: rootURL, rootPath: root.rawPath))
+            continue
+        }
+
+        guard let contents = try? fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            continue
+        }
+        for item in contents {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+                let skillMD = item.appendingPathComponent("SKILL.md")
+                if fm.fileExists(atPath: skillMD.path) {
+                    let (name, desc) = parseSkillMetadata(from: skillMD, fallbackName: item.lastPathComponent)
+                    skills.append(DiscoveredSkillItem(name: name, description: desc, directoryURL: item, rootPath: root.rawPath))
+                }
+            }
+        }
+    }
+    return skills.sorted(by: { $0.name < $1.name })
+}
+
+private func parseSkillMetadata(from url: URL, fallbackName: String) -> (name: String, description: String) {
+    guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+        return (fallbackName, "")
+    }
+    var name = fallbackName
+    var description = ""
+    let lines = content.components(separatedBy: .newlines)
+    var inFrontmatter = false
+    var frontmatterPassed = false
+
+    for line in lines {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed == "---" {
+            if inFrontmatter {
+                frontmatterPassed = true
+                break
+            } else if !frontmatterPassed {
+                inFrontmatter = true
+                continue
+            }
+        }
+        if inFrontmatter {
+            if trimmed.hasPrefix("name:") {
+                let val = trimmed.dropFirst("name:".count).trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty { name = val }
+            } else if trimmed.hasPrefix("description:") {
+                let val = trimmed.dropFirst("description:".count).trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty { description = val }
+            }
+        }
+    }
+    return (name, description)
+}
+

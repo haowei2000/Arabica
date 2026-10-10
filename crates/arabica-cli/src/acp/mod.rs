@@ -837,6 +837,16 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     } else if !models.contains(&provider_config.model) {
         models.insert(0, provider_config.model.clone());
     }
+    let mut blend_policies = blend_policies;
+    if let Ok(records) = arabica_adapters::SqliteEvaluationStore::read_policy_versions(
+        &arabica_home.join("evaluation.sqlite3"),
+        None,
+    ) {
+        for record in records {
+            let key = format!("{}-v{}", record.policy_id, record.version);
+            blend_policies.entry(key).or_insert(record.policy);
+        }
+    }
     let settings = AcpProviderSettings {
         initial: provider_config.clone(),
         models,
