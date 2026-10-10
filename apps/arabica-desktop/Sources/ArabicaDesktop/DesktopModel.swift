@@ -29,7 +29,7 @@ struct ProjectGroup: Identifiable {
 }
 
 struct PermissionPrompt: Identifiable {
-    let id: Int
+    let id: ACPRequestID
     let title: String
     let detail: String
     let options: [(id: String, name: String)]
@@ -420,14 +420,14 @@ final class DesktopModel: ObservableObject {
         if !permissionQueue.isEmpty { self.permission = permissionQueue.removeFirst() }
     }
 
-    private func handleRequest(_ id: Int, method: String, params: [String: Any]) {
+    private func handleRequest(_ id: ACPRequestID, method: String, params: [String: Any]) {
         if method == "session/request_permission" {
             let tool = params["toolCall"] as? [String: Any] ?? [:]
-            let title = tool["title"] as? String ?? "Run a tool"
-            let detail = (tool["rawInput"] as? [String: Any]).flatMap { input in
-                (try? JSONSerialization.data(withJSONObject: input, options: .prettyPrinted))
-                    .flatMap { String(data: $0, encoding: .utf8) }
-            } ?? ""
+            let title = (tool["title"] as? String)
+                ?? (params["title"] as? String)
+                ?? "Run a tool"
+            let rawInput = tool["rawInput"] ?? params["rawInput"]
+            let detail = Self.jsonDetail(rawInput) ?? ""
             let options = (params["options"] as? [[String: Any]] ?? []).compactMap { option -> (id: String, name: String)? in
                 guard let optionID = option["optionId"] as? String,
                       let name = option["name"] as? String else { return nil }

@@ -1504,15 +1504,21 @@ private struct PermissionView: View {
                 Button("Cancel") { resolve(nil) }
                     .font(AppFont.sans(13))
                 Spacer()
-                ForEach(prompt.options, id: \.id) { option in
-                    if option.id == "allow_once" {
-                        Button(option.name) { resolve(option.id) }
-                            .buttonStyle(.borderedProminent)
-                            .font(AppFont.sans(13))
-                    } else {
-                        Button(option.name) { resolve(option.id) }
-                            .buttonStyle(.bordered)
-                            .font(AppFont.sans(13))
+                if prompt.options.isEmpty {
+                    Button("Allow") { resolve("allow_once") }
+                        .buttonStyle(.borderedProminent)
+                        .font(AppFont.sans(13))
+                } else {
+                    ForEach(prompt.options, id: \.id) { option in
+                        if option.id == "allow_once" {
+                            Button(option.name) { resolve(option.id) }
+                                .buttonStyle(.borderedProminent)
+                                .font(AppFont.sans(13))
+                        } else {
+                            Button(option.name) { resolve(option.id) }
+                                .buttonStyle(.bordered)
+                                .font(AppFont.sans(13))
+                        }
                     }
                 }
             }
