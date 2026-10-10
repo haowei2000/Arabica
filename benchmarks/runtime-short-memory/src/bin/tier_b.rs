@@ -28,6 +28,7 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn Error>> {
     let mut fixture = false;
     let mut experiment_config = None;
+    let mut env_file = None;
     let mut compare = false;
     let mut strategies = None;
     let mut suite_id = "tier-b-write-file".to_owned();
@@ -57,6 +58,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 experiment_config = Some(serde_json::from_slice::<ExperimentConfig>(
                     &std::fs::read(path)?,
                 )?);
+            }
+            "--env-file" => {
+                env_file = Some(PathBuf::from(value(&arguments, &mut index, argument)?));
             }
             "--fixture" => fixture = true,
             "--compare" => compare = true,
@@ -109,6 +113,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         index += 1;
     }
+    let connection = ExperimentConnection::load(env_file.as_deref())?;
     if repetitions == 0 {
         return Err("--repetitions must be greater than zero".into());
     }
@@ -171,13 +176,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
             )
             .await?
         } else {
-            let api_key = secret_env(["LONGCAT_API_KEY", "OPENAI_API_KEY", "OPENAI__API_KEY"])?;
-            let model = model
-                .or_else(|| public_env(["OPENAI_MODEL", "OPENAI__MODEL"]))
-                .ok_or("OpenAI model is required via --model, OPENAI_MODEL, or OPENAI__MODEL")?;
-            let base_url = base_url
-                .or_else(|| public_env(["OPENAI_BASE_URL", "OPENAI__BASE_URL"]))
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+            let (api_key, model, base_url) =
+                connection.resolve(model, base_url, |name| env::var(name).ok())?;
             run_live_comparison(
                 &suite_id,
                 &runner_root,
@@ -229,13 +229,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
         )
         .await?
     } else {
-        let api_key = secret_env(["LONGCAT_API_KEY", "OPENAI_API_KEY", "OPENAI__API_KEY"])?;
-        let model = model
-            .or_else(|| public_env(["OPENAI_MODEL", "OPENAI__MODEL"]))
-            .ok_or("OpenAI model is required via --model, OPENAI_MODEL, or OPENAI__MODEL")?;
-        let base_url = base_url
-            .or_else(|| public_env(["OPENAI_BASE_URL", "OPENAI__BASE_URL"]))
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+        let (api_key, model, base_url) =
+            connection.resolve(model, base_url, |name| env::var(name).ok())?;
         let provider = ApiModelProvider::new(ApiProviderConfig::new(
             api_type,
             api_key,
@@ -747,21 +742,61 @@ async fn write_report(
     Ok(())
 }
 
-fn secret_env<const N: usize>(names: [&str; N]) -> Result<String, Box<dyn Error>> {
-    names
-        .into_iter()
-        .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
-        .ok_or_else(|| {
-            "API key is required via LONGCAT_API_KEY, OPENAI_API_KEY, or OPENAI__API_KEY"
-                .to_owned()
-                .into()
-        })
+#[derive(Default)]
+struct ExperimentConnection {
+    values: std::collections::BTreeMap<String, String>,
 }
 
-fn public_env<const N: usize>(names: [&str; N]) -> Option<String> {
-    names
-        .into_iter()
-        .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
+impl ExperimentConnection {
+    fn load(path: Option<&std::path::Path>) -> Result<Self, Box<dyn Error>> {
+        let mut connection = Self::default();
+        if let Some(path) = path {
+            let entries =
+                dotenvy::from_path_iter(path).map_err(|_| "cannot read experiment env file")?;
+            for entry in entries {
+                let (name, value) = entry.map_err(|_| "invalid experiment env file syntax")?;
+                if !matches!(
+                    name.as_str(),
+                    "STRUCTURE_EXPERIMENT_API_KEY"
+                        | "STRUCTURE_EXPERIMENT_MODEL"
+                        | "STRUCTURE_EXPERIMENT_BASE_URL"
+                ) {
+                    return Err("experiment env file supports only STRUCTURE_EXPERIMENT_API_KEY, STRUCTURE_EXPERIMENT_MODEL, and STRUCTURE_EXPERIMENT_BASE_URL".into());
+                }
+                if connection.values.insert(name, value).is_some() {
+                    return Err("duplicate setting in experiment env file".into());
+                }
+            }
+        }
+        Ok(connection)
+    }
+
+    fn resolve(
+        &self,
+        model: Option<String>,
+        base_url: Option<String>,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<(String, String, String), Box<dyn Error>> {
+        let setting = |name: &str| {
+            // Explicit file values override the process environment, including empty values.
+            self.values
+                .get(name)
+                .cloned()
+                .or_else(|| lookup(name))
+                .filter(|value| !value.trim().is_empty())
+        };
+        let api_key = setting("STRUCTURE_EXPERIMENT_API_KEY")
+            .ok_or("STRUCTURE_EXPERIMENT_API_KEY is required")?;
+        let model = model
+            .or_else(|| setting("STRUCTURE_EXPERIMENT_MODEL"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("model is required via --model or STRUCTURE_EXPERIMENT_MODEL")?;
+        let base_url = base_url
+            .or_else(|| setting("STRUCTURE_EXPERIMENT_BASE_URL"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("endpoint is required via --base-url or STRUCTURE_EXPERIMENT_BASE_URL")?;
+        Ok((api_key, model, base_url))
+    }
 }
 
 fn value<'a>(
@@ -819,6 +854,7 @@ fn print_help() {
          \n\
          Options:\n\
            --experiment-config <JSON> Explicit sampling, request archive and paired first-turn checks (live compare only)\n\
+           --env-file <PATH>         Explicit experiment connection file (overrides environment)\n\
            --fixture                 Use the deterministic provider; no API call\n\
            --compare                 Run B0, B2, B3, S, PGC, and FBGC through Runtime\n\
            --strategies <CSV>        With --compare, run only this subset (for example B0,FBGC)\n\
@@ -828,8 +864,8 @@ fn print_help() {
            --single-message-tools <N> One user message requiring N exact write_file calls\n\
            --payload-bytes <N>       Pad each write_file content to N bytes (single-message only)\n\
            --api-type <TYPE>         Provider wire API (default: open_ai_chat_completions)\n\
-           --model <MODEL>           Live model; or OPENAI_MODEL / OPENAI__MODEL\n\
-           --base-url <URL>          Live endpoint; or OPENAI_BASE_URL / OPENAI__BASE_URL\n\
+           --model <MODEL>           Live model; or STRUCTURE_EXPERIMENT_MODEL\n\
+           --base-url <URL>          Live endpoint; or STRUCTURE_EXPERIMENT_BASE_URL\n\
            --runner-root <PATH>      Isolated LocalRunner root\n\
            --output <PATH>           JSON artifact path\n\
            --content <TEXT>          Exact expected file content\n\
@@ -839,13 +875,94 @@ fn print_help() {
            --fail-on-task            Exit non-zero if any task fails\n\
            --help                    Show this help\n\
          \n\
-         Live credentials are read only from LONGCAT_API_KEY, OPENAI_API_KEY, or OPENAI__API_KEY."
+         Live credentials use STRUCTURE_EXPERIMENT_API_KEY. No automatic .env loading or OpenAI/LongCat variable fallback."
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_ignores_unrelated_provider_environment() {
+        let connection = ExperimentConnection::default();
+        let result = connection.resolve(None, None, |name| {
+            assert!(name.starts_with("STRUCTURE_EXPERIMENT_"));
+            None
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_file_and_cli_have_explicit_precedence() {
+        let connection = ExperimentConnection {
+            values: std::collections::BTreeMap::from([
+                ("STRUCTURE_EXPERIMENT_API_KEY".into(), "file-key".into()),
+                ("STRUCTURE_EXPERIMENT_MODEL".into(), "file-model".into()),
+                (
+                    "STRUCTURE_EXPERIMENT_BASE_URL".into(),
+                    "https://file.invalid/v1".into(),
+                ),
+            ]),
+        };
+        let result = connection
+            .resolve(Some("cli-model".into()), None, |_| {
+                Some("environment".into())
+            })
+            .unwrap();
+        assert_eq!(
+            result,
+            (
+                "file-key".into(),
+                "cli-model".into(),
+                "https://file.invalid/v1".into()
+            )
+        );
+        let empty = ExperimentConnection {
+            values: std::collections::BTreeMap::from([(
+                "STRUCTURE_EXPERIMENT_API_KEY".into(),
+                String::new(),
+            )]),
+        };
+        assert!(
+            empty
+                .resolve(None, None, |_| Some("environment".into()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn env_file_parsing_redacts_errors_and_does_not_modify_environment() {
+        let path = env::temp_dir().join(format!(
+            "structure-experiment-env-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let before = env::var("STRUCTURE_EXPERIMENT_API_KEY").ok();
+        std::fs::write(&path, "# local connection\nSTRUCTURE_EXPERIMENT_API_KEY='test secret'\nSTRUCTURE_EXPERIMENT_MODEL=example\nSTRUCTURE_EXPERIMENT_BASE_URL=https://example.invalid/v1\n").unwrap();
+        let connection = ExperimentConnection::load(Some(&path)).unwrap();
+        assert_eq!(
+            connection.resolve(None, None, |_| None).unwrap().0,
+            "test secret"
+        );
+        assert_eq!(env::var("STRUCTURE_EXPERIMENT_API_KEY").ok(), before);
+        for content in [
+            "OPENAI_API_KEY=private-value",
+            "STRUCTURE_EXPERIMENT_API_KEY='private-value",
+            "STRUCTURE_EXPERIMENT_API_KEY=a\nSTRUCTURE_EXPERIMENT_API_KEY=private-value",
+        ] {
+            std::fs::write(&path, content).unwrap();
+            let error = ExperimentConnection::load(Some(&path))
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(!error.contains("private-value"));
+        }
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn comparison_maps_only_runtime_executable_policies() {
