@@ -10,6 +10,9 @@ publish = false
 default-run = "structure-short-memory-benchmark"
 
 [dependencies]
+rustix = { workspace = true, features = ["fs"] }
+arabica-cli = { path = "../../crates/arabica-cli" }
+arabica-adapters = { path = "../../crates/arabica-adapters" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -24,3 +27,6 @@ tokio.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+axum.workspace = true

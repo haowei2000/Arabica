@@ -181,6 +181,7 @@ type ModelFactory = dyn Fn() -> Result<HostModel, AcpError> + Send + Sync;
 struct AcpState {
     model_factory: Arc<ModelFactory>,
     tool_policy: LocalRunnerPolicy,
+    permission_policy: arabica_runtime::ToolPermissionPolicy,
     arabica_home: PathBuf,
     session_store: Arc<dyn SessionStore>,
     sessions: Arc<Mutex<HashMap<AcpSessionId, Arc<SessionEntry>>>>,
@@ -196,6 +197,7 @@ impl AcpState {
         Self {
             model_factory,
             tool_policy,
+            permission_policy: permission::default_policy(),
             session_store: crate::host::session_store(&arabica_home),
             arabica_home,
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -205,6 +207,11 @@ impl AcpState {
 
     fn with_provider_settings(mut self, settings: AcpProviderSettings) -> Self {
         self.provider_settings = Some(Arc::new(settings));
+        self
+    }
+
+    fn with_permission_policy(mut self, policy: arabica_runtime::ToolPermissionPolicy) -> Self {
+        self.permission_policy = policy;
         self
     }
 
@@ -822,6 +829,7 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     let aliases = catalog.models.clone();
     let model_configs = catalog.model_configs.clone();
     let blend_policy = catalog.blend_policy.clone();
+    let permission_policy = resolved.permission_policy.clone();
     let mut models = aliases.keys().cloned().collect::<Vec<_>>();
     let initial_selection = blend_policy
         .as_ref()
@@ -859,7 +867,9 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     let model_factory: Arc<ModelFactory> =
         Arc::new(move || model_catalog.build_model().map_err(provider_error));
     serve(
-        AcpState::new(model_factory, tool_policy, arabica_home).with_provider_settings(settings),
+        AcpState::new(model_factory, tool_policy, arabica_home)
+            .with_provider_settings(settings)
+            .with_permission_policy(permission_policy),
         Stdio::new(),
     )
     .await
@@ -1144,7 +1154,7 @@ fn handle_prompt(
         run: RunControl {
             cancellation: Some(cancellation),
             permissions: Some(ToolPermissionGate {
-                policy: permission::default_policy(),
+                policy: state.permission_policy.clone(),
                 approver: Some(permission_tx),
             }),
         },

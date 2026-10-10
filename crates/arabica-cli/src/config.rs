@@ -10,7 +10,10 @@ use agent_client_protocol::schema::v1::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerStdio,
 };
 use arabica_provider::{ApiProviderConfig, ApiType};
-use arabica_runtime::{BlendRoutingPolicy, BlendToolRoute};
+use arabica_runtime::{
+    BlendRoutingPolicy, BlendToolRoute, ToolArgumentPermissionRule, ToolPermissionPolicy,
+    ToolPermissionRule,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::host::{HostConfigArgs, workspace_id_for};
@@ -32,6 +35,27 @@ struct UserConfig {
     skills: UserSkills,
     #[serde(default)]
     evaluation: Option<toml::Value>,
+    #[serde(default)]
+    permissions: Option<UserPermissions>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserPermissions {
+    default: Option<String>,
+    #[serde(default)]
+    tools: BTreeMap<String, String>,
+    #[serde(default)]
+    rules: Vec<UserPermissionRule>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserPermissionRule {
+    tool: String,
+    parameter: String,
+    pattern: String,
+    action: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -137,6 +161,7 @@ pub struct ResolvedCliConfig {
     pub model_providers: BTreeMap<String, String>,
     /// Resolved provider configuration for each model alias.
     pub model_configs: BTreeMap<String, ApiProviderConfig>,
+    pub permission_policy: ToolPermissionPolicy,
 }
 
 impl ResolvedCliConfig {
@@ -461,6 +486,7 @@ pub fn resolve_cli_runtime_config(
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<ResolvedCliConfig, Box<dyn std::error::Error>> {
     let user = read_user_config(home)?;
+    let permission_policy = resolve_permission_policy(user.permissions.as_ref())?;
     let workspace: WorkspaceSettings = read_toml(&workspace_config_path(home, cwd))?;
     if user.models.is_empty() && user.blend.is_some() {
         return Err("[blend] requires at least one [models.<alias>] entry".into());
@@ -727,7 +753,74 @@ pub fn resolve_cli_runtime_config(
             .map(|(alias, model)| (alias.clone(), model.provider.clone()))
             .collect(),
         model_configs,
+        permission_policy,
     })
+}
+
+fn resolve_permission_policy(
+    configured: Option<&UserPermissions>,
+) -> Result<ToolPermissionPolicy, String> {
+    let mut policy = ToolPermissionPolicy {
+        default: ToolPermissionRule::Ask,
+        by_tool: [
+            "read_file",
+            "list_dir",
+            "grep",
+            "find_files",
+            "memory_search",
+            "memory_read",
+        ]
+        .into_iter()
+        .map(|tool| (tool.to_owned(), ToolPermissionRule::Allow))
+        .collect(),
+        argument_rules: Vec::new(),
+    };
+    let Some(configured) = configured else {
+        return Ok(policy);
+    };
+    if let Some(rule) = &configured.default {
+        // An explicit default governs every tool unless a named override is
+        // present; retain the built-in read-only exceptions only when the
+        // user leaves the default untouched.
+        policy.by_tool.clear();
+        policy.default = parse_permission_rule(rule, "permissions.default")?;
+    }
+    for (tool, rule) in &configured.tools {
+        if tool.trim().is_empty() {
+            return Err("[permissions.tools] tool names must not be empty".to_owned());
+        }
+        policy.by_tool.insert(
+            tool.clone(),
+            parse_permission_rule(rule, &format!("permissions.tools.{tool}"))?,
+        );
+    }
+    for (index, configured_rule) in configured.rules.iter().enumerate() {
+        let field = format!("permissions.rules[{index}]");
+        if configured_rule.tool.trim().is_empty() {
+            return Err(format!("{field}.tool must not be empty"));
+        }
+        if configured_rule.parameter.trim().is_empty() {
+            return Err(format!("{field}.parameter must not be empty"));
+        }
+        regex::Regex::new(&configured_rule.pattern)
+            .map_err(|error| format!("{field}.pattern is not a valid regex: {error}"))?;
+        policy.argument_rules.push(ToolArgumentPermissionRule {
+            tool: configured_rule.tool.clone(),
+            parameter: configured_rule.parameter.clone(),
+            pattern: configured_rule.pattern.clone(),
+            rule: parse_permission_rule(&configured_rule.action, &format!("{field}.action"))?,
+        });
+    }
+    Ok(policy)
+}
+
+fn parse_permission_rule(value: &str, field: &str) -> Result<ToolPermissionRule, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "allow" => Ok(ToolPermissionRule::Allow),
+        "ask" => Ok(ToolPermissionRule::Ask),
+        "deny" => Ok(ToolPermissionRule::Deny),
+        _ => Err(format!("{field} must be one of: allow, ask, deny")),
+    }
 }
 
 fn validate_blend_policy(
@@ -766,10 +859,13 @@ fn validate_blend_policy(
                 policy.policy_id
             ));
         }
-        if let arabica_runtime::BlendToolMatcher::RegexName(pattern) = &route.matcher {
+        if let arabica_runtime::BlendToolMatcher::RegexName(pattern)
+        | arabica_runtime::BlendToolMatcher::EventTraceRegex(pattern)
+        | arabica_runtime::BlendToolMatcher::EventTraceV1Regex(pattern) = &route.matcher
+        {
             regex::Regex::new(pattern).map_err(|error| {
                 format!(
-                    "Blend policy {:?} has invalid tool route regex {:?}: {error}",
+                    "Blend policy {:?} has invalid route regex {:?}: {error}",
                     policy.policy_id, pattern
                 )
             })?;

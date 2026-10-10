@@ -187,6 +187,7 @@ pub(crate) fn policy() -> ToolPermissionPolicy {
     ToolPermissionPolicy {
         default: ToolPermissionRule::Ask,
         by_tool,
+        argument_rules: Vec::new(),
     }
 }
 

@@ -51,7 +51,10 @@ final class DesktopModel: ObservableObject {
     @Published var items: [ChatItem] = []
     @Published var draft = ""
     @Published var attachedFiles: [URL] = []
-    @Published var isRunning = false
+    @Published private var activeRuns: [String: UUID] = [:]
+    var isRunning: Bool {
+        selectedSessionID.map { activeRuns[$0] != nil } ?? false
+    }
     @Published var isConnecting = false
     @Published var isConnected = false
     @Published var errorText: String?
@@ -72,7 +75,7 @@ final class DesktopModel: ObservableObject {
     private var sessionControlCache: [String: SessionControlState] = [:]
     private var permissionQueue: [PermissionPrompt] = []
 
-    init() {
+    init(restoreWorkspace: Bool = true) {
         client.onNotification = { [weak self] method, params in
             self?.handleNotification(method, params: params)
         }
@@ -82,13 +85,13 @@ final class DesktopModel: ObservableObject {
         client.onExit = { [weak self] in
             self?.evaluation.reset()
             self?.services.reset()
-            self?.isRunning = false
+            self?.activeRuns = [:]
             if self?.isConnected == true, self?.isConnecting != true {
                 self?.errorText = "Arabica stopped. Reopen the workspace to reconnect."
             }
             self?.isConnected = false
         }
-        if let path = UserDefaults.standard.string(forKey: "lastWorkspace"),
+        if restoreWorkspace, let path = UserDefaults.standard.string(forKey: "lastWorkspace"),
            FileManager.default.fileExists(atPath: path) {
             Task { await openWorkspace(URL(fileURLWithPath: path)) }
         }
@@ -122,6 +125,7 @@ final class DesktopModel: ObservableObject {
         evaluation.reset()
         client.stop()
         services.reset()
+        activeRuns = [:]
         workspace = url
         sessions = []
         selectedSessionID = nil
@@ -246,7 +250,11 @@ final class DesktopModel: ObservableObject {
             }
             let newSession = DesktopSession(id: id, cwd: targetCwd, title: "New conversation")
             sessions.insert(newSession, at: 0)
+            if let previous = loadedSessionID { itemCache[previous] = items }
             selectedSessionID = id
+            plan = []
+            usage = [:]
+            availableCommands = []
             loadedSessionID = id
             openSessionIDs.insert(id)
             items = []
@@ -259,10 +267,12 @@ final class DesktopModel: ObservableObject {
     func selectSession(_ id: String) async {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
         if id == loadedSessionID { return }
-        guard !isRunning else { return }
         if let previous = loadedSessionID { itemCache[previous] = items }
         evaluation.select(nil)
         selectedSessionID = id
+        plan = []
+        usage = [:]
+        availableCommands = []
         items = itemCache[id] ?? []
         errorText = nil
         if workspace?.path != session.cwd {
@@ -293,7 +303,7 @@ final class DesktopModel: ObservableObject {
     }
 
     func closeSession(_ id: String) async {
-        guard !isRunning else { return }
+        guard activeRuns[id] == nil else { return }
         do {
             _ = try await client.request("session/close", params: ["sessionId": id])
             openSessionIDs.remove(id)
@@ -318,9 +328,10 @@ final class DesktopModel: ObservableObject {
         draft = ""
         attachedFiles = []
         errorText = nil
-        isRunning = true
+        let runID = beginRun(for: id)
         items.append(ChatItem(kind: .user, text: ([content] + files.map { "@\($0.lastPathComponent)" })
             .filter { !$0.isEmpty }.joined(separator: "\n")))
+        itemCache[id] = items
         if let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].title == "New conversation" {
             sessions[index].title = String((content.isEmpty ? files.first?.lastPathComponent ?? "Conversation" : content).prefix(48))
         }
@@ -334,10 +345,24 @@ final class DesktopModel: ObservableObject {
                 "prompt": blocks,
             ])
         } catch {
-            errorText = error.localizedDescription
+            if activeRuns[id] == runID, selectedSessionID == id {
+                errorText = error.localizedDescription
+            }
         }
-        isRunning = false
-        itemCache[id] = items
+        finishRun(for: id, runID: runID)
+    }
+
+    @discardableResult
+    func beginRun(for sessionID: String) -> UUID {
+        let runID = UUID()
+        activeRuns[sessionID] = runID
+        return runID
+    }
+
+    func finishRun(for sessionID: String, runID: UUID) {
+        guard activeRuns[sessionID] == runID else { return }
+        activeRuns.removeValue(forKey: sessionID)
+        if selectedSessionID == sessionID { itemCache[sessionID] = items }
     }
 
     func cancel() {
@@ -393,6 +418,21 @@ final class DesktopModel: ObservableObject {
         )
     }
 
+    var isWaitingForPermission: Bool {
+        guard let sessionID = selectedSessionID else { return false }
+        return ([permission].compactMap { $0 } + permissionQueue).contains {
+            $0.params["sessionId"] as? String == sessionID
+        }
+    }
+
+    func dismissPermission(_ prompt: PermissionPrompt?) {
+        if let prompt {
+            permission = prompt
+        } else {
+            resolvePermission(nil)
+        }
+    }
+
     func resolvePermission(_ optionID: String?) {
         guard let permission else { return }
         if permission.method != "session/request_permission" {
@@ -420,7 +460,7 @@ final class DesktopModel: ObservableObject {
         if !permissionQueue.isEmpty { self.permission = permissionQueue.removeFirst() }
     }
 
-    private func handleRequest(_ id: ACPRequestID, method: String, params: [String: Any]) {
+    func handleRequest(_ id: ACPRequestID, method: String, params: [String: Any]) {
         if method == "session/request_permission" {
             let tool = params["toolCall"] as? [String: Any] ?? [:]
             let title = (tool["title"] as? String)
@@ -457,18 +497,21 @@ final class DesktopModel: ObservableObject {
         }
     }
 
-    private func handleNotification(_ method: String, params: [String: Any]) {
+    func handleNotification(_ method: String, params: [String: Any]) {
         guard method == "session/update",
               let sessionID = params["sessionId"] as? String,
-              sessionID == selectedSessionID,
               let update = params["update"] as? [String: Any],
               let kind = update["sessionUpdate"] as? String else { return }
+        let isSelected = sessionID == selectedSessionID
+        if !isSelected, !["user_message_chunk", "agent_message_chunk", "agent_thought_chunk",
+                          "tool_call", "tool_call_update"].contains(kind) { return }
+        var items = isSelected ? self.items : itemCache[sessionID] ?? []
         switch kind {
         case "user_message_chunk":
             // A live prompt is already shown optimistically; replay needs this.
-            if !isRunning { appendChunk(Self.contentText(update), kind: .user) }
-        case "agent_message_chunk": appendChunk(Self.contentText(update), kind: .assistant)
-        case "agent_thought_chunk": appendChunk(Self.contentText(update), kind: .thought)
+            if activeRuns[sessionID] == nil { Self.appendChunk(Self.contentText(update), kind: .user, to: &items) }
+        case "agent_message_chunk": Self.appendChunk(Self.contentText(update), kind: .assistant, to: &items)
+        case "agent_thought_chunk": Self.appendChunk(Self.contentText(update), kind: .thought, to: &items)
         case "tool_call", "tool_call_update":
             let toolID = update["toolCallId"] as? String
             let fields = (update["fields"] as? [String: Any]) ?? [:]
@@ -519,9 +562,10 @@ final class DesktopModel: ObservableObject {
         default: break
         }
         itemCache[sessionID] = items
+        if isSelected { self.items = items }
     }
 
-    private func appendChunk(_ text: String, kind: ChatItem.Kind) {
+    private static func appendChunk(_ text: String, kind: ChatItem.Kind, to items: inout [ChatItem]) {
         guard !text.isEmpty else { return }
         if let last = items.indices.last, items[last].kind == kind {
             items[last].text += text

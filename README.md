@@ -147,6 +147,26 @@ WAL data is included.
 
 The CLI reads `~/.arabica/config.toml`. Define reusable provider settings under `[providers.<name>]`; each `[models.<alias>]` selects a provider and model ID. Blend routes continue to refer to aliases. Provider API keys come from the configured `api_key_env`, or by default from `ARABICA_PROVIDER_<NAME>_API_KEY` (provider name uppercased with non-alphanumeric characters replaced by underscores).
 
+ACP tool permissions can be adjusted in the same file. Rules are `allow`, `ask`, or `deny`; tool-specific rules override `default`. Without this section, read-only tools remain allowed and other tools ask before running.
+
+```toml
+[permissions]
+default = "ask"
+
+[permissions.tools]
+shell = "deny"
+write_file = "allow"
+edit_files = "ask"
+
+[[permissions.rules]]
+tool = "shell"
+parameter = "command"
+pattern = "(^|[;&|[:space:]])rm([[:space:]]|$)"
+action = "deny"
+```
+
+Argument rules are checked in order before the per-tool and default rules. `parameter` accepts a dot-separated path into the tool arguments (for example `command` or `options.path`); `*` matches the serialized argument object. `pattern` is a Rust regular expression matched against that parameter's string value (or JSON representation for non-string values).
+
 ```toml
 [providers.openai]
 api_type = "open_ai_responses"
@@ -184,6 +204,11 @@ recovery_model = "strong"
 minimum_model_dwell_steps = 2
 tool_call_capable_models = ["fast", "strong"]
 typed_completion_capable_models = ["fast"]
+
+[[blend.policies.coding.tool_routes]]
+id = "sed-shell-route"
+model = "strong"
+matcher = { type = "event_trace_regex", value = "toolcall\\.shell\\.sed.*toolresult\\.shell\\.success" }
 
 [blend.policies.precise]
 version = 1
@@ -275,3 +300,34 @@ No browser UI, React application, or other frontend is currently maintained.
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
 [NOTICE](NOTICE). Contributions are accepted under the same license unless
 explicitly stated otherwise.
+
+### Versioned event trace routes
+
+Use `event_trace_v1_regex` for newline-delimited canonical event records. Each
+record begins with its path followed by `|key=value` fields. Values and dynamic
+path segments use UTF-8 percent encoding; arbitrary arguments and tool output
+are excluded. Routes inspect the preceding model step in the current run.
+
+```toml
+[[blend.policies.coding.tool_routes]]
+id = "shell-text-tools"
+model = "strong"
+priority = 10
+matcher = { type = "event_trace_v1_regex", value = '(?m)^toolcall\.shell\.(sed|grep|rg)\|' }
+```
+
+For trajectories across records, use `(?ms)` so `.` includes newlines. Shell
+results inherit executable labels through their run and call IDs. Compound or
+expanding shell commands receive no executable label. Existing exact-name,
+regex-name, kind, and legacy trace routes retain their precedence; recovery and
+error handling still take precedence over tool routes. Oversized V1 traces do
+not match. This is a routing signal, not a shell authorization mechanism.
+
+### Run acceptance and policy campaigns
+
+Terminal runs now include per-run timing and immutable evidence in background
+reports. Explicit acceptance specifications provide completion and coverage;
+unspecified tasks remain unverified. The desktop evaluation panel displays these
+results. Use `arabica evaluations runs`, `score`, and `compare`, or run isolated
+real policy trials with the existing benchmark's `policy_campaign` binary.
+See [run evaluation](docs/run-evaluation.md) for formats and examples.

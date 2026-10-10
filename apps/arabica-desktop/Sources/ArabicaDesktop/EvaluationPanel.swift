@@ -42,11 +42,37 @@ struct EvaluationPanel: View {
                             Text("Cached results may be from an earlier run. Refresh acceptance does not mean evaluation is complete.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
+                        if let runs = report.runs, !runs.isEmpty {
+                            Divider()
+                            Text("Run outcomes").font(.subheadline.weight(.semibold))
+                            ForEach(runs.reversed()) { run in
+                                DisclosureGroup {
+                                    LabeledContent("Execution", value: run.snapshot.terminal_status)
+                                    LabeledContent("Acceptance", value: run.acceptance?.verified_success.map { $0 ? "Passed" : "Failed" } ?? "Not verified")
+                                    LabeledContent("Completion of evaluated criteria", value: percent(run.acceptance?.completion_bps))
+                                    LabeledContent("Evaluation coverage", value: percent(run.acceptance?.coverage_bps))
+                                    LabeledContent("Total time", value: elapsed(run.snapshot.timing.wall_ms))
+                                    LabeledContent("Queue", value: elapsed(run.snapshot.timing.queue_ms))
+                                    LabeledContent("Approval wait", value: elapsed(run.snapshot.timing.approval_wait_ms))
+                                    LabeledContent("Active time", value: elapsed(run.snapshot.timing.active_ms))
+                                    LabeledContent("Model call total", value: elapsed(run.snapshot.timing.model_call_ms_total))
+                                    LabeledContent("Runner call total", value: elapsed(run.snapshot.timing.runner_ms_total))
+                                    LabeledContent("Calls with token usage", value: "\(run.snapshot.timing.usage_reported_calls) / \(run.snapshot.timing.model_calls)")
+                                    ForEach(run.acceptance?.results ?? []) { criterion in
+                                        LabeledContent(criterion.criterion_id, value: criterion.status)
+                                    }
+                                } label: {
+                                    Text("Run \(run.id.prefix(8)) · \(run.snapshot.terminal_status)").font(.caption)
+                                }
+                            }
+                            Text("Acceptance requires explicit criteria. An execution marked completed can still be unverified.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Divider()
                         result(report.context, context: true)
                         Divider()
                         result(report.model, context: false)
-                        Text("These observations describe associations, not task correctness or causal contribution.")
+                        Text("Model and context statistics describe associations. Task acceptance is evaluated separately.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         notice("No report yet", "Finish a run, then request a refresh. Your Agent can continue working while evaluation is pending.")
@@ -121,6 +147,14 @@ struct EvaluationPanel: View {
             guard isVisible, model.supported, model.sessionID != nil else { return }
             await model.poll()
         }
+    }
+
+    private func elapsed(_ value: UInt64?) -> String {
+        value.map { String(format: "%.2f s", Double($0) / 1000) } ?? "Not available"
+    }
+
+    private func percent(_ value: UInt32?) -> String {
+        value.map { String(format: "%.1f%%", Double($0) / 100) } ?? "Not evaluated"
     }
 
     private func notice(_ title: String, _ detail: String) -> some View {

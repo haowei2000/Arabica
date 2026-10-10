@@ -1,0 +1,22 @@
+{
+  "candidates": [
+    { "label": "baseline", "policy_id": "coding" },
+    { "label": "candidate", "policy_id": "precise" }
+  ],
+  "repetitions": 2,
+  "max_model_steps": 10,
+  "timeout_seconds": 120,
+  "tasks": [
+    {
+      "prompt": "Replace the contents of answer.txt with exactly ready followed by a newline. Then report that the file is ready.",
+      "initial_files": { "answer.txt": "pending\n" },
+      "acceptance": {
+        "task_id": "write-ready-file",
+        "version": 1,
+        "criteria": [
+          { "id": "artifact-content", "check": { "type": "artifact_contains", "path": "answer.txt", "value": "ready\n" } }
+        ]
+      }
+    }
+  ]
+}

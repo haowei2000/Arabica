@@ -1908,6 +1908,7 @@ mod tests {
                     policy: ToolPermissionPolicy {
                         default: ToolPermissionRule::Allow,
                         by_tool,
+                        argument_rules: Vec::new(),
                     },
                     approver: None,
                 }),

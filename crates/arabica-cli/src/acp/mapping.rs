@@ -399,6 +399,7 @@ pub(super) fn updates_for(
         | Event::ModelRequestPrepared { .. }
         | Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
+        | Event::ToolExecutionObserved { .. }
         | Event::ModelCallObserved { .. }
         | Event::ModelResponseCompleted { .. }
         | Event::ModelResponseRejected { .. }

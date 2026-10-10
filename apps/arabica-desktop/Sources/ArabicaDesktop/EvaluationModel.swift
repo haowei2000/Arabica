@@ -47,6 +47,40 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let checkpoint: Checkpoint
         let context: Result
         let model: Result
+        let runs: [Run]?
+    }
+    struct Run: Decodable, Equatable, Sendable, Identifiable {
+        var id: String { snapshot.run_id }
+        let snapshot: RunSnapshot
+        let acceptance: Acceptance?
+    }
+    struct RunSnapshot: Decodable, Equatable, Sendable {
+        let run_id: String
+        let session_id: String
+        let workspace_id: String
+        let terminal_status: String
+        let timing: Timing
+    }
+    struct Timing: Decodable, Equatable, Sendable {
+        let queue_ms: UInt64?
+        let wall_ms: UInt64?
+        let approval_wait_ms: UInt64?
+        let active_ms: UInt64?
+        let model_call_ms_total: UInt64
+        let runner_ms_total: UInt64?
+        let model_calls: UInt64
+        let usage_reported_calls: UInt64
+    }
+    struct Acceptance: Decodable, Equatable, Sendable {
+        let completion_bps: UInt32?
+        let coverage_bps: UInt32?
+        let verified_success: Bool?
+        let results: [CriterionResult]
+    }
+    struct CriterionResult: Decodable, Equatable, Sendable, Identifiable {
+        var id: String { criterion_id }
+        let criterion_id: String
+        let status: String
     }
     struct Checkpoint: Decodable, Equatable, Sendable {
         let session_id: String
@@ -96,7 +130,10 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: result))
         guard snapshot.schema_version == 1, snapshot.session_id == session,
               snapshot.report == nil || (snapshot.report?.checkpoint.session_id == session
-                && snapshot.report?.checkpoint.workspace_id == snapshot.workspace_id) else { throw ACPError.invalidResponse }
+                && snapshot.report?.checkpoint.workspace_id == snapshot.workspace_id),
+              (snapshot.report?.runs ?? []).allSatisfy({
+                  $0.snapshot.session_id == session && $0.snapshot.workspace_id == snapshot.workspace_id
+              }) else { throw ACPError.invalidResponse }
         return snapshot
     }
 }

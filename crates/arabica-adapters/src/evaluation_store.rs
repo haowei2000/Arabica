@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use arabica_protocol::{Event, EventEnvelope, SessionId, WorkspaceId};
 use arabica_runtime::{
-    BlendRoutingPolicy, ContextEvaluationResult, EvaluationConfig, EvaluationEvidence,
-    EvaluationRegistry, GeneratedPolicyRecord, ModelEvaluationResult, evolve_blend_policy,
+    AcceptanceSpec, BlendRoutingPolicy, ContextEvaluationResult, EvaluationConfig,
+    EvaluationEvidence, EvaluationRegistry, GeneratedPolicyRecord, ModelEvaluationResult,
+    RunAcceptance, RunEvaluation, RunEvidenceSnapshot, evolve_blend_policy, run_evidence_snapshots,
 };
 use arabica_session::{EventVisibility, SessionEventObserver, SessionStore};
 use rusqlite::{Connection, params};
@@ -31,6 +32,8 @@ pub struct SavedEvaluation {
     pub checkpoint: EvaluationCheckpoint,
     pub context: ContextEvaluationResult,
     pub model: ModelEvaluationResult,
+    #[serde(default)]
+    pub runs: Vec<RunEvaluation>,
 }
 
 /// Owned and used exclusively by evaluation workers, never runtime observers.
@@ -49,7 +52,7 @@ impl SqliteEvaluationStore {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_millis(50))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err("unsupported evaluation database schema".into());
         }
         Self(connection).latest(workspace, session)
@@ -66,7 +69,7 @@ impl SqliteEvaluationStore {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_millis(50))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err("unsupported evaluation database schema".into());
         }
         Self(connection).list_policy_versions(policy_id)
@@ -89,7 +92,7 @@ impl SqliteEvaluationStore {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_millis(250))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if !matches!(version, 0 | 1) {
+        if !matches!(version, 0..=2) {
             return Err("unsupported evaluation database schema".into());
         }
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
@@ -114,7 +117,20 @@ impl SqliteEvaluationStore {
                 policy_json TEXT NOT NULL, basis_evidence_fingerprint TEXT, reason TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(policy_id, version));
-            CREATE INDEX IF NOT EXISTS evaluation_latest ON evaluation_results(workspace_id,session_id,sequence DESC); PRAGMA user_version=1; COMMIT;")?;
+            CREATE TABLE IF NOT EXISTS run_evidence_snapshots(
+                workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, run_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+                PRIMARY KEY(workspace_id,session_id,run_id));
+            CREATE TABLE IF NOT EXISTS policy_comparisons(
+                fingerprint TEXT PRIMARY KEY, trials_json TEXT NOT NULL, report_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS run_acceptance_results(
+                workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, run_id TEXT NOT NULL,
+                snapshot_fingerprint TEXT NOT NULL, spec_fingerprint TEXT NOT NULL,
+                scorer_id TEXT NOT NULL, scorer_version INTEGER NOT NULL, scorer_config TEXT NOT NULL,
+                spec_json TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(workspace_id,session_id,run_id,snapshot_fingerprint,spec_fingerprint,scorer_id,scorer_version,scorer_config));
+            CREATE INDEX IF NOT EXISTS evaluation_latest ON evaluation_results(workspace_id,session_id,sequence DESC); PRAGMA user_version=2; COMMIT;")?;
         Ok(Self(connection))
     }
     pub fn save(
@@ -167,7 +183,7 @@ impl SqliteEvaluationStore {
                 )?;
             }
         }
-        tx.execute("INSERT OR IGNORE INTO evaluation_results(workspace_id,session_id,sequence,evidence_fingerprint,context_id,context_version,context_config,model_id,model_version,model_config,result_json,evaluation_config_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)", params![saved.checkpoint.workspace_id.0.as_str(), saved.checkpoint.session_id.0.as_str(), saved.checkpoint.sequence, saved.context.evidence_fingerprint, saved.context.plugin.id, saved.context.plugin.version, saved.context.plugin.configuration_fingerprint, saved.model.plugin.id, saved.model.plugin.version, saved.model.plugin.configuration_fingerprint, serde_json::to_string(saved)?, config_json])?;
+        tx.execute("INSERT OR IGNORE INTO evaluation_results(workspace_id,session_id,sequence,evidence_fingerprint,context_id,context_version,context_config,model_id,model_version,model_config,result_json,evaluation_config_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT DO UPDATE SET result_json=excluded.result_json", params![saved.checkpoint.workspace_id.0.as_str(), saved.checkpoint.session_id.0.as_str(), saved.checkpoint.sequence, saved.context.evidence_fingerprint, saved.context.plugin.id, saved.context.plugin.version, saved.context.plugin.configuration_fingerprint, saved.model.plugin.id, saved.model.plugin.version, saved.model.plugin.configuration_fingerprint, serde_json::to_string(saved)?, config_json])?;
         tx.commit()?;
         Ok(())
     }
@@ -180,7 +196,11 @@ impl SqliteEvaluationStore {
         let mut rows = statement.query(params![workspace.0.as_str(), session.0.as_str()])?;
         rows.next()?
             .map(|row| -> StoreResult<SavedEvaluation> {
-                Ok(serde_json::from_str(&row.get::<_, String>(0)?)?)
+                let mut saved: SavedEvaluation = serde_json::from_str(&row.get::<_, String>(0)?)?;
+                for run in &mut saved.runs {
+                    run.acceptance = self.latest_acceptance(&run.snapshot)?;
+                }
+                Ok(saved)
             })
             .transpose()
     }
@@ -204,6 +224,108 @@ impl SqliteEvaluationStore {
             ],
         )?;
         Ok(())
+    }
+    /// Freeze the first bounded snapshot for a run; refresh never overwrites it.
+    pub fn save_run_snapshot(&mut self, snapshot: &RunEvidenceSnapshot) -> StoreResult<()> {
+        let encoded = serde_json::to_string(snapshot)?;
+        let tx = self.0.transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO run_evidence_snapshots VALUES(?1,?2,?3,?4,?5)",
+            params![
+                snapshot.workspace_id.0,
+                snapshot.session_id.0,
+                snapshot.run_id.0,
+                snapshot.fingerprint,
+                encoded
+            ],
+        )?;
+        let stored: String = tx.query_row("SELECT snapshot_json FROM run_evidence_snapshots WHERE workspace_id=?1 AND session_id=?2 AND run_id=?3",
+            params![snapshot.workspace_id.0, snapshot.session_id.0, snapshot.run_id.0], |row| row.get(0))?;
+        if stored != encoded {
+            return Err("immutable run evidence mismatch".into());
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Reuse artifact evidence captured synchronously by an experiment host.
+    pub fn resolve_run_snapshot(
+        &mut self,
+        mut snapshot: RunEvidenceSnapshot,
+    ) -> StoreResult<RunEvidenceSnapshot> {
+        let snapshot = if let Some(existing) = self.run_snapshot(
+            &snapshot.workspace_id,
+            &snapshot.session_id,
+            &snapshot.run_id,
+        )? {
+            snapshot.fixture_fingerprint = existing.fixture_fingerprint;
+            snapshot.with_artifacts(existing.artifacts)?
+        } else {
+            snapshot
+        };
+        self.save_run_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub fn save_policy_comparison(
+        &mut self,
+        trials: &[arabica_runtime::PolicyComparisonTrial],
+    ) -> StoreResult<Vec<arabica_runtime::PolicyComparisonSummary>> {
+        use sha2::{Digest, Sha256};
+        let report = arabica_runtime::compare_policy_trials(trials)?;
+        let encoded = serde_json::to_string(trials)?;
+        let fingerprint = hex::encode(Sha256::digest(encoded.as_bytes()));
+        self.0.execute("INSERT OR IGNORE INTO policy_comparisons(fingerprint,trials_json,report_json) VALUES(?1,?2,?3)", params![fingerprint, encoded, serde_json::to_string(&report)?])?;
+        Ok(report)
+    }
+
+    pub fn run_snapshot(
+        &self,
+        workspace: &WorkspaceId,
+        session: &SessionId,
+        run: &arabica_protocol::RunId,
+    ) -> StoreResult<Option<RunEvidenceSnapshot>> {
+        let mut statement = self.0.prepare("SELECT snapshot_json FROM run_evidence_snapshots WHERE workspace_id=?1 AND session_id=?2 AND run_id=?3")?;
+        let mut rows = statement.query(params![workspace.0, session.0, run.0])?;
+        rows.next()?
+            .map(|row| -> StoreResult<_> { Ok(serde_json::from_str(&row.get::<_, String>(0)?)?) })
+            .transpose()
+    }
+
+    /// Append a versioned score bound to its exact specification and snapshot.
+    pub fn save_acceptance(
+        &mut self,
+        snapshot: &RunEvidenceSnapshot,
+        specification: &AcceptanceSpec,
+        acceptance: &RunAcceptance,
+    ) -> StoreResult<()> {
+        specification.validate()?;
+        if acceptance.snapshot_fingerprint != snapshot.fingerprint
+            || acceptance.specification_fingerprint != specification.fingerprint()
+            || acceptance.task_id != specification.task_id
+        {
+            return Err("acceptance provenance mismatch".into());
+        }
+        self.save_run_snapshot(snapshot)?;
+        self.0.execute("INSERT OR IGNORE INTO run_acceptance_results(workspace_id,session_id,run_id,snapshot_fingerprint,spec_fingerprint,scorer_id,scorer_version,scorer_config,spec_json,result_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![snapshot.workspace_id.0, snapshot.session_id.0, snapshot.run_id.0, snapshot.fingerprint, acceptance.specification_fingerprint, acceptance.scorer.id, acceptance.scorer.version, acceptance.scorer.configuration_fingerprint, serde_json::to_string(specification)?, serde_json::to_string(acceptance)?])?;
+        Ok(())
+    }
+
+    pub fn latest_acceptance(
+        &self,
+        snapshot: &RunEvidenceSnapshot,
+    ) -> StoreResult<Option<RunAcceptance>> {
+        let mut statement = self.0.prepare("SELECT result_json FROM run_acceptance_results WHERE workspace_id=?1 AND session_id=?2 AND run_id=?3 AND snapshot_fingerprint=?4 ORDER BY rowid DESC LIMIT 1")?;
+        let mut rows = statement.query(params![
+            snapshot.workspace_id.0,
+            snapshot.session_id.0,
+            snapshot.run_id.0,
+            snapshot.fingerprint
+        ])?;
+        rows.next()?
+            .map(|row| -> StoreResult<_> { Ok(serde_json::from_str(&row.get::<_, String>(0)?)?) })
+            .transpose()
     }
     pub fn list_policy_versions(
         &self,
@@ -394,7 +516,17 @@ impl EvaluationWorker {
                     let config = load_config().map_err(std::io::Error::other)?;
                     let evidence = EvaluationEvidence::from_history(&stored.events);
                     let registry = build_registry(&config).map_err(std::io::Error::other)?;
+                    let mut runs = Vec::new();
+                    for snapshot in run_evidence_snapshots(&stored.events) {
+                        let snapshot = db.resolve_run_snapshot(snapshot)?;
+                        let acceptance = db.latest_acceptance(&snapshot)?;
+                        runs.push(RunEvaluation {
+                            snapshot,
+                            acceptance,
+                        });
+                    }
                     let saved = SavedEvaluation {
+                        runs,
                         checkpoint: checkpoint.clone(),
                         context: registry.context(&config.context_strategy, &evidence)?,
                         model: registry.model(&config.model_strategy, &evidence)?,
@@ -445,7 +577,10 @@ impl EvaluationWorker {
                             )
                             .ok()
                             .flatten()
-                            .is_some_and(|latest| latest.checkpoint.sequence >= event.sequence);
+                            .is_some_and(|latest| {
+                                latest.checkpoint.sequence >= event.sequence
+                                    && !latest.runs.is_empty()
+                            });
 
                             if !already_evaluated {
                                 evaluate(EvaluationCheckpoint {
@@ -636,6 +771,7 @@ mod tests {
         let evidence = EvaluationEvidence::from_history(&events());
         let registry = EvaluationRegistry::builtins(&config).unwrap();
         let saved = SavedEvaluation {
+            runs: Vec::new(),
             checkpoint: checkpoint(),
             context: registry
                 .context(&config.context_strategy, &evidence)
@@ -683,6 +819,90 @@ mod tests {
         drop(db);
         std::fs::remove_dir_all(home).unwrap();
     }
+
+    #[test]
+    fn run_snapshots_are_immutable_and_acceptance_survives_reopen() {
+        use arabica_runtime::{AcceptanceSpec, EvidenceAcceptanceScorer, RunAcceptanceScorer};
+        let home = home();
+        let path = home.join("evaluation.sqlite3");
+        let snapshot = run_evidence_snapshots(&events()).pop().unwrap();
+        let spec = AcceptanceSpec {
+            task_id: "task".into(),
+            version: 1,
+            criteria: Vec::new(),
+        };
+        let score = EvidenceAcceptanceScorer.score(&snapshot, &spec).unwrap();
+        let mut db = SqliteEvaluationStore::open(&path).unwrap();
+        db.save_run_snapshot(&snapshot).unwrap();
+        db.save_acceptance(&snapshot, &spec, &score).unwrap();
+        db.save_acceptance(&snapshot, &spec, &score).unwrap();
+        let count: usize =
+            db.0.query_row("SELECT count(*) FROM run_acceptance_results", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        let mut changed = snapshot.clone();
+        changed.final_output = Some("changed later".into());
+        assert!(db.save_run_snapshot(&changed).is_err());
+        let mut wrong_score = score.clone();
+        wrong_score.snapshot_fingerprint = "wrong".into();
+        assert!(db.save_acceptance(&snapshot, &spec, &wrong_score).is_err());
+        drop(db);
+        let db = SqliteEvaluationStore::open(&path).unwrap();
+        assert_eq!(
+            db.run_snapshot(
+                &snapshot.workspace_id,
+                &snapshot.session_id,
+                &snapshot.run_id
+            )
+            .unwrap(),
+            Some(snapshot.clone())
+        );
+        assert_eq!(db.latest_acceptance(&snapshot).unwrap(), Some(score));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn schema_one_migrates_without_losing_existing_reports() {
+        let home = home();
+        let path = home.join("evaluation.sqlite3");
+        let mut db = SqliteEvaluationStore::open(&path).unwrap();
+        let config = EvaluationConfig::default();
+        let evidence = EvaluationEvidence::from_history(&events());
+        let registry = EvaluationRegistry::builtins(&config).unwrap();
+        let saved = SavedEvaluation {
+            checkpoint: checkpoint(),
+            runs: Vec::new(),
+            context: registry
+                .context(&config.context_strategy, &evidence)
+                .unwrap(),
+            model: registry.model(&config.model_strategy, &evidence).unwrap(),
+        };
+        db.save(&saved, &config, &evidence).unwrap();
+        db.0.execute_batch("DROP TABLE run_evidence_snapshots; DROP TABLE run_acceptance_results; DROP TABLE policy_comparisons; PRAGMA user_version=1;").unwrap();
+        drop(db);
+        assert_eq!(
+            SqliteEvaluationStore::read_latest(
+                &path,
+                &checkpoint().workspace_id,
+                &checkpoint().session_id
+            )
+            .unwrap(),
+            Some(saved.clone())
+        );
+        let db = SqliteEvaluationStore::open(&path).unwrap();
+        assert_eq!(
+            db.latest(&checkpoint().workspace_id, &checkpoint().session_id)
+                .unwrap(),
+            Some(saved)
+        );
+        let version: u64 =
+            db.0.query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+        assert_eq!(version, 2);
+        std::fs::remove_dir_all(home).unwrap();
+    }
     #[test]
     fn refresh_uses_latest_persisted_checkpoint_without_runtime_access() {
         let home = home();
@@ -690,6 +910,11 @@ mod tests {
         let worker =
             EvaluationWorker::start(home.clone(), 2, || Ok(EvaluationConfig::default())).unwrap();
         wait_for(|| worker.status().completed == 1);
+        let initial = worker
+            .latest(&checkpoint().workspace_id, &checkpoint().session_id)
+            .unwrap();
+        assert_eq!(initial.runs.len(), 1);
+        assert!(initial.runs[0].acceptance.is_none());
         let store = SqliteSessionRepository::new(&home)
             .open(&checkpoint().workspace_id, &checkpoint().session_id)
             .unwrap();
@@ -718,7 +943,7 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let path = home.join("evaluation.sqlite3");
         let connection = Connection::open(&path).unwrap();
-        connection.execute_batch("PRAGMA user_version=2;").unwrap();
+        connection.execute_batch("PRAGMA user_version=99;").unwrap();
         assert!(SqliteEvaluationStore::open(&path).is_err());
         let count: usize = connection
             .query_row(

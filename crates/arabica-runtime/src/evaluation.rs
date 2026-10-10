@@ -82,6 +82,7 @@ impl EvaluationEvidence {
                     | Event::ToolCallPermissionResolved { .. }
                     | Event::ToolCallPermissionRequested { .. }
                     | Event::ToolCallReused { .. }
+                    | Event::ToolExecutionObserved { .. }
                     | Event::ModelCallObserved { .. }
                     | Event::RunScheduled
                     | Event::RunStarted
@@ -227,12 +228,14 @@ pub trait ModelEvaluationStrategy: std::fmt::Debug + Send + Sync {
 pub struct EvaluationRegistry {
     context: BTreeMap<String, Box<dyn ContextEvaluationStrategy>>,
     models: BTreeMap<String, Box<dyn ModelEvaluationStrategy>>,
+    acceptance: BTreeMap<String, Box<dyn crate::RunAcceptanceScorer>>,
 }
 
 impl EvaluationRegistry {
     pub fn builtins(config: &EvaluationConfig) -> Result<Self, EvaluationError> {
         config.validate()?;
         let mut registry = Self::default();
+        registry.register_acceptance(Box::new(crate::EvidenceAcceptanceScorer))?;
         for clustered in [false, true] {
             registry.register_context(Box::new(BuiltinEvaluator {
                 config: config.clone(),
@@ -244,6 +247,29 @@ impl EvaluationRegistry {
             }))?;
         }
         Ok(registry)
+    }
+    pub fn register_acceptance(
+        &mut self,
+        scorer: Box<dyn crate::RunAcceptanceScorer>,
+    ) -> Result<(), EvaluationError> {
+        let metadata = scorer.metadata();
+        validate_metadata(&metadata)?;
+        if self.acceptance.contains_key(&metadata.id) {
+            return Err(EvaluationError("duplicate acceptance scorer".into()));
+        }
+        self.acceptance.insert(metadata.id, scorer);
+        Ok(())
+    }
+    pub fn acceptance(
+        &self,
+        id: &str,
+        snapshot: &crate::RunEvidenceSnapshot,
+        specification: &crate::AcceptanceSpec,
+    ) -> Result<crate::RunAcceptance, EvaluationError> {
+        self.acceptance
+            .get(id)
+            .ok_or_else(|| EvaluationError("unknown acceptance scorer".into()))?
+            .score(snapshot, specification)
     }
     pub fn register_context(
         &mut self,

@@ -166,7 +166,7 @@ Rules:
 | Run | `run.scheduled`, `run.started`, `run.completed`, `run.failed`, `run.cancelled` |
 | Message/output | `message.accepted`, `command.output` |
 | Model exchange | `model.request.prepared`, `model.response.item`, `model.response.completed`, `model.response.rejected`, `model.response.normalized` |
-| Tool call | `tool.call.requested`, `tool.call.classified`, `tool.call.permission_requested`, `tool.call.permission_resolved`, `tool.call.reused`, `tool.call.loop_blocked`, `tool.call.completed` |
+| Tool call | `tool.call.requested`, `tool.call.classified`, `tool.call.permission_requested`, `tool.call.permission_resolved`, `tool.call.reused`, `tool.call.loop_blocked`, `tool.call.completed`, `tool.execution.observed` |
 | Agent control | `agent.progress.advisory`, `agent.loop.terminated`, `terminal.control.transition` |
 | Context | `context.read`, `context.search.result`, `context.updated`, `context.deleted`, `context.disclosure.set` |
 | Failure | `error` |

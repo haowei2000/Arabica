@@ -256,7 +256,7 @@ final class ACPClient {
         }
     }
 
-    private func route(_ message: [String: Any]) {
+    func route(_ message: [String: Any]) {
         if let method = message["method"] as? String {
             let params = message["params"] as? [String: Any] ?? [:]
             if let rawID = message["id"], let id = ACPRequestID(from: rawID) {

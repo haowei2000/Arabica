@@ -85,6 +85,14 @@ fn every_event_has_a_stable_dotted_wire_name() {
     };
     let events = [
         (
+            Event::ToolExecutionObserved {
+                call_id: "call".into(),
+                elapsed_ms: 25,
+                outcome: arabica_protocol::ModelCallOutcome::Succeeded,
+            },
+            "tool.execution.observed",
+        ),
+        (
             Event::SessionCreated {
                 workspace_id: WorkspaceId::new("workspace-1"),
             },

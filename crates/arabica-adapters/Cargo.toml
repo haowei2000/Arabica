@@ -11,6 +11,8 @@ categories = ["development-tools"]
 readme = "../../README.md"
 
 [dependencies]
+sha2.workspace = true
+hex.workspace = true
 rusqlite.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true }

@@ -744,7 +744,8 @@ fn batch_identity(
         | Event::ToolCallPermissionRequested { call_id }
         | Event::ToolCallPermissionResolved { call_id, .. }
         | Event::ToolCallReused { call_id, .. }
-        | Event::ToolCallLoopBlocked { call_id, .. } => {
+        | Event::ToolCallLoopBlocked { call_id, .. }
+        | Event::ToolExecutionObserved { call_id, .. } => {
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
         }
         Event::ToolCallCompleted { call_id, .. } => {
@@ -1003,6 +1004,7 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::ContextCallRejected { .. }
         | Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
+        | Event::ToolExecutionObserved { .. }
         | Event::ModelCallObserved { .. }
         | Event::PlanDelegationObserved { .. }
         | Event::ModelRequestPrepared { .. }
@@ -1159,6 +1161,7 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         | Event::ContextCallRejected { .. }
         | Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
+        | Event::ToolExecutionObserved { .. }
         | Event::ModelCallObserved { .. }
         | Event::PlanDelegationObserved { .. } => (MemoryClass::Control, None, false),
         Event::ToolCallRequested { call_id, .. } => {
@@ -1236,6 +1239,7 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::ModelRouteSelected { .. } => "model.route.selected",
         Event::ModelRouteExplained { .. } => "model.route.explained",
         Event::ModelCallObserved { .. } => "model.call.observed",
+        Event::ToolExecutionObserved { .. } => "tool.execution.observed",
         Event::ModelRequestPrepared { .. } => "model.request.prepared",
         Event::ModelResponseItem { .. } => "model.response.item",
         Event::ModelResponseCompleted { .. } => "model.response.completed",
@@ -1362,6 +1366,7 @@ fn event_semantic_key(event: &Event) -> Option<String> {
         Event::MessageAccepted { content } => Some(compact_user_message(content)),
         Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
+        | Event::ToolExecutionObserved { .. }
         | Event::ModelCallObserved { .. } => None,
         Event::ContextRunResolved { .. } | Event::ContextRequestExposed { .. }
         | Event::ContextItemUnfolded { .. } | Event::ContextCallStarted { .. }
