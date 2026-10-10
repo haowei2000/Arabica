@@ -8,6 +8,15 @@ final class MarkdownMessageTests: XCTestCase {
         XCTAssertEqual(blocks.last?.text, "# literal\n\n**code**")
     }
 
+    func testTableAndCodeIsolation() {
+        let source = "| Name | Value |\n| :--- | ---: |\n| **One** | `a|b` |\n| Two | a\\|b |"
+        XCTAssertEqual(MarkdownBlock.parse(source), [MarkdownBlock(kind: .table([
+            ["Name", "Value"], ["**One**", "`a|b`"], ["Two", "a|b"],
+        ]), text: "")])
+        XCTAssertEqual(MarkdownBlock.parse("```\n" + source + "\n```").first?.kind, .code)
+        XCTAssertEqual(MarkdownBlock.parse("a | b\nnot | separator").first?.kind, .paragraph)
+    }
+
     func testStreamingUnclosedFenceAndPlainText() {
         XCTAssertEqual(MarkdownBlock.parse("Before\n~~~\nlet x = 1"), [
             MarkdownBlock(kind: .paragraph, text: "Before"),
