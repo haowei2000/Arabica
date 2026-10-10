@@ -3,7 +3,6 @@
 use std::error::Error;
 use std::fmt::Write;
 
-use arabica_adapters::FileSessionStore;
 use arabica_model::{MemoryLoadState, RuntimeItem, RuntimeRequest, RuntimeRole, RuntimeUsage};
 use arabica_protocol::{Event, EventEnvelope};
 use arabica_runtime::{
@@ -15,8 +14,9 @@ use crate::interactive::InteractiveSession;
 
 pub(crate) fn report(session: &InteractiveSession) -> Result<String, Box<dyn Error>> {
     let workspace = workspace_id_for(&session.runner_root);
-    let stored =
-        FileSessionStore::read_session(&session.arabica_home, &workspace, &session.session_id)?;
+    let stored = session
+        .session_store
+        .read(&workspace, &session.session_id)?;
     let runtime = session.manager.runtime();
     let archives = runtime
         .long_memory(&workspace)

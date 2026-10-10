@@ -8,14 +8,14 @@ use std::time::Duration;
 
 use arabica_protocol::{Event, EventEnvelope, SessionId, WorkspaceId};
 use arabica_runtime::{
-    ContextEvaluationResult, EvaluationConfig, EvaluationEvidence, EvaluationRegistry,
-    ModelEvaluationResult,
+    BlendRoutingPolicy, ContextEvaluationResult, EvaluationConfig, EvaluationEvidence,
+    EvaluationRegistry, GeneratedPolicyRecord, ModelEvaluationResult, evolve_blend_policy,
 };
-use arabica_session::{EventVisibility, SessionEventObserver};
+use arabica_session::{EventVisibility, SessionEventObserver, SessionStore};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
-use crate::FileSessionStore;
+use crate::SqliteSessionRepository;
 
 type StoreResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -53,6 +53,23 @@ impl SqliteEvaluationStore {
             return Err("unsupported evaluation database schema".into());
         }
         Self(connection).latest(workspace, session)
+    }
+    /// Pure query for persisted policy versions without modifying database or taking write locks.
+    pub fn read_policy_versions(
+        path: &Path,
+        policy_id: Option<&str>,
+    ) -> StoreResult<Vec<GeneratedPolicyRecord>> {
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let connection =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_millis(50))?;
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version != 1 {
+            return Err("unsupported evaluation database schema".into());
+        }
+        Self(connection).list_policy_versions(policy_id)
     }
     pub fn open(path: &Path) -> StoreResult<Self> {
         if let Some(parent) = path.parent() {
@@ -92,6 +109,11 @@ impl SqliteEvaluationStore {
                 model_config TEXT NOT NULL, result_json TEXT NOT NULL, evaluation_config_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(workspace_id,session_id,sequence,evidence_fingerprint,context_id,context_version,context_config,model_id,model_version,model_config));
+            CREATE TABLE IF NOT EXISTS policy_versions(
+                policy_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
+                policy_json TEXT NOT NULL, basis_evidence_fingerprint TEXT, reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(policy_id, version));
             CREATE INDEX IF NOT EXISTS evaluation_latest ON evaluation_results(workspace_id,session_id,sequence DESC); PRAGMA user_version=1; COMMIT;")?;
         Ok(Self(connection))
     }
@@ -162,6 +184,103 @@ impl SqliteEvaluationStore {
             })
             .transpose()
     }
+    pub fn save_policy_version(&mut self, record: &GeneratedPolicyRecord) -> StoreResult<()> {
+        let policy_json = serde_json::to_string(&record.policy)?;
+        self.0.execute(
+            "INSERT INTO policy_versions(policy_id, version, status, policy_json, basis_evidence_fingerprint, reason)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(policy_id, version) DO UPDATE SET
+             status = excluded.status,
+             policy_json = excluded.policy_json,
+             basis_evidence_fingerprint = excluded.basis_evidence_fingerprint,
+             reason = excluded.reason",
+            params![
+                record.policy_id,
+                record.version as i64,
+                record.status,
+                policy_json,
+                record.basis_fingerprint,
+                record.reason,
+            ],
+        )?;
+        Ok(())
+    }
+    pub fn list_policy_versions(
+        &self,
+        policy_id: Option<&str>,
+    ) -> StoreResult<Vec<GeneratedPolicyRecord>> {
+        let mut sql = "SELECT policy_id, version, status, policy_json, basis_evidence_fingerprint, reason FROM policy_versions".to_string();
+        if policy_id.is_some() {
+            sql.push_str(" WHERE policy_id = ?1");
+        }
+        sql.push_str(" ORDER BY policy_id ASC, version DESC");
+        let mut stmt = self.0.prepare(&sql)?;
+        let rows = if let Some(id) = policy_id {
+            stmt.query(params![id])?
+        } else {
+            stmt.query([])?
+        };
+        let mapped = rows.and_then(|row| {
+            let policy_id: String = row.get(0)?;
+            let version: i64 = row.get(1)?;
+            let status: String = row.get(2)?;
+            let policy_json: String = row.get(3)?;
+            let basis_evidence_fingerprint: Option<String> = row.get(4)?;
+            let reason: String = row.get(5)?;
+            let policy: BlendRoutingPolicy = serde_json::from_str(&policy_json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            Ok(GeneratedPolicyRecord {
+                policy_id,
+                version: version as u64,
+                status,
+                policy,
+                basis_fingerprint: basis_evidence_fingerprint,
+                reason,
+            })
+        });
+        let results: Result<Vec<_>, rusqlite::Error> = mapped.collect();
+        Ok(results?)
+    }
+    pub fn get_policy_version(
+        &self,
+        policy_id: &str,
+        version: u64,
+    ) -> StoreResult<Option<GeneratedPolicyRecord>> {
+        let mut stmt = self.0.prepare(
+            "SELECT policy_id, version, status, policy_json, basis_evidence_fingerprint, reason FROM policy_versions WHERE policy_id = ?1 AND version = ?2 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![policy_id, version as i64])?;
+        if let Some(row) = rows.next()? {
+            let policy_id: String = row.get(0)?;
+            let version: i64 = row.get(1)?;
+            let status: String = row.get(2)?;
+            let policy_json: String = row.get(3)?;
+            let basis_evidence_fingerprint: Option<String> = row.get(4)?;
+            let reason: String = row.get(5)?;
+            let policy: BlendRoutingPolicy = serde_json::from_str(&policy_json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            Ok(Some(GeneratedPolicyRecord {
+                policy_id,
+                version: version as u64,
+                status,
+                policy,
+                basis_fingerprint: basis_evidence_fingerprint,
+                reason,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
@@ -221,6 +340,8 @@ pub struct EvaluationView {
     pub worker_status: Option<EvaluationWorkerStatus>,
     pub refresh_accepted: Option<bool>,
     pub report: Option<SavedEvaluation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<GeneratedPolicyRecord>,
 }
 impl EvaluationWorker {
     /// Startup, file reads, config loading, evaluation and SQLite all run on
@@ -249,6 +370,7 @@ impl EvaluationWorker {
         std::thread::Builder::new()
             .name("arabica-evaluation".into())
             .spawn(move || {
+                let sessions: Arc<dyn SessionStore> = Arc::new(SqliteSessionRepository::new(&home));
                 let process = |checkpoint: EvaluationCheckpoint| -> StoreResult<()> {
                     let mut db = SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
                     if let Some(saved) =
@@ -256,11 +378,8 @@ impl EvaluationWorker {
                     {
                         worker_state.publish(saved)?;
                     }
-                    let mut stored = FileSessionStore::read_session(
-                        &home,
-                        &checkpoint.workspace_id,
-                        &checkpoint.session_id,
-                    )?;
+                    let mut stored =
+                        sessions.read(&checkpoint.workspace_id, &checkpoint.session_id)?;
                     stored
                         .events
                         .retain(|event| event.sequence <= checkpoint.sequence);
@@ -281,6 +400,19 @@ impl EvaluationWorker {
                         model: registry.model(&config.model_strategy, &evidence)?,
                     };
                     db.save(&saved, &config, &evidence)?;
+                    if let Ok(records) = db.list_policy_versions(None) {
+                        for group in &saved.model.data.groups {
+                            for record in &records {
+                                if let Some(evolved) = evolve_blend_policy(
+                                    &record.policy,
+                                    &group.report,
+                                    Some(evidence.fingerprint.clone()),
+                                ) {
+                                    let _ = db.save_policy_version(&evolved);
+                                }
+                            }
+                        }
+                    }
                     worker_state.publish(saved)?;
                     Ok(())
                 };
@@ -294,22 +426,34 @@ impl EvaluationWorker {
                         worker_state.failed.fetch_add(1, Ordering::Relaxed);
                     }
                 };
-                // JSONL is the durable source: recover missed checkpoints after
+                // The session repository is the durable source: recover missed checkpoints after
                 // queue overflow or process exit without a synchronous outbox write.
-                if let Ok(listings) = FileSessionStore::list_sessions(&home, None) {
+                if let Ok(listings) = sessions.list(None) {
                     for listing in listings {
-                        if let Ok(stored) = FileSessionStore::read(&listing.path)
+                        if let Ok(stored) =
+                            sessions.read(&listing.header.workspace_id, &listing.header.id)
                             && let Some(event) = stored
                                 .events
                                 .iter()
                                 .rev()
                                 .find(|event| terminal(&event.event))
                         {
-                            evaluate(EvaluationCheckpoint {
-                                workspace_id: event.workspace_id.clone(),
-                                session_id: event.session_id.clone(),
-                                sequence: event.sequence,
-                            });
+                            let already_evaluated = SqliteEvaluationStore::read_latest(
+                                &home.join("evaluation.sqlite3"),
+                                &event.workspace_id,
+                                &event.session_id,
+                            )
+                            .ok()
+                            .flatten()
+                            .is_some_and(|latest| latest.checkpoint.sequence >= event.sequence);
+
+                            if !already_evaluated {
+                                evaluate(EvaluationCheckpoint {
+                                    workspace_id: event.workspace_id.clone(),
+                                    session_id: event.session_id.clone(),
+                                    sequence: event.sequence,
+                                });
+                            }
                         }
                     }
                 }
@@ -317,7 +461,7 @@ impl EvaluationWorker {
                     match job {
                         EvaluationJob::Checkpoint(checkpoint) => evaluate(checkpoint),
                         EvaluationJob::Refresh { workspace, session } => {
-                            match FileSessionStore::read_session(&home, &workspace, &session) {
+                            match sessions.read(&workspace, &session) {
                                 Ok(stored) => {
                                     if let Some(event) = stored
                                         .events
@@ -461,17 +605,15 @@ mod tests {
         }
     }
     fn write_history(home: &Path) {
-        let store = FileSessionStore::create(
-            home,
-            NewSession {
+        let store = SqliteSessionRepository::new(home)
+            .create(NewSession {
                 session_id: &SessionId::new("session"),
                 workspace_id: &WorkspaceId::new("workspace"),
                 cwd: home,
                 profile: None,
                 instructions_sha256: None,
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         for event in events() {
             store.observe(&event, EventVisibility::Internal);
         }
@@ -548,12 +690,9 @@ mod tests {
         let worker =
             EvaluationWorker::start(home.clone(), 2, || Ok(EvaluationConfig::default())).unwrap();
         wait_for(|| worker.status().completed == 1);
-        let path = FileSessionStore::session_path(
-            &home,
-            &checkpoint().workspace_id,
-            &checkpoint().session_id,
-        );
-        let store = FileSessionStore::open_existing(&path).unwrap();
+        let store = SqliteSessionRepository::new(&home)
+            .open(&checkpoint().workspace_id, &checkpoint().session_id)
+            .unwrap();
         store.observe(
             &event(3, Event::RunCompleted { output: None }),
             EventVisibility::Internal,
@@ -654,6 +793,68 @@ mod tests {
                 .is_some()
         );
         drop(worker);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn policy_versions_crud_and_query_survive_database_reopen() {
+        use std::collections::BTreeSet;
+        let home = home();
+        let path = home.join("evaluation.sqlite3");
+        let mut db = SqliteEvaluationStore::open(&path).unwrap();
+
+        let policy = BlendRoutingPolicy {
+            policy_id: "test-policy".to_string(),
+            version: 1,
+            default_model: "fast".to_string(),
+            after_tool_success: None,
+            after_tool_error: None,
+            recovery_model: Some("strong".to_string()),
+            planning_model: None,
+            tool_routes: vec![],
+            recovery_after_no_progress_steps: 2,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
+        };
+
+        let record = GeneratedPolicyRecord {
+            policy_id: "test-policy".to_string(),
+            version: 1,
+            status: "active".to_string(),
+            policy,
+            basis_fingerprint: Some("fp-1".to_string()),
+            reason: "initial active policy".to_string(),
+        };
+
+        db.save_policy_version(&record).unwrap();
+        let list = db.list_policy_versions(Some("test-policy")).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].status, "active");
+
+        let mut candidate = record.clone();
+        candidate.version = 2;
+        candidate.status = "candidate".to_string();
+        candidate.reason = "evolved candidate".to_string();
+        db.save_policy_version(&candidate).unwrap();
+
+        let all = db.list_policy_versions(None).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].version, 2); // Ordered DESC
+
+        drop(db);
+
+        // Read-only query without write lock
+        let read_only_list =
+            SqliteEvaluationStore::read_policy_versions(&path, Some("test-policy")).unwrap();
+        assert_eq!(read_only_list.len(), 2);
+
+        let v2 = SqliteEvaluationStore::open(&path)
+            .unwrap()
+            .get_policy_version("test-policy", 2)
+            .unwrap();
+        assert!(v2.is_some());
+        assert_eq!(v2.unwrap().status, "candidate");
+
         std::fs::remove_dir_all(home).unwrap();
     }
 }

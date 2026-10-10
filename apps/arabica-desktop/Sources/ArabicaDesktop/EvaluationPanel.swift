@@ -61,6 +61,51 @@ struct EvaluationPanel: View {
                             LabeledContent("Notifications dropped", value: "\(worker.dropped)")
                         }
                     }
+                    if let policies = model.snapshot?.policies, !policies.isEmpty {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("All policy versions").font(.subheadline.weight(.semibold))
+                            Text("Configured and background-evolved policies.").font(.caption).foregroundStyle(.secondary)
+                            ForEach(policies) { p in
+                                DisclosureGroup {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        LabeledContent("Default model", value: p.policy.default_model)
+                                        if let err = p.policy.after_tool_error {
+                                            LabeledContent("After tool error", value: err)
+                                        }
+                                        if let rec = p.policy.recovery_model {
+                                            LabeledContent("Recovery model", value: rec)
+                                        }
+                                        if let succ = p.policy.after_tool_success {
+                                            LabeledContent("After tool success", value: succ)
+                                        }
+                                        if let steps = p.policy.recovery_after_no_progress_steps {
+                                            LabeledContent("Recovery threshold", value: "\(steps) steps")
+                                        }
+                                        if let dwell = p.policy.minimum_model_dwell_steps {
+                                            LabeledContent("Minimum dwell", value: "\(dwell) steps")
+                                        }
+                                        if !p.reason.isEmpty {
+                                            Text("Reason: \(p.reason)").font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                } label: {
+                                    HStack {
+                                        Text("\(p.policy_id) v\(p.version)").font(.system(size: 12, weight: .medium))
+                                        Spacer()
+                                        Text(p.status.uppercased())
+                                            .font(.system(size: 9, weight: .bold))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(p.status == "active" ? Color.green.opacity(0.15) : Color.blue.opacity(0.15))
+                                            .foregroundStyle(p.status == "active" ? Color.green : Color.blue)
+                                            .clipShape(Capsule())
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let date = model.queriedAt {
                         Text("Status checked \(date.formatted(date: .omitted, time: .standard))")
                             .font(.caption).foregroundStyle(.secondary)

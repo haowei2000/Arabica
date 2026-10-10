@@ -31,6 +31,7 @@ final class ConfigEditorTests: XCTestCase {
             ],
             thinking: "high",
             defaultPolicy: "",
+            defaultModelAlias: "default",
             newAPIKey: nil,
             removeAPIKey: false
         )
@@ -76,6 +77,7 @@ final class ConfigEditorTests: XCTestCase {
             modelValues: ["provider": ConfigDocument.quote("primary"), "model_id": ConfigDocument.quote("model-v2")],
             thinking: "",
             defaultPolicy: "review",
+            defaultModelAlias: "default",
             newAPIKey: nil,
             removeAPIKey: false
         )
@@ -84,6 +86,52 @@ final class ConfigEditorTests: XCTestCase {
         XCTAssertTrue(result.contains("[blend.policies.review]\nversion = 1\ndefault_model = \"default\""))
         XCTAssertTrue(result.contains("[blend.policies.coding]\nversion = 1\ndefault_model = \"default\"\nafter_tool_error = \"default\""))
         XCTAssertFalse(result.contains("[blend]\ndefault_policy = \"review\"\ndefault_model"))
+    }
+
+    func testUpdatingOneModelPreservesOtherCatalogEntriesAndIndependentPolicyDefault() throws {
+        let source = """
+        [providers.fast]
+        api_type = "open_ai_responses"
+        base_url = "https://fast.example.test/v1"
+
+        [providers.strong]
+        api_type = "anthropic_messages"
+        base_url = "https://strong.example.test/v1"
+
+        [models.quick]
+        provider = "fast"
+        model_id = "quick-v1"
+
+        [models.deep]
+        provider = "strong"
+        model_id = "deep-v1"
+
+        [blend]
+        default_policy = "coding"
+
+        [blend.policies.coding]
+        default_model = "deep"
+        after_tool_error = "quick"
+        """
+
+        let result = try ConfigDocument(source).updating(
+            oldProviderSection: "providers.fast",
+            newProviderSection: "providers.fast",
+            oldModelSection: "models.quick",
+            newModelSection: "models.quick",
+            providerValues: ["base_url": ConfigDocument.quote("https://fast.example.test/v2")],
+            modelValues: ["provider": ConfigDocument.quote("fast"), "model_id": ConfigDocument.quote("quick-v2")],
+            thinking: "",
+            defaultPolicy: "coding",
+            defaultModelAlias: "deep",
+            newAPIKey: nil,
+            removeAPIKey: false
+        )
+
+        XCTAssertTrue(result.contains("[providers.strong]\napi_type = \"anthropic_messages\"\nbase_url = \"https://strong.example.test/v1\""))
+        XCTAssertTrue(result.contains("[models.deep]\nprovider = \"strong\"\nmodel_id = \"deep-v1\""))
+        XCTAssertTrue(result.contains("[models.quick]\nprovider = \"fast\"\nmodel_id = \"quick-v2\""))
+        XCTAssertTrue(result.contains("[blend.policies.coding]\ndefault_model = \"deep\"\nafter_tool_error = \"quick\""))
     }
 
     func testSavingDefaultPolicyPreservesEveryRouteAndUnrelatedSetting() throws {
@@ -148,5 +196,44 @@ final class ConfigEditorTests: XCTestCase {
             thinking: "high"
         ))
         XCTAssertNil(ConfigEditor.thinkingValidationError(apiType: "anthropic_messages", thinking: ""))
+    }
+
+    func testMCPServersAndSkillRootsParsing() {
+        let toml = """
+        [skills]
+        roots = ["skills", "/opt/custom/skills"]
+
+        [[mcp]]
+        name = "filesystem"
+        command = "npx"
+        args = ["-y", "@mcp/fs", "/workspace"]
+
+        [mcp.env]
+        NODE_ENV = "production"
+
+        [[mcp]]
+        name = "remote"
+        url = "https://mcp.remote.test/sse"
+        """
+
+        let doc = ConfigDocument(toml)
+        let mcp = doc.mcpServers()
+        XCTAssertEqual(mcp.count, 2)
+        XCTAssertEqual(mcp[0].name, "filesystem")
+        XCTAssertEqual(mcp[0].command, "npx")
+        XCTAssertEqual(mcp[0].args, ["-y", "@mcp/fs", "/workspace"])
+        XCTAssertEqual(mcp[0].transportType, "stdio")
+        XCTAssertEqual(mcp[0].envKeys, ["NODE_ENV"])
+
+        XCTAssertEqual(mcp[1].name, "remote")
+        XCTAssertEqual(mcp[1].url, "https://mcp.remote.test/sse")
+        XCTAssertEqual(mcp[1].transportType, "http")
+
+        let roots = doc.skillRoots(relativeTo: URL(fileURLWithPath: "/tmp/arabica"))
+        XCTAssertEqual(roots.count, 2)
+        XCTAssertEqual(roots[0].rawPath, "skills")
+        XCTAssertEqual(roots[0].resolvedURL.path, "/tmp/arabica/skills")
+        XCTAssertEqual(roots[1].rawPath, "/opt/custom/skills")
+        XCTAssertEqual(roots[1].resolvedURL.path, "/opt/custom/skills")
     }
 }

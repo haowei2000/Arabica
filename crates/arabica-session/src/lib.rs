@@ -4,6 +4,12 @@
 //! monotonically ordered event envelopes. Runtime execution remains behind
 //! [`RuntimeEngine`].
 
+mod store;
+pub use store::{
+    NewSession, SessionHeader, SessionListing, SessionStore, SessionWriter, StoreError,
+    StoreErrorKind, StoredSession,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};

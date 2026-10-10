@@ -409,6 +409,25 @@ pub fn user_config_evaluation(
     Ok(config)
 }
 
+pub fn user_config_blend_policies(
+    home: &Path,
+    cwd: &Path,
+) -> Result<BTreeMap<String, BlendRoutingPolicy>, Box<dyn std::error::Error>> {
+    let args = crate::host::HostConfigArgs {
+        model: None,
+        base_url: None,
+        api_type: None,
+    };
+    let resolved = resolve_cli_runtime_config(&args, home, cwd, |_| None)?;
+    let mut policies = resolved.blend_policies;
+    if let Some(default_policy) = resolved.blend_policy {
+        policies
+            .entry(default_policy.policy_id.clone())
+            .or_insert(default_policy);
+    }
+    Ok(policies)
+}
+
 /// Relative skill roots resolve against ARABICA_HOME, never the model's input.
 pub fn user_config_skill_roots(home: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     Ok(read_user_config(home)?
