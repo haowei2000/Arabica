@@ -273,15 +273,12 @@ async fn execute_trial(
         .ok_or("trial produced no terminal evidence")?
         .with_artifacts(capture_artifacts(root, &task.acceptance)?)?;
     use sha2::{Digest, Sha256};
-    snapshot.fixture_fingerprint = Some(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&(
-            &task.initial_files,
-            config.max_model_steps,
-            config.timeout_seconds,
-            allow_shell
-        ))?)
-    ));
+    snapshot.fixture_fingerprint = Some(hex::encode(Sha256::digest(serde_json::to_vec(&(
+        &task.initial_files,
+        config.max_model_steps,
+        config.timeout_seconds,
+        allow_shell,
+    ))?)));
     let artifacts = snapshot.artifacts.clone();
     let snapshot = snapshot.with_artifacts(artifacts)?;
     let acceptance = EvidenceAcceptanceScorer.score(&snapshot, &task.acceptance)?;

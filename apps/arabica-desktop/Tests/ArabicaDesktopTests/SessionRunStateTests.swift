@@ -7,7 +7,7 @@ final class SessionRunStateTests: XCTestCase {
         let model = DesktopModel(restoreWorkspace: false)
         model.selectedSessionID = "old"
         model.permission = PermissionPrompt(
-            id: .integer(1), title: "Run a tool", detail: "", options: [],
+            id: .int(1), title: "Run a tool", detail: "", options: [],
             method: "session/request_permission", params: ["sessionId": "old"]
         )
         XCTAssertTrue(model.isWaitingForPermission)
@@ -19,7 +19,7 @@ final class SessionRunStateTests: XCTestCase {
 
     func testStringRequestIDCreatesPermissionPrompt() {
         let model = DesktopModel(restoreWorkspace: false)
-        let id = ACPRequestID("permission-uuid")!
+        let id = ACPRequestID(from: "permission-uuid")!
         let client = ACPClient()
         client.onRequest = { id, method, params in
             model.handleRequest(id, method: method, params: params)
@@ -34,7 +34,7 @@ final class SessionRunStateTests: XCTestCase {
         XCTAssertEqual(model.permission?.id, .string("permission-uuid"))
         XCTAssertEqual(model.permission?.options.first?.id, "allow_once")
         XCTAssertEqual(id.jsonValue as? String, "permission-uuid")
-        XCTAssertEqual(ACPRequestID(42), .integer(42))
+        XCTAssertEqual(ACPRequestID(from: 42), .int(42))
     }
 
     func testWorkingBelongsToSelectedSession() {
@@ -65,6 +65,7 @@ final class SessionRunStateTests: XCTestCase {
     func testBackgroundChunksDoNotChangeSelectedConversation() async {
         let model = DesktopModel(restoreWorkspace: false)
         model.workspace = URL(fileURLWithPath: "/tmp")
+        model.sessions = [DesktopSession(id: "old", cwd: "/tmp", title: "Old conversation")]
         model.selectedSessionID = "new"
         model.items = [ChatItem(kind: .user, text: "New conversation")]
         let oldRun = model.beginRun(for: "old")

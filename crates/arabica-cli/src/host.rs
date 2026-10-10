@@ -357,7 +357,7 @@ pub fn system_instructions(root: &Path) -> Vec<String> {
 /// like the same workspace regardless of which binding opened it.
 pub fn workspace_id_for(cwd: &Path) -> arabica_protocol::WorkspaceId {
     let digest = Sha256::digest(cwd.to_string_lossy().as_bytes());
-    arabica_protocol::WorkspaceId::new(format!("ws-{:.16}", format!("{digest:x}")))
+    arabica_protocol::WorkspaceId::new(format!("ws-{:.16}", hex::encode(digest)))
 }
 
 /// Build a [`HostRuntime`] fixed to the CLI profile: provider-safe Policy

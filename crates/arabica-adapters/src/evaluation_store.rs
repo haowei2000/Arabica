@@ -274,7 +274,7 @@ impl SqliteEvaluationStore {
         use sha2::{Digest, Sha256};
         let report = arabica_runtime::compare_policy_trials(trials)?;
         let encoded = serde_json::to_string(trials)?;
-        let fingerprint = format!("{:x}", Sha256::digest(encoded.as_bytes()));
+        let fingerprint = hex::encode(Sha256::digest(encoded.as_bytes()));
         self.0.execute("INSERT OR IGNORE INTO policy_comparisons(fingerprint,trials_json,report_json) VALUES(?1,?2,?3)", params![fingerprint, encoded, serde_json::to_string(&report)?])?;
         Ok(report)
     }

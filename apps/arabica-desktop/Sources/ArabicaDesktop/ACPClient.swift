@@ -37,24 +37,6 @@ private final class ACPStartupDiagnostic: @unchecked Sendable {
     }
 }
 
-enum ACPRequestID: Hashable {
-    case integer(Int)
-    case string(String)
-
-    init?(_ value: Any?) {
-        if let value = value as? String { self = .string(value) }
-        else if let value = value as? Int { self = .integer(value) }
-        else { return nil }
-    }
-
-    var jsonValue: Any {
-        switch self {
-        case .integer(let value): return value
-        case .string(let value): return value
-        }
-    }
-}
-
 enum ACPError: LocalizedError {
     case executableMissing
     case disconnected
@@ -107,6 +89,37 @@ struct ACPLineDecoder {
             }
         }
         return messages
+    }
+}
+
+enum ACPRequestID: Hashable, CustomStringConvertible, Sendable {
+    case int(Int)
+    case string(String)
+
+    var description: String {
+        switch self {
+        case .int(let i): return String(i)
+        case .string(let s): return s
+        }
+    }
+
+    var jsonValue: Any {
+        switch self {
+        case .int(let i): return i
+        case .string(let s): return s
+        }
+    }
+
+    init?(from raw: Any?) {
+        if let i = raw as? Int {
+            self = .int(i)
+        } else if let s = raw as? String {
+            self = .string(s)
+        } else if let num = raw as? NSNumber {
+            self = .int(num.intValue)
+        } else {
+            return nil
+        }
     }
 }
 
@@ -244,9 +257,17 @@ final class ACPClient {
     }
 
     func route(_ message: [String: Any]) {
-        if let id = ACPRequestID(message["id"]), let method = message["method"] as? String {
-            onRequest?(id, method, message["params"] as? [String: Any] ?? [:])
-        } else if let id = message["id"] as? Int, let continuation = pending.removeValue(forKey: id) {
+        if let method = message["method"] as? String {
+            let params = message["params"] as? [String: Any] ?? [:]
+            if let rawID = message["id"], let id = ACPRequestID(from: rawID) {
+                onRequest?(id, method, params)
+            } else {
+                onNotification?(method, params)
+            }
+        } else if let rawID = message["id"],
+                  let reqID = ACPRequestID(from: rawID),
+                  case .int(let id) = reqID,
+                  let continuation = pending.removeValue(forKey: id) {
             if let error = message["error"] as? [String: Any] {
                 continuation.resume(throwing: ACPError.remote(ACPRemoteErrorMessage.resolve(error)))
             } else if let result = message["result"] as? [String: Any] {
@@ -254,8 +275,6 @@ final class ACPClient {
             } else {
                 continuation.resume(throwing: ACPError.invalidResponse)
             }
-        } else if let method = message["method"] as? String {
-            onNotification?(method, message["params"] as? [String: Any] ?? [:])
         }
     }
 

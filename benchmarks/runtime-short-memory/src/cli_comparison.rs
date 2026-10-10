@@ -679,7 +679,7 @@ async fn probe_git_checkout(root: &Path) -> (Option<String>, bool, Option<String
                 }
             }
         }
-        Some(format!("sha256:{:x}", digest.finalize()))
+        Some(format!("sha256:{}", hex::encode(digest.finalize())))
     } else {
         None
     };
@@ -2277,7 +2277,7 @@ fn digest_tree(root: &Path) -> Result<String, String> {
         digest.update(path.as_bytes());
         digest.update(file_digest.as_bytes());
     }
-    Ok(format!("sha256:{:x}", digest.finalize()))
+    Ok(format!("sha256:{}", hex::encode(digest.finalize())))
 }
 
 fn tree_snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
@@ -2334,7 +2334,7 @@ fn changed_paths(
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 fn stable_seed(seed: u64, scenario: &str, repeat: usize) -> u64 {
