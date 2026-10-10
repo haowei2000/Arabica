@@ -14,7 +14,7 @@ readme = "../../README.md"
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-arabica-model = { version = "0.1.0", path = "../arabica-model" }
+arabica-model = { version = "0.5.0", path = "../arabica-model" }
 
 [lints]
 workspace = true

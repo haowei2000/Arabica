@@ -16,10 +16,10 @@ serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
 rusqlite.workspace = true
-arabica-model = { version = "0.1.0", path = "../arabica-model" }
-arabica-provider = { version = "0.1.0", path = "../arabica-provider" }
-arabica-protocol = { version = "0.1.0", path = "../arabica-protocol" }
-arabica-runner = { version = "0.1.0", path = "../arabica-runner" }
+arabica-model = { version = "0.5.0", path = "../arabica-model" }
+arabica-provider = { version = "0.5.0", path = "../arabica-provider" }
+arabica-protocol = { version = "0.5.0", path = "../arabica-protocol" }
+arabica-runner = { version = "0.5.0", path = "../arabica-runner" }
 tokio.workspace = true
 regex.workspace = true
 
