@@ -13,6 +13,7 @@ default-run = "structure-short-memory-benchmark"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+hex.workspace = true
 arabica-model = { path = "../../crates/arabica-model" }
 arabica-provider = { path = "../../crates/arabica-provider" }
 arabica-protocol = { path = "../../crates/arabica-protocol" }

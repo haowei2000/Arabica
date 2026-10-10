@@ -1605,7 +1605,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     || "single_model".to_owned(),
                     |policy| {
                         let bytes = serde_json::to_vec(policy).unwrap_or_default();
-                        format!("{:x}", Sha256::digest(bytes))
+                        hex::encode(Sha256::digest(bytes))
                     },
                 );
                 let pinned_context_policy = self.context_policy.clone();
@@ -3221,7 +3221,7 @@ fn semantic_tool_fingerprint(name: &str, arguments: &serde_json::Value) -> Strin
     hash.update(name.as_bytes());
     hash.update([0]);
     hash.update(canonical_arguments.as_bytes());
-    format!("sha256:{:x}", hash.finalize())
+    format!("sha256:{}", hex::encode(hash.finalize()))
 }
 
 fn write_canonical_json(value: &serde_json::Value, output: &mut String) {
@@ -4522,7 +4522,7 @@ fn safe_path_segment(value: &str) -> String {
 
 fn stable_content_hash(content: &str) -> String {
     let hash = Sha256::digest(content.as_bytes());
-    format!("sha256:{hash:x}")
+    format!("sha256:{}", hex::encode(hash))
 }
 
 fn session_not_open(session_id: &SessionId) -> RuntimeError {

@@ -67,10 +67,9 @@ fn invalid(message: impl Into<String>) -> RuntimeError {
 
 pub(crate) fn fingerprint(value: &impl Serialize) -> String {
     // All values here contain only serializable, provider-neutral data.
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).expect("context serialization"))
-    )
+    hex::encode(Sha256::digest(
+        serde_json::to_vec(value).expect("context serialization"),
+    ))
 }
 
 pub fn tool_context_identity(tool: &ToolDefinition) -> ContextIdentity {
