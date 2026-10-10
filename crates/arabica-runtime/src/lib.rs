@@ -5952,7 +5952,7 @@ mod tests {
     #[tokio::test]
     async fn an_uncancelled_control_changes_nothing() {
         // A cancellation handle that is never signalled must leave the run's
-        // Events identical to a run without control: recorded campaigns and
+        // semantic events identical to a run without control: recorded campaigns and
         // hosts that attach control unconditionally both depend on it.
         let script = || SequencedModel {
             requests: Vec::new(),
@@ -5985,7 +5985,16 @@ mod tests {
         };
         let events = handle_controlled(&mut controlled, &session_id, &run_id, &control, None).await;
 
-        assert_eq!(events, expected);
+        // Wall-clock durations vary between otherwise identical runs.
+        let normalize_timing = |mut events: Vec<Event>| {
+            for event in &mut events {
+                if let Event::ModelCallObserved { elapsed_ms, .. } = event {
+                    *elapsed_ms = 0;
+                }
+            }
+            events
+        };
+        assert_eq!(normalize_timing(events.clone()), normalize_timing(expected));
         assert!(matches!(events.last(), Some(Event::RunCompleted { .. })));
     }
 
