@@ -62,7 +62,7 @@ pub(crate) fn sha256(instructions: &[String]) -> String {
         hasher.update(instruction.as_bytes());
         hasher.update([0]);
     }
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]

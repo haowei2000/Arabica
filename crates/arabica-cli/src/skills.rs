@@ -122,10 +122,9 @@ impl LocalSkillSource {
             }
             resources.insert(resource, content);
         }
-        let fingerprint = format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&(&source, &resources)).expect("skill snapshot"))
-        );
+        let fingerprint = hex::encode(Sha256::digest(
+            serde_json::to_vec(&(&source, &resources)).expect("skill snapshot"),
+        ));
         let version = metadata.version.map_or(fingerprint.clone(), |version| {
             format!("{version}:{fingerprint}")
         });

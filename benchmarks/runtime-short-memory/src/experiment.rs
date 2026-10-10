@@ -21,7 +21,7 @@ pub struct ExperimentConfig {
 }
 
 pub fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 type FirstTurns = BTreeMap<usize, (Vec<u8>, ModelRunResult)>;
@@ -241,5 +241,20 @@ mod tests {
         assert_eq!(c.observe(&[1, 9, 3]), (1, 2));
         assert_eq!(c.observe(&[1, 2, 3, 4]), (3, 1));
         assert_eq!(PrefixCache::default().observe(&[1, 2, 3]), (0, 3));
+    }
+}
+
+#[cfg(test)]
+mod digest_compatibility_tests {
+    #[test]
+    fn sha256_preserves_lowercase_hex_with_leading_zeroes() {
+        assert_eq!(
+            super::sha256(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            super::sha256(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 }
