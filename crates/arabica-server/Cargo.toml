@@ -11,18 +11,18 @@ categories = ["development-tools"]
 readme = "../../README.md"
 
 [dependencies]
-arabica-adapters = { version = "0.1.0", path = "../arabica-adapters" }
+arabica-adapters = { version = "0.5.0", path = "../arabica-adapters" }
 axum.workspace = true
 uuid.workspace = true
 dotenvy = "0.15"
 futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-arabica-provider = { version = "0.1.0", path = "../arabica-provider" }
-arabica-protocol = { version = "0.1.0", path = "../arabica-protocol" }
-arabica-runner = { version = "0.1.0", path = "../arabica-runner" }
-arabica-runtime = { version = "0.1.0", path = "../arabica-runtime" }
-arabica-session = { version = "0.1.0", path = "../arabica-session" }
+arabica-provider = { version = "0.5.0", path = "../arabica-provider" }
+arabica-protocol = { version = "0.5.0", path = "../arabica-protocol" }
+arabica-runner = { version = "0.5.0", path = "../arabica-runner" }
+arabica-runtime = { version = "0.5.0", path = "../arabica-runtime" }
+arabica-session = { version = "0.5.0", path = "../arabica-session" }
 tokio.workspace = true
 tokio-stream.workspace = true
 
