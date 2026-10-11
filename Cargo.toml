@@ -21,7 +21,7 @@ license = "Apache-2.0"
 repository = "https://github.com/haowei2000/Arabica"
 
 [workspace.dependencies]
-agent-client-protocol = "=2.2.0"
+agent-client-protocol = "=3.1.0"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
