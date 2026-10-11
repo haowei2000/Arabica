@@ -83,7 +83,7 @@ jobs:
           Compress-Archive -Path $dir -DestinationPath "${{ matrix.archive }}"
           $hash = (Get-FileHash "${{ matrix.archive }}" -Algorithm SHA256).Hash
           "$hash  ${{ matrix.archive }}" | Out-File "${{ matrix.archive }}.sha256" -Encoding ascii
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.archive }}
           path: |
@@ -122,7 +122,7 @@ jobs:
           APPLE_NOTARY_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_BASE64 }}
         run: |
           bash scripts/sign-notarize-and-package.sh "${{ matrix.arch }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Arabica-macos-${{ matrix.arch }}
           path: |
