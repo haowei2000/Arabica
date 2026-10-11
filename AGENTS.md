@@ -45,6 +45,40 @@ cargo run -p arabica-server
 cd apps/arabica-desktop && swift test && bash scripts/package.sh debug
 ```
 
+## Rust Build Cache and Worktrees
+
+- Keep Cargo's `target/` directory local to each checkout/worktree. Never set
+  one shared `CARGO_TARGET_DIR` for concurrently active worktrees or agents;
+  Cargo build locks and overlapping artifacts can serialize builds or cause
+  interference.
+- Reuse compilation results across worktrees through a user-level `sccache`
+  installation configured as `RUSTC_WRAPPER`, rather than sharing `target/`.
+  The user's machine configuration is outside this repository; do not commit
+  cache paths, credentials, or machine-specific shell settings.
+- `CARGO_INCREMENTAL=0` is the recommended setting for parallel, multi-worktree
+  development so compiler outputs are more reusable by sccache and incremental
+  directories do not keep growing. A developer may enable incremental builds
+  for a single worktree when frequent local edits benefit from them.
+- Do not change workspace debug profiles just to reduce cache size. Preserve
+  full debug information unless the project explicitly chooses another profile;
+  profile changes affect debugging and cache compatibility across the team.
+- Do not copy or clean `target/` while a Cargo build, test, clippy, or rustdoc
+  command is active in that checkout. Prefer `cargo clean` for deliberate
+  cleanup, and preview broad cleanup with `cargo clean --dry-run` first.
+- Keep the main checkout's build artifacts when they are useful as a source for
+  APFS copy-on-write worktree clones. Worktrunk may be configured locally to
+  clone ignored `target/` contents into a new worktree; this is an optimization,
+  not a correctness guarantee, and clone only from a quiescent source.
+- Retire completed worktrees before deleting build artifacts from active ones.
+  For inactive worktrees, consider cleaning `target/` only after at least 21
+  days without builds and when it exceeds 2 GiB. Treat these as personal
+  maintenance defaults, not automatic repository policy; inspect and preview
+  candidates before deletion.
+- A local sccache capacity such as 100 GiB is separate from per-worktree
+  `target/` usage. Verify the configured limit with `sccache --show-stats`;
+  environment variables alone do not prove that the installed sccache version
+  accepted the requested cache directory or limit.
+
 The server requires `ARABICA__PROVIDERS_JSON` and
 `ARABICA__BLEND_MODELS_JSON`, plus the configured provider key environment
 variables. It listens on port 4096 unless `ARABICA__PORT` is set.
