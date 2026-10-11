@@ -194,7 +194,7 @@ jobs:
             git log --format='- %s' "$(git tag --sort=-creatordate | sed -n 2p)..$tag" 2>/dev/null || git log --format='- %s' -20
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           body_path: RELEASE_NOTES.md
