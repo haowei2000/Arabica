@@ -40,7 +40,7 @@ serde = { version = "1", features = ["derive"] }
 # that unconditional; see docs/runtime_core_architecture.md Appendix B.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.11"
-similar = "2"
+similar = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["compat"] }
