@@ -9,7 +9,7 @@ format-check:
 	cargo fmt --all --check
 check: format-check lint build test benchmark-smoke test-proxy
 run:
-	cargo run -p structure-server
+	just server
 benchmark: benchmark-smoke
 benchmark-unit:
 	cargo test -p structure-short-memory-benchmark

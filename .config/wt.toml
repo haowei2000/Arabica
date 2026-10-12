@@ -1,0 +1,3 @@
+# Initialize in the destination; older base branches use the source's script.
+[pre-start]
+environment = "if test -f scripts/dev-env.sh; then bash scripts/dev-env.sh; else bash {{ base_worktree_path | default(primary_worktree_path) }}/scripts/dev-env.sh; fi"
