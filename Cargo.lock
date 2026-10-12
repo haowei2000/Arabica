@@ -3421,6 +3421,7 @@ dependencies = [
  "arabica-runtime",
  "arabica-session",
  "axum",
+ "dotenvy",
  "hex",
  "rustix",
  "serde",
