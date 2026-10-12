@@ -377,9 +377,9 @@ impl ShortMemoryProjector {
         // Sequence values are only monotonic within one Session, so sorting a
         // forked history by sequence would interleave unrelated timelines.
         let visibility = Self::visibility(events, policy);
-        let visible_by_event_id: HashMap<EventId, bool> = visibility
+        let visible_by_event_id: HashMap<&EventId, bool> = visibility
             .iter()
-            .map(|decision| (decision.event_id.clone(), decision.visible))
+            .map(|decision| (&decision.event_id, decision.visible))
             .collect();
         let mut batches = build_batches(events);
         assign_load_states(
@@ -809,7 +809,7 @@ fn batch_identity(
 
 fn assign_load_states(
     batches: &mut [EventBatch],
-    visible_by_event_id: &HashMap<EventId, bool>,
+    visible_by_event_id: &HashMap<&EventId, bool>,
     current_run_id: Option<&RunId>,
     recent_turn_count: usize,
     batch_compaction_enabled: bool,

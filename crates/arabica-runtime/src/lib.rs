@@ -3669,10 +3669,10 @@ fn project_model_step(
         DEFAULT_PINNED_ERROR_TOOL_BATCHES,
         DEFAULT_PINNED_INSPECTION_TOOL_BATCHES,
     ));
-    let current_event_ids: HashSet<_> = history
+    let current_event_ids: HashSet<&str> = history
         .iter()
         .filter(|event| event.run_id.as_ref() == Some(run_id))
-        .map(|event| event.event_id.to_string())
+        .map(|event| event.event_id.as_str())
         .collect();
     let materialization = ShortMemoryProjector::materialize_for_model_step(
         history,
@@ -3717,7 +3717,7 @@ fn project_model_step(
         let is_current_run_entry = entry
             .source_event_ids
             .iter()
-            .any(|event_id| current_event_ids.contains(event_id));
+            .any(|event_id| current_event_ids.contains(event_id.as_str()));
         if !is_current_run_entry {
             short_memory.push(entry);
             continue;
@@ -3772,7 +3772,7 @@ fn provider_safe_policy_entries(
     let mut runs_with_model_messages = HashSet::new();
     let mut events_by_id = HashMap::new();
     for envelope in history {
-        events_by_id.insert(envelope.event_id.to_string(), envelope);
+        events_by_id.insert(envelope.event_id.as_str(), envelope);
         let Some(run_id) = &envelope.run_id else {
             continue;
         };
@@ -3781,23 +3781,23 @@ fn provider_safe_policy_entries(
         }
         match &envelope.event {
             Event::ToolCallCompleted { call_id, .. } => {
-                completed_calls.insert((run_id.clone(), call_id.clone()));
+                completed_calls.insert((run_id.as_str(), call_id.as_str()));
             }
             Event::ModelResponseItem {
                 item: RuntimeItem::Message(_),
                 ..
             } => {
-                runs_with_model_messages.insert(run_id.clone());
+                runs_with_model_messages.insert(run_id.as_str());
             }
             _ => {}
         }
     }
-    let tool_output_ids: HashSet<String> = batches
+    let tool_output_ids: HashSet<&str> = batches
         .iter()
         .filter(|batch| batch.context_kind == MemoryBatchKind::Tool)
         .flat_map(|batch| &batch.events)
         .filter(|event| matches!(event.event, Event::CommandOutput { .. }))
-        .map(|event| event.event_id.to_string())
+        .map(|event| event.event_id.as_str())
         .collect();
     entries
         .into_iter()
@@ -3805,7 +3805,7 @@ fn provider_safe_policy_entries(
             let [event_id] = entry.source_event_ids.as_slice() else {
                 return true;
             };
-            let Some(envelope) = events_by_id.get(event_id) else {
+            let Some(envelope) = events_by_id.get(event_id.as_str()) else {
                 return true;
             };
             let Some(run_id) = &envelope.run_id else {
@@ -3815,12 +3815,12 @@ fn provider_safe_policy_entries(
                 return true;
             }
             match &envelope.event {
-                Event::CommandOutput { .. } => !tool_output_ids.contains(event_id),
+                Event::CommandOutput { .. } => !tool_output_ids.contains(event_id.as_str()),
                 Event::ToolCallRequested { call_id, .. } => {
-                    completed_calls.contains(&(run_id.clone(), call_id.clone()))
+                    completed_calls.contains(&(run_id.as_str(), call_id.as_str()))
                 }
                 Event::RunCompleted { output: Some(_) } => {
-                    !runs_with_model_messages.contains(run_id)
+                    !runs_with_model_messages.contains(run_id.as_str())
                 }
                 _ => true,
             }
@@ -3838,7 +3838,7 @@ fn continuation_substitution<'a>(
         .collect::<HashSet<_>>();
     let call_ids = history
         .iter()
-        .filter(|event| event_ids.contains(&event.event_id.to_string()))
+        .filter(|event| event_ids.contains(event.event_id.as_str()))
         .filter_map(|event| match &event.event {
             Event::ToolCallRequested { call_id, .. } | Event::ToolCallCompleted { call_id, .. } => {
                 Some(call_id.clone())

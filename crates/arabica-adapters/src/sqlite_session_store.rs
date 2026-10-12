@@ -23,6 +23,7 @@ pub struct SqliteSessionStore {
     path: PathBuf,
     workspace_id: WorkspaceId,
     session_id: SessionId,
+    last_sequence: Mutex<Option<u64>>,
     // Locks must live for the entire writer lifetime, including legacy files.
     _lock: File,
     _legacy_lock: Option<File>,
@@ -74,7 +75,7 @@ fn connect(home: &Path) -> Result<Connection, StoreError> {
     connection
         .execute_batch(
             "PRAGMA journal_mode=WAL;
-         PRAGMA synchronous=FULL;
+         PRAGMA synchronous=NORMAL;
          PRAGMA foreign_keys=ON;
          CREATE TABLE IF NOT EXISTS sessions (
            workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -237,6 +238,7 @@ impl SqliteSessionStore {
             path,
             workspace_id: new.workspace_id.clone(),
             session_id: new.session_id.clone(),
+            last_sequence: Mutex::new(Some(0)),
             _lock: lock,
             _legacy_lock: legacy_lock,
         })
@@ -306,6 +308,7 @@ impl SqliteSessionStore {
             path: path.to_owned(),
             workspace_id,
             session_id,
+            last_sequence: Mutex::new(None),
             _lock: lock,
             _legacy_lock: legacy_lock,
         })
@@ -409,16 +412,27 @@ impl SqliteSessionStore {
             return Err(error("event does not belong to this session"));
         }
         let mut connection = self.connection.lock().map_err(error)?;
+        let mut last_seq_guard = self.last_sequence.lock().map_err(error)?;
         // Reserve the writer before checking sequence. A deferred transaction
         // can lose its read snapshot when a background reader initializes
         // another connection, making the subsequent write fail immediately.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(error)?;
-        let last_sequence: u64 = transaction.query_row(
-            "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE workspace_id=?1 AND session_id=?2",
-            params![self.workspace_id.to_string(), self.session_id.to_string()], |row| row.get(0),
-        ).map_err(error)?;
+        let last_sequence: u64 = match *last_seq_guard {
+            Some(seq) => seq,
+            None => {
+                let seq: u64 = transaction
+                    .query_row(
+                        "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE workspace_id=?1 AND session_id=?2",
+                        params![self.workspace_id.to_string(), self.session_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map_err(error)?;
+                *last_seq_guard = Some(seq);
+                seq
+            }
+        };
         if last_sequence.checked_add(1) != Some(envelope.sequence) {
             return Err(error("event sequence must continue the persisted history"));
         }
@@ -435,7 +449,9 @@ impl SqliteSessionStore {
             )
             .map_err(error)?;
         transaction.execute("UPDATE sessions SET updated_at_ms=?3, title=COALESCE(title, ?4) WHERE workspace_id=?1 AND session_id=?2", params![self.workspace_id.to_string(), self.session_id.to_string(), now_ms(), title_for(&envelope.event)]).map_err(error)?;
-        transaction.commit().map_err(error)
+        transaction.commit().map_err(error)?;
+        *last_seq_guard = Some(envelope.sequence);
+        Ok(())
     }
 }
 
