@@ -399,7 +399,10 @@ impl SqliteSessionStore {
         if title.is_empty() {
             return Err(error("session title must not be empty"));
         }
-        self.connection.lock().map_err(error)?.execute("UPDATE sessions SET title=?3, updated_at_ms=?4 WHERE workspace_id=?1 AND session_id=?2", params![self.workspace_id.to_string(), self.session_id.to_string(), title, now_ms()]).map_err(error)?;
+        self.connection.lock().map_err(error)?.execute(
+            "UPDATE sessions SET title=?3, updated_at_ms=?4 WHERE workspace_id=?1 AND session_id=?2",
+            params![self.workspace_id.as_str(), self.session_id.as_str(), title, now_ms()],
+        ).map_err(error)?;
         Ok(())
     }
 
@@ -425,7 +428,7 @@ impl SqliteSessionStore {
                 let seq: u64 = transaction
                     .query_row(
                         "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE workspace_id=?1 AND session_id=?2",
-                        params![self.workspace_id.to_string(), self.session_id.to_string()],
+                        params![self.workspace_id.as_str(), self.session_id.as_str()],
                         |row| row.get(0),
                     )
                     .map_err(error)?;
@@ -436,19 +439,26 @@ impl SqliteSessionStore {
         if last_sequence.checked_add(1) != Some(envelope.sequence) {
             return Err(error("event sequence must continue the persisted history"));
         }
+        let visibility_str = match visibility {
+            EventVisibility::Client => "\"client\"",
+            EventVisibility::Internal => "\"internal\"",
+        };
         transaction
             .execute(
                 "INSERT INTO events VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
-                    self.workspace_id.to_string(),
-                    self.session_id.to_string(),
+                    self.workspace_id.as_str(),
+                    self.session_id.as_str(),
                     envelope.sequence,
-                    serde_json::to_string(&visibility).map_err(error)?,
+                    visibility_str,
                     serde_json::to_string(envelope).map_err(error)?
                 ],
             )
             .map_err(error)?;
-        transaction.execute("UPDATE sessions SET updated_at_ms=?3, title=COALESCE(title, ?4) WHERE workspace_id=?1 AND session_id=?2", params![self.workspace_id.to_string(), self.session_id.to_string(), now_ms(), title_for(&envelope.event)]).map_err(error)?;
+        transaction.execute(
+            "UPDATE sessions SET updated_at_ms=?3, title=COALESCE(title, ?4) WHERE workspace_id=?1 AND session_id=?2",
+            params![self.workspace_id.as_str(), self.session_id.as_str(), now_ms(), title_for(&envelope.event)],
+        ).map_err(error)?;
         transaction.commit().map_err(error)?;
         *last_seq_guard = Some(envelope.sequence);
         Ok(())

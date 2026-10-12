@@ -400,12 +400,15 @@ impl LocalRunner {
         }
         // Line numbers let an edit tool report a near-miss by location and give
         // the model a stable way to talk about a region it has not copied.
-        Ok(content
-            .lines()
-            .enumerate()
-            .map(|(index, line)| format!("{:>6}\t{line}", index + 1))
-            .collect::<Vec<_>>()
-            .join("\n"))
+        use std::fmt::Write;
+        let mut numbered = String::with_capacity(content.len().saturating_add(64));
+        for (index, line) in content.lines().enumerate() {
+            if index > 0 {
+                numbered.push('\n');
+            }
+            let _ = write!(numbered, "{:>6}\t{line}", index + 1);
+        }
+        Ok(numbered)
     }
 
     async fn write_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
@@ -488,20 +491,22 @@ impl LocalRunner {
             .await
             .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?
         {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let mut name = entry
+                .file_name()
+                .into_string()
+                .unwrap_or_else(|os| os.to_string_lossy().into_owned());
             let file_type = entry
                 .file_type()
                 .await
                 .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?;
             // Symbolic links are marked and never followed, matching read_file
             // and write_file.
-            names.push(if file_type.is_symlink() {
-                format!("{name}@")
+            if file_type.is_symlink() {
+                name.push('@');
             } else if file_type.is_dir() {
-                format!("{name}/")
-            } else {
-                name
-            });
+                name.push('/');
+            }
+            names.push(name);
         }
         if names.is_empty() {
             return Ok("(empty directory)".to_owned());

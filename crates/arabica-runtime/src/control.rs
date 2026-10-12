@@ -93,7 +93,7 @@ impl ToolPermissionPolicy {
             let Some(value) = argument_value(arguments, &rule.parameter) else {
                 continue;
             };
-            if regex::Regex::new(&rule.pattern).is_ok_and(|pattern| pattern.is_match(&value)) {
+            if crate::cached_regex_is_match(&rule.pattern, &value) {
                 return rule.rule;
             }
         }

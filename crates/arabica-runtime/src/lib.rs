@@ -83,6 +83,23 @@ const MAX_FILE_BACKED_GC_CHECKPOINT_BATCHES: usize = 4;
 const POINTER_GC_CACHE_WARMUP_REQUESTS: u64 = 2;
 const DEFAULT_PINNED_ERROR_TOOL_BATCHES: usize = 2;
 const DEFAULT_PINNED_INSPECTION_TOOL_BATCHES: usize = 2;
+
+pub(crate) fn cached_regex_is_match(pattern: &str, text: &str) -> bool {
+    thread_local! {
+        static REGEX_CACHE: std::cell::RefCell<HashMap<String, Option<Regex>>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    REGEX_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(opt_re) = map.get(pattern) {
+            return opt_re.as_ref().is_some_and(|re| re.is_match(text));
+        }
+        let compiled = Regex::new(pattern).ok();
+        let matched = compiled.as_ref().is_some_and(|re| re.is_match(text));
+        map.insert(pattern.to_owned(), compiled);
+        matched
+    })
+}
 const DEFAULT_AUTO_HYDRATION_MAX_BYTES: usize = 64 * 1024;
 const PROBABILITY_SCALE_BPS: u32 = 10_000;
 const FALLBACK_BYTES_PER_TOKEN: usize = 4;
@@ -1353,19 +1370,19 @@ fn choose_tool_route(
                 BlendToolMatcher::RegexName(pattern) => (
                     2,
                     BlendRouteReason::ToolRouteRegexName,
-                    Regex::new(pattern).is_ok_and(|regex| regex.is_match(&name)),
+                    cached_regex_is_match(pattern, &name),
                 ),
                 BlendToolMatcher::EventTraceRegex(pattern) => (
                     2,
                     BlendRouteReason::ToolRouteEventTraceRegex,
-                    Regex::new(pattern).is_ok_and(|regex| regex.is_match(&event_trace)),
+                    cached_regex_is_match(pattern, &event_trace),
                 ),
                 BlendToolMatcher::EventTraceV1Regex(pattern) => (
                     2,
                     BlendRouteReason::ToolRouteEventTraceV1Regex,
-                    trace_v1.as_ref().is_some_and(|trace| {
-                        Regex::new(pattern).is_ok_and(|regex| regex.is_match(trace))
-                    }),
+                    trace_v1
+                        .as_ref()
+                        .is_some_and(|trace| cached_regex_is_match(pattern, trace)),
                 ),
                 BlendToolMatcher::Kind(expected) => {
                     (1, BlendRouteReason::ToolRouteKind, kind == *expected)
@@ -4508,23 +4525,20 @@ fn pointer_gc_epoch_blockers(
 fn is_archivable_batch(batch: &EventBatch) -> bool {
     match batch.context_kind {
         MemoryBatchKind::Tool => {
-            let requested: HashSet<_> = batch
-                .events
-                .iter()
-                .filter_map(|event| match &event.event {
-                    Event::ToolCallRequested { call_id, .. } => Some(call_id.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let completed: HashSet<_> = batch
-                .events
-                .iter()
-                .filter_map(|event| match &event.event {
-                    Event::ToolCallCompleted { call_id, .. } => Some(call_id.as_str()),
-                    _ => None,
-                })
-                .collect();
-            !requested.is_empty() && requested.is_subset(&completed)
+            let mut has_requested = false;
+            for event in &batch.events {
+                if let Event::ToolCallRequested { call_id, .. } = &event.event {
+                    has_requested = true;
+                    let call_id = call_id.as_str();
+                    let completed = batch.events.iter().any(|other| {
+                        matches!(&other.event, Event::ToolCallCompleted { call_id: completed_id, .. } if completed_id.as_str() == call_id)
+                    });
+                    if !completed {
+                        return false;
+                    }
+                }
+            }
+            has_requested
         }
         MemoryBatchKind::Reasoning => true,
         MemoryBatchKind::Turn => batch.events.iter().any(|event| {
@@ -4612,11 +4626,12 @@ fn pointer_archive_path(batch: &EventBatch, content_hash: &str) -> String {
         _ => None,
     });
     let status = status.unwrap_or("closed");
-    let short_hash = content_hash
-        .trim_start_matches("sha256:")
-        .chars()
-        .take(20)
-        .collect::<String>();
+    let raw_hash = content_hash.strip_prefix("sha256:").unwrap_or(content_hash);
+    let short_hash = if raw_hash.len() > 20 {
+        &raw_hash[..20]
+    } else {
+        raw_hash
+    };
     format!(
         "m/{category}/{:06}-{:06}-{status}-{short_hash}.json",
         batch.sequence_start, batch.sequence_end
