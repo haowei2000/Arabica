@@ -221,6 +221,8 @@ The CLI validates every provider reference, alias, credential source, and API-sp
 
 Optional configuration:
 
+For parallel local development, see [the worktree setup guide](docs/parallel-development.md).
+
 - `ARABICA__PORT`: listening port, default `4096`
 - `ARABICA__PROVIDERS_JSON`: server provider definitions, keyed by provider name
 - `ARABICA__BLEND_MODELS_JSON`: server alias entries with `provider` and `model_id`

@@ -47,6 +47,20 @@ cd apps/arabica-desktop && swift test && bash scripts/package.sh debug
 
 ## Rust Build Cache and Worktrees
 
+- Modify only the current worktree. Use one branch/worktree per task; do not
+  modify another agent's checkout or the shared main branch.
+- Prefer `just check-pkg <package>`, `just test-pkg <package>`, and
+  `just lint-pkg <package>` for affected crates; reserve workspace validation
+  for integration and handoff.
+- Run `just dev-init` in each worktree. Keep `ARABICA_HOME`, archive paths, and
+  HTTP ports task-local; start the development desktop with `just desktop-run`
+  so its ACP child inherits the worktree environment.
+- Never run global cleanup, `docker compose down -v`, volume pruning,
+  `FLUSHALL`, or `dropdb` against shared infrastructure. Preview cleanup and
+  inspect ignored local data and running processes before removing a worktree.
+- Do not force-push main or delete unmerged branches. Use PR/CI integration.
+- Report the diff, validation results, risks, and remaining review items.
+
 - Keep Cargo's `target/` directory local to each checkout/worktree. Never set
   one shared `CARGO_TARGET_DIR` for concurrently active worktrees or agents;
   Cargo build locks and overlapping artifacts can serialize builds or cause

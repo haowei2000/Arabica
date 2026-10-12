@@ -13,6 +13,7 @@ target/
 /benchmark_runs/
 /.local/benchmarks/
 /.local/tools/
+/.local/dev-home/
 /benchmarks/data/
 /.structure/
 
