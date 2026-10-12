@@ -52,6 +52,10 @@ done
 umask 077
 dev_home="$repo_root/.local/dev-home"
 mkdir -p "$dev_home"
+# Protect configuration even when the destination predates the tracked ignore rule.
+if [[ ! -e "$dev_home/.gitignore" ]]; then
+  printf '*\n' > "$dev_home/.gitignore"
+fi
 # Copy configuration only, never sessions, databases, or saved authentication.
 # Relative resource paths in the copied config should be reviewed locally.
 if [[ ! -e "$dev_home/config.toml" && -f "$HOME/.arabica/config.toml" ]]; then

@@ -25,6 +25,15 @@ Existing `.env.local` files are preserved. Its absolute paths must be regenerate
 or edited after moving a worktree. The generated environment is private and
 loads through just or direnv; `.env.local` is not automatically read by the server.
 
+Worktrunk reads hooks from the source worktree but runs pre-start in the new
+destination. When the base branch predates this setup, the hook uses the
+source worktree's initializer while keeping all generated state in the new
+destination. The local home also carries its own ignore rule to protect private
+configuration on older branches. The tracked justfile and direnv configuration
+become available after integrating these setup commits into the base branch.
+If a previous pre-start hook failed, the worktree may already exist: switch to
+it without `--create` after completing initialization rather than recreating it.
+
 Each task uses its ignored `.local/dev-home/` for configuration, SQLite state,
 and archives. Only `~/.arabica/config.toml` is copied, with owner-only permissions;
 sessions and saved authentication are never copied. Review relative resource
