@@ -1437,6 +1437,12 @@ mod tests {
             "CODEX_GITHUB_PERSONAL_ACCESS_TOKEN",
             "DB_PASSWORD",
             "PROVIDER_SPECIAL",
+            "HTTP_AUTHORIZATION",
+            "BEARER_AUTH",
+            "AWS_ACCESSKEY",
+            "GITHUB_PAT",
+            "RELEASE_SIGNING",
+            "SSH_PRIVATEKEY",
         ] {
             assert!(policy.scrubs(scrubbed), "{scrubbed} must be removed");
         }
