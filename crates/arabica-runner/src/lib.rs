@@ -307,6 +307,7 @@ pub struct LocalRunner {
     root: PathBuf,
     policy: LocalRunnerPolicy,
     active_runs: HashSet<RunId>,
+    canonical_root: std::sync::OnceLock<PathBuf>,
 }
 
 impl LocalRunner {
@@ -319,6 +320,7 @@ impl LocalRunner {
             root: root.into(),
             policy,
             active_runs: HashSet::new(),
+            canonical_root: std::sync::OnceLock::new(),
         }
     }
 
@@ -342,9 +344,7 @@ impl LocalRunner {
         tool: &str,
     ) -> Result<(PathBuf, u64), RunnerError> {
         let relative = validate_local_path(path)?;
-        let root = tokio::fs::canonicalize(&self.root)
-            .await
-            .map_err(|error| RunnerError::new(format!("local runner root unavailable: {error}")))?;
+        let root = self.canonical_root().await?;
         let unresolved_target = root.join(relative);
         let unresolved_metadata = tokio::fs::symlink_metadata(&unresolved_target)
             .await
@@ -400,12 +400,15 @@ impl LocalRunner {
         }
         // Line numbers let an edit tool report a near-miss by location and give
         // the model a stable way to talk about a region it has not copied.
-        Ok(content
-            .lines()
-            .enumerate()
-            .map(|(index, line)| format!("{:>6}\t{line}", index + 1))
-            .collect::<Vec<_>>()
-            .join("\n"))
+        use std::fmt::Write;
+        let mut numbered = String::with_capacity(content.len().saturating_add(64));
+        for (index, line) in content.lines().enumerate() {
+            if index > 0 {
+                numbered.push('\n');
+            }
+            let _ = write!(numbered, "{:>6}\t{line}", index + 1);
+        }
+        Ok(numbered)
     }
 
     async fn write_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
@@ -418,9 +421,7 @@ impl LocalRunner {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| RunnerError::new("write_file.content must be a string"))?;
         let relative = validate_local_path(path)?;
-        let root = tokio::fs::canonicalize(&self.root)
-            .await
-            .map_err(|error| RunnerError::new(format!("local runner root unavailable: {error}")))?;
+        let root = self.canonical_root().await?;
         let target = root.join(relative);
         let parent = tokio::fs::canonicalize(
             target
@@ -448,9 +449,14 @@ impl LocalRunner {
     }
 
     async fn canonical_root(&self) -> Result<PathBuf, RunnerError> {
-        tokio::fs::canonicalize(&self.root)
+        if let Some(root) = self.canonical_root.get() {
+            return Ok(root.clone());
+        }
+        let root = tokio::fs::canonicalize(&self.root)
             .await
-            .map_err(|error| RunnerError::new(format!("local runner root unavailable: {error}")))
+            .map_err(|error| RunnerError::new(format!("local runner root unavailable: {error}")))?;
+        let _ = self.canonical_root.set(root.clone());
+        Ok(root)
     }
 
     /// Resolve an optional relative `path` argument against the root. A missing
@@ -485,20 +491,22 @@ impl LocalRunner {
             .await
             .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?
         {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let mut name = entry
+                .file_name()
+                .into_string()
+                .unwrap_or_else(|os| os.to_string_lossy().into_owned());
             let file_type = entry
                 .file_type()
                 .await
                 .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?;
             // Symbolic links are marked and never followed, matching read_file
             // and write_file.
-            names.push(if file_type.is_symlink() {
-                format!("{name}@")
+            if file_type.is_symlink() {
+                name.push('@');
             } else if file_type.is_dir() {
-                format!("{name}/")
-            } else {
-                name
-            });
+                name.push('/');
+            }
+            names.push(name);
         }
         if names.is_empty() {
             return Ok("(empty directory)".to_owned());
@@ -725,12 +733,7 @@ fn grep_blocking(
         let Ok(content) = std::fs::read_to_string(entry.path()) else {
             continue;
         };
-        let display = entry
-            .path()
-            .strip_prefix(root)
-            .unwrap_or(entry.path())
-            .display()
-            .to_string();
+        let mut display: Option<String> = None;
         for (index, line) in content.lines().enumerate() {
             if !regex.is_match(line) {
                 continue;
@@ -739,11 +742,19 @@ fn grep_blocking(
                 truncated = true;
                 break;
             }
+            let file_display = display.get_or_insert_with(|| {
+                entry
+                    .path()
+                    .strip_prefix(root)
+                    .unwrap_or(entry.path())
+                    .display()
+                    .to_string()
+            });
             let mut text = line.trim_end().to_owned();
             if text.chars().count() > max_line_chars {
                 text = text.chars().take(max_line_chars).collect::<String>() + "...";
             }
-            matches.push(format!("{display}:{}:{text}", index + 1));
+            matches.push(format!("{file_display}:{}:{text}", index + 1));
         }
         if truncated {
             break;

@@ -25,6 +25,16 @@ use serde_json::{Value, json};
 const TRANSIENT_SEND_ATTEMPTS: usize = 3;
 const TRANSIENT_RETRY_BASE_DELAY_MS: u64 = 250;
 
+fn build_http_client(timeout_secs: u64) -> Client {
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .tcp_nodelay(true)
+        .tcp_keepalive(Some(Duration::from_secs(60)))
+        .pool_idle_timeout(Some(Duration::from_secs(90)))
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
 /// Explicit Chat Completions experiment settings. Unsupported endpoint
 /// parameters must produce an error; callers must not silently remove them.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -806,10 +816,7 @@ impl OpenAiModelProvider {
             .map_err(|e| ProviderError::new(e.to_string()))
     }
     pub fn new(config: OpenAiProviderConfig) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = build_http_client(config.request_timeout_secs);
         Self::with_client(config, client)
     }
 
@@ -1079,10 +1086,7 @@ pub struct OpenAiResponsesModelProvider {
 
 impl OpenAiResponsesModelProvider {
     pub fn new(config: OpenAiProviderConfig) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = build_http_client(config.request_timeout_secs);
         Self {
             client,
             config,
@@ -1293,10 +1297,7 @@ pub struct AnthropicModelProvider {
 
 impl AnthropicModelProvider {
     pub fn new(config: AnthropicProviderConfig) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = build_http_client(config.request_timeout_secs);
         Self {
             client,
             config,
@@ -1902,10 +1903,7 @@ pub struct GeminiGenerateContentModelProvider {
 
 impl GeminiGenerateContentModelProvider {
     pub fn new(config: GeminiProviderConfig) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = build_http_client(config.request_timeout_secs);
         Self {
             client,
             config,

@@ -377,9 +377,9 @@ impl ShortMemoryProjector {
         // Sequence values are only monotonic within one Session, so sorting a
         // forked history by sequence would interleave unrelated timelines.
         let visibility = Self::visibility(events, policy);
-        let visible_by_event_id: HashMap<EventId, bool> = visibility
+        let visible_by_event_id: HashMap<&EventId, bool> = visibility
             .iter()
-            .map(|decision| (decision.event_id.clone(), decision.visible))
+            .map(|decision| (&decision.event_id, decision.visible))
             .collect();
         let mut batches = build_batches(events);
         assign_load_states(
@@ -416,7 +416,7 @@ fn visibility_decisions(
 ) -> Vec<EventVisibilityDecision> {
     let floor_start = events.len().saturating_sub(policy.recency_floor);
     let mut newer_class_counts = BTreeMap::<MemoryClass, u64>::new();
-    let mut newer_completion_counts = BTreeMap::<(String, MemoryClass), u64>::new();
+    let mut newer_completion_counts = HashMap::<String, HashMap<MemoryClass, u64>>::new();
     let mut decisions = Vec::with_capacity(events.len());
 
     for (index, event) in events.iter().enumerate().rev() {
@@ -433,20 +433,18 @@ fn visibility_decisions(
                     )
             })
             .sum();
-        if let Some(relation_key) = &traits.relation_key {
-            for newer_class in newer_class_counts.keys() {
-                let completion_count = newer_completion_counts
-                    .get(&(relation_key.clone(), *newer_class))
-                    .copied()
-                    .unwrap_or_default();
+        if let Some(relation_key) = &traits.relation_key
+            && let Some(completions) = newer_completion_counts.get(relation_key.as_str())
+        {
+            for (&newer_class, &completion_count) in completions {
                 if completion_count == 0 {
                     continue;
                 }
                 let general_cost = policy
-                    .decay_cost(traits.class, *newer_class, DecayMatch::Any)
+                    .decay_cost(traits.class, newer_class, DecayMatch::Any)
                     .unwrap_or(1);
                 let completion_cost = policy
-                    .decay_cost(traits.class, *newer_class, DecayMatch::CompletesRelation)
+                    .decay_cost(traits.class, newer_class, DecayMatch::CompletesRelation)
                     .unwrap_or(general_cost);
                 accumulated_decay += i128::from(completion_count)
                     * (i128::from(completion_cost) - i128::from(general_cost));
@@ -473,7 +471,9 @@ fn visibility_decisions(
             && let Some(relation_key) = traits.relation_key
         {
             *newer_completion_counts
-                .entry((relation_key, traits.class))
+                .entry(relation_key)
+                .or_default()
+                .entry(traits.class)
                 .or_default() += 1;
         }
     }
@@ -809,7 +809,7 @@ fn batch_identity(
 
 fn assign_load_states(
     batches: &mut [EventBatch],
-    visible_by_event_id: &HashMap<EventId, bool>,
+    visible_by_event_id: &HashMap<&EventId, bool>,
     current_run_id: Option<&RunId>,
     recent_turn_count: usize,
     batch_compaction_enabled: bool,
