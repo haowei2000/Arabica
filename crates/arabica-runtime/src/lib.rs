@@ -3114,7 +3114,7 @@ fn completion_advisory_message(
 ) -> String {
     if window_tool_errors > 0 {
         return format!(
-            "runtime_progress_advisory: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps, and the latest {window_steps}-step window contained {window_tool_errors} tool errors. The task is not yet validated: stop varying optional checks, address one concrete failure with a corrective mutation, dependency, or build action, then rerun the required validation. Do not call runtime_complete while required validation is failing."
+            "runtime_progress_advisory: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps, and the latest {window_steps}-step window contained {window_tool_errors} tool errors. The task is not yet validated: stop varying optional checks, address one concrete failure with a corrective mutation, dependency, or build action, then rerun the required validation. Do not call runtime_complete while required validation is failing. Take active corrective steps to fix the errors."
         );
     }
     format!(
@@ -3421,7 +3421,7 @@ fn blocked_tool_result(call: &ToolCallItem, repeat_count: usize) -> ToolResultIt
         call_id: call.call_id.clone(),
         name: Some(call.name.clone()),
         content: vec![ContentBlock::text(format!(
-            "duplicate_tool_call_blocked: this successful inspection or validation has already been reused and was requested {repeat_count} more times without a state-changing tool. Choose a different action that makes progress, or finish the task."
+            "duplicate_tool_call_blocked: this successful inspection or validation has already been reused and was requested {repeat_count} more times without a state-changing tool. You are in a read-only loop. To proceed: (1) if code changes are needed, apply them now using mutation tools (such as edit_files or write_file); (2) if previous work is done and verified, submit completion or report your final answer; (3) do not repeat read-only inspections without intervening mutations."
         ))],
         is_error: true,
     }
@@ -8088,6 +8088,27 @@ mod tests {
         assert!(failed.contains("contained 3 tool errors"));
         assert!(failed.contains("corrective mutation, dependency, or build action"));
         assert!(failed.contains("Do not call runtime_complete"));
+    }
+
+    #[test]
+    fn blocked_tool_result_provides_actionable_recovery_guidance() {
+        let call = ToolCallItem {
+            id: None,
+            call_id: "test-call-1".to_owned(),
+            name: "grep".to_owned(),
+            arguments: serde_json::json!({"pattern": "foo"}),
+            provider_state: None,
+        };
+        let result = blocked_tool_result(&call, 2);
+        assert!(result.is_error);
+        let ContentBlock::Text { text } = &result.content[0] else {
+            panic!("expected text content");
+        };
+        assert!(text.starts_with("duplicate_tool_call_blocked:"));
+        assert!(text.contains("requested 2 more times"));
+        assert!(text.contains("read-only loop"));
+        assert!(text.contains("apply them now using mutation tools"));
+        assert!(text.contains("submit completion or report your final answer"));
     }
 
     #[tokio::test]
