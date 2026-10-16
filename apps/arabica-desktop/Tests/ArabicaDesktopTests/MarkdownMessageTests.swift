@@ -8,15 +8,6 @@ final class MarkdownMessageTests: XCTestCase {
         XCTAssertEqual(blocks.last?.text, "# literal\n\n**code**")
     }
 
-    func testTableAndCodeIsolation() {
-        let source = "| Name | Value |\n| :--- | ---: |\n| **One** | `a|b` |\n| Two | a\\|b |"
-        XCTAssertEqual(MarkdownBlock.parse(source), [MarkdownBlock(kind: .table([
-            ["Name", "Value"], ["**One**", "`a|b`"], ["Two", "a|b"],
-        ]), text: "")])
-        XCTAssertEqual(MarkdownBlock.parse("```\n" + source + "\n```").first?.kind, .code)
-        XCTAssertEqual(MarkdownBlock.parse("a | b\nnot | separator").first?.kind, .paragraph)
-    }
-
     func testStreamingUnclosedFenceAndPlainText() {
         XCTAssertEqual(MarkdownBlock.parse("Before\n~~~\nlet x = 1"), [
             MarkdownBlock(kind: .paragraph, text: "Before"),
@@ -25,5 +16,28 @@ final class MarkdownMessageTests: XCTestCase {
         XCTAssertEqual(MarkdownBlock.parse("#hashtag\ncontinued"), [
             MarkdownBlock(kind: .paragraph, text: "#hashtag\ncontinued"),
         ])
+    }
+
+    func testGFMTableAndColumnAlignment() {
+        XCTAssertEqual(MarkdownBlock.parse("| Name | Count |\n|:-----|------:|\n| Tea | 2 |\n| Coffee | 5 |"), [
+            MarkdownBlock(kind: .table(
+                headers: ["Name", "Count"],
+                rows: [["Tea", "2"], ["Coffee", "5"]],
+                alignments: [.leading, .trailing]
+            ), text: ""),
+        ])
+    }
+
+    func testTableKeepsEscapedAndInlineCodePipesTogether() {
+        let source = "| Name | Value |\n| --- | --- |\n| Inline | `a|b` |\n| Escaped | a\\|b |"
+        XCTAssertEqual(MarkdownBlock.parse(source), [
+            MarkdownBlock(kind: .table(
+                headers: ["Name", "Value"],
+                rows: [["Inline", "`a|b`"], ["Escaped", "a|b"]],
+                alignments: [.leading, .leading]
+            ), text: ""),
+        ])
+        XCTAssertEqual(MarkdownBlock.parse("```\n" + source + "\n```").first?.kind, .code)
+        XCTAssertEqual(MarkdownBlock.parse("a | b\nnot | separator").first?.kind, .paragraph)
     }
 }
