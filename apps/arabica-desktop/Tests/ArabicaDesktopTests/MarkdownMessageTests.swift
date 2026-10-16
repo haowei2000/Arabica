@@ -17,4 +17,27 @@ final class MarkdownMessageTests: XCTestCase {
             MarkdownBlock(kind: .paragraph, text: "#hashtag\ncontinued"),
         ])
     }
+
+    func testGFMTableAndColumnAlignment() {
+        XCTAssertEqual(MarkdownBlock.parse("| Name | Count |\n|:-----|------:|\n| Tea | 2 |\n| Coffee | 5 |"), [
+            MarkdownBlock(kind: .table(
+                headers: ["Name", "Count"],
+                rows: [["Tea", "2"], ["Coffee", "5"]],
+                alignments: [.leading, .trailing]
+            ), text: ""),
+        ])
+    }
+
+    func testTableKeepsEscapedAndInlineCodePipesTogether() {
+        let source = "| Name | Value |\n| --- | --- |\n| Inline | `a|b` |\n| Escaped | a\\|b |"
+        XCTAssertEqual(MarkdownBlock.parse(source), [
+            MarkdownBlock(kind: .table(
+                headers: ["Name", "Value"],
+                rows: [["Inline", "`a|b`"], ["Escaped", "a|b"]],
+                alignments: [.leading, .leading]
+            ), text: ""),
+        ])
+        XCTAssertEqual(MarkdownBlock.parse("```\n" + source + "\n```").first?.kind, .code)
+        XCTAssertEqual(MarkdownBlock.parse("a | b\nnot | separator").first?.kind, .paragraph)
+    }
 }
