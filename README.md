@@ -217,7 +217,30 @@ after_tool_error = "strong"
 minimum_model_dwell_steps = 2
 ```
 
-The CLI validates every provider reference, alias, credential source, and API-specific setting at startup. A TOML `api_key` is accepted as a fallback to the environment variable; a config file containing keys must be owner-only (`chmod 600`). `arabica auth login` remains a saved-key fallback for the default provider. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes configured policy IDs and model aliases as session selectors. Selecting a policy changes the current session's routing rules; selecting a model changes that policy's session default. For one policy, the earlier flat `[blend]` fields remain accepted.
+The CLI validates every provider reference, alias, credential source, and API-specific setting at startup. A TOML `api_key` is accepted as a fallback to the environment variable; a config file containing keys must be owner-only (`chmod 600`). `arabica auth login` remains a saved-key fallback for the default provider. Open-source users can connect through the official Sign in with ChatGPT flow with the one-step command `arabica auth chatgpt-login`; after authorization, Arabica automatically configures its default model for ChatGPT plan usage. Tokens are saved under `$ARABICA_HOME/chatgpt-auth.json` with owner-only permissions and refreshed automatically. Blend routing is active in interactive chat, `arabica -p`, and ACP sessions. ACP exposes configured policy IDs and model aliases as session selectors. Selecting a policy changes the current session's routing rules; selecting a model changes that policy's session default. For one policy, the earlier flat `[blend]` fields remain accepted.
+
+Example ChatGPT plan provider:
+
+```toml
+[providers.openai]
+auth = "chatgpt"
+api_type = "open_ai_responses"
+
+[models.default]
+provider = "openai"
+model_id = "gpt-6.1-sol"
+```
+
+`base_url` defaults to `https://api.openai.com/v1` for this auth mode and cannot be overridden. Choose a model available to the connected ChatGPT account. Manage the connection with `arabica auth chatgpt-status` and `arabica auth chatgpt-logout`.
+
+The desktop composer exposes Default Model, Blend Policy, and Thinking selectors.
+Terminal chat offers `/model [alias]`, `/policy [name]`, and `/thinking [level]`;
+without an argument, these commands show current selections and available choices.
+Selections take effect on the next prompt and are saved for the workspace, with
+reasoning effort saved per alias. Startup flags `--model-alias`, `--policy`, and
+`--thinking` provide temporary overrides, including in one-shot mode. See the
+[daily development configuration](docs/examples/daily-development.toml) and
+[CLI selection rules](docs/cli.md) for planning, repair, and fixed-model routing.
 
 Optional configuration:
 

@@ -73,7 +73,7 @@ enum Commands {
     Chat,
     /// Show the resolved provider configuration without starting a session.
     Config,
-    /// Manage the terminal CLI's saved API key.
+    /// Manage saved API credentials.
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -125,14 +125,18 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the auth subcommand");
             2
         } else {
-            arabica_cli::auth::run(action)
+            arabica_cli::auth::run(action).await
         };
     }
 
     let resolved = match (|| {
         let home = arabica_adapters::default_arabica_home()?;
         let cwd = std::env::current_dir()?;
-        resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
+        if matches!(command, Some(Commands::Acp)) {
+            arabica_cli::config::resolve_cli_acp_config(&config, &home, &cwd, process_environment)
+        } else {
+            resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
+        }
     })() {
         Ok(config) => config,
         Err(error) => {
@@ -279,14 +283,7 @@ fn describe_configuration(resolved: ResolvedCliConfig) -> Result<(), Box<dyn std
     let api_type = provider_config.api_type;
     let base_url = provider_config.base_url.clone();
     let model_name = provider_config.model.clone();
-    let thinking = if !provider_config.thinking_enabled {
-        "off".to_owned()
-    } else {
-        provider_config
-            .reasoning_effort
-            .clone()
-            .unwrap_or_else(|| "on".to_owned())
-    };
+    let thinking = arabica_cli::config::thinking_level(&provider_config).to_owned();
 
     let runner_root = std::env::current_dir()?;
     let arabica_home = arabica_adapters::default_arabica_home()?;

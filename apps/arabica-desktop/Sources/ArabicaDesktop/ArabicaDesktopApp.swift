@@ -1439,8 +1439,11 @@ private struct ComposerView: View {
                                 }
                             } label: {
                                 HStack(spacing: 4) {
+                                    Text(name + ":")
+                                        .font(AppFont.sans(10))
                                     Text(currentName)
                                         .font(AppFont.sans(11, weight: .medium))
+                                        .lineLimit(1)
                                     Image(systemName: "chevron.up.chevron.down")
                                         .font(AppFont.sans(8))
                                 }
@@ -1450,7 +1453,8 @@ private struct ComposerView: View {
                                 .background(Palette.card, in: Capsule())
                             }
                             .menuStyle(.borderlessButton)
-                            .disabled(model.isRunning)
+                            .help("Choose \(name.lowercased()) for the next request. Saved for this workspace.")
+                            .disabled(model.isRunning || model.isConfigUpdating || !model.isConnected)
                         }
                     }
 
@@ -1475,6 +1479,7 @@ private struct ComposerView: View {
                     } else {
                         let canSend = model.selectedSessionID != nil &&
                                       model.isConnected &&
+                                      !model.isConfigUpdating &&
                                       (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.attachedFiles.isEmpty)
                         Button {
                             Task { await model.send() }
@@ -1669,6 +1674,18 @@ private struct ConfigPageView: View {
                     }
                     Divider().background(Palette.rule)
 
+                    SettingRow(label: "Authentication", description: "Use an API key or sign in with a ChatGPT account") {
+                        Picker("", selection: Binding(
+                            get: { config.authMode },
+                            set: { config.selectAuthMode($0) }
+                        )) {
+                            Text("API Key").tag("api_key")
+                            Text("ChatGPT Login").tag("chatgpt")
+                        }
+                        .frame(width: 180)
+                    }
+                    Divider().background(Palette.rule)
+
                     SettingRow(label: "API Protocol", description: "Payload format used to talk to the provider") {
                         Picker("", selection: $config.apiType) {
                             let types = ["open_ai_responses", "open_ai_chat_completions", "anthropic_messages"]
@@ -1676,6 +1693,7 @@ private struct ConfigPageView: View {
                             ForEach(types, id: \.self) { Text($0).tag($0) }
                         }
                         .frame(width: 220)
+                        .disabled(config.authMode == "chatgpt")
                     }
                     Divider().background(Palette.rule)
 
@@ -1683,24 +1701,41 @@ private struct ConfigPageView: View {
                         TextField("https://api.openai.com/v1", text: $config.baseURL)
                             .font(AppFont.code(12))
                             .frame(width: 240)
+                            .disabled(config.authMode == "chatgpt")
                     }
                     Divider().background(Palette.rule)
 
-                    SettingRow(label: "API Key Env Var", description: "Preferred: environment variable holding secret") {
-                        TextField("ARABICA_PROVIDER_PRIMARY_API_KEY", text: $config.apiKeyEnv)
-                            .font(AppFont.code(11))
-                            .frame(width: 240)
-                    }
-                    Divider().background(Palette.rule)
+                    if config.authMode == "chatgpt" {
+                        SettingRow(label: "ChatGPT Account", description: "OAuth credentials are stored in your local Arabica home") {
+                            HStack(spacing: 10) {
+                                Image(systemName: config.chatGPTConnected ? "checkmark.circle.fill" : "person.crop.circle")
+                                    .foregroundStyle(config.chatGPTConnected ? Color.green : Palette.muted)
+                                Text(config.chatGPTConnected ? "Connected" : "Not connected")
+                                    .font(AppFont.sans(12))
+                                Button(config.isChatGPTAuthRunning ? "Waiting for browser…" : (config.chatGPTConnected ? "Disconnect" : "Sign in")) {
+                                    if config.chatGPTConnected { config.disconnectChatGPT() }
+                                    else { config.connectChatGPT() }
+                                }
+                                .disabled(config.isChatGPTAuthRunning)
+                            }
+                        }
+                    } else {
+                        SettingRow(label: "API Key Env Var", description: "Preferred: environment variable holding secret") {
+                            TextField("ARABICA_PROVIDER_PRIMARY_API_KEY", text: $config.apiKeyEnv)
+                                .font(AppFont.code(11))
+                                .frame(width: 240)
+                        }
+                        Divider().background(Palette.rule)
 
-                    SettingRow(label: "Direct API Key", description: "Encrypted file fallback (never displayed after save)") {
-                        HStack(spacing: 8) {
-                            SecureField(config.hasSavedKey && !config.clearSavedKey ? "•••••••••••• (Saved)" : "sk-...", text: $config.apiKey)
-                                .font(AppFont.code(12))
-                                .frame(width: 170)
-                            if config.hasSavedKey {
-                                Toggle("Clear", isOn: $config.clearSavedKey)
-                                    .font(AppFont.sans(11))
+                        SettingRow(label: "Direct API Key", description: "Encrypted file fallback (never displayed after save)") {
+                            HStack(spacing: 8) {
+                                SecureField(config.hasSavedKey && !config.clearSavedKey ? "•••••••••••• (Saved)" : "sk-...", text: $config.apiKey)
+                                    .font(AppFont.code(12))
+                                    .frame(width: 170)
+                                if config.hasSavedKey {
+                                    Toggle("Clear", isOn: $config.clearSavedKey)
+                                        .font(AppFont.sans(11))
+                                }
                             }
                         }
                     }

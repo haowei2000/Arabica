@@ -73,8 +73,14 @@ If a provider table contains `api_key`, restrict `config.toml` to your account w
 more permissive file or a symlink. Alternatively, run `arabica auth login`
 once to enter the key without echoing it. The key is then saved in `$ARABICA_HOME/auth.json`
 (default `~/.arabica/auth.json`) with owner-only file permissions. Run
-`structure auth status` to see which credential source is active, or
-`structure auth logout` to remove the separately saved key. Provider
+`arabica auth status` to see which credential source is active, or
+`arabica auth logout` to remove the separately saved key. To use an eligible
+ChatGPT plan from this open-source client, run `arabica auth chatgpt-login`.
+After browser authorization, Arabica configures its default model to use the
+OpenAI Responses API and the ChatGPT plan. If no GPT model is already selected,
+it starts with `gpt-6.1-sol`. The official Sign in with ChatGPT flow stores its
+protected credential record in `$ARABICA_HOME/chatgpt-auth.json`; manage it
+with `arabica auth chatgpt-status` and `arabica auth chatgpt-logout`. Provider
 environment variables take precedence over TOML `api_key`; `auth.json` is a
 saved-key fallback for the default provider. Existing shared `[provider]`,
 `OPENAI__*`, and `ARABICA__MODELS` configurations must be migrated to named
@@ -152,7 +158,7 @@ arabica --allow-shell
 arabica --plain
 ```
 
-In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
+In the TUI, typing `/` completes commands, `/thinking `, `/model `, or `/policy ` offers
 configured choices, and `@` searches workspace file paths (respecting ignore
 rules). Use Up/Down to select a suggestion; Tab or Enter accepts it. Left/Right
 always move the editor cursor. Enter sends, Shift+Enter inserts a line. The
@@ -189,11 +195,37 @@ resumed session starts with an empty one. `/context` opens a scrollable view of 
 provider-reported token usage, a policy preview for the next turn, and the
 workspace archive count. The preview excludes the next message and FileBackedGC
 admission; it is not a token estimate. Escape or `q` closes the view. The
-archive count covers the workspace, not just the current session. `/model <alias>` and
-`/thinking <off|on|low|medium|high>` change the
-configured Blend alias or its thinking mode for the next prompt and persist those choices for this workspace. Selecting an alias can switch both provider and model. Chat
-Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
-and `high`.
+archive count covers the workspace, not just the current session.
+
+Use `/model <alias>`, `/policy <name>`, and `/thinking <level>` to change the
+default model, Blend policy, and reasoning effort for the next prompt. Calling
+any of these commands without an argument lists the current selections and
+available choices. Both the fullscreen TUI and plain terminal support them.
+The choices are saved under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml`
+and shared with the desktop and other ACP clients. Active sessions keep their
+own selections; new or restored sessions read the latest workspace preferences.
+Reasoning effort is saved per model alias. Selecting another alias restores that
+alias's effort, while selecting a policy resets the default model to the one
+declared by that policy. Other policy routes, including planning and error
+recovery, continue to apply when the default model is changed.
+
+Chat Completions supports `off` and `on`; Responses supports `default`, `low`,
+`medium`, `high`, `xhigh`, and `max`. `default` omits an explicit reasoning
+request and uses the model's own default; the legacy Responses `off` value has
+the same meaning. Individual models may support only a subset of effort values.
+
+Startup flags make temporary selections without changing saved preferences:
+
+```bash
+arabica --policy daily-development --model-alias daily --thinking medium
+arabica --policy focused --model-alias repair --thinking high -p "Inspect this change"
+```
+
+Flags override workspace preferences, which override the user configuration.
+`--model` remains a raw upstream model-ID override and cannot be combined with
+`--model-alias`. An explicit `--policy` uses that policy's default model unless
+`--model-alias` is also supplied. See [the daily development example](examples/daily-development.toml)
+for ordinary execution, dedicated planning, error repair, and a fixed-model policy.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval. The chooser defaults to **Allow once**; Enter confirms the selected
@@ -248,10 +280,13 @@ secure launch environment if that is unacceptable. The aliases and endpoints
 come from `~/.arabica/config.toml`. Zed's own model-provider settings do not
 configure Structure's providers.
 
-New and restored sessions expose ACP model and thinking selectors. The model
-selector contains configured aliases. Chat
-Completions has `off` and `on` thinking levels; Responses has `off`, `low`,
-`medium`, and `high`. A switch applies to the next prompt in that session.
+New and restored sessions expose ACP default-model, Blend-policy, and thinking
+selectors. The model selector includes configured aliases and their upstream IDs;
+the policy selector includes configured policies and compatible stored policy
+versions. The desktop shows these selectors below the message composer.
+Changes apply to the next prompt and are saved as workspace preferences, with
+thinking saved separately for each alias. Changes are rejected while a prompt
+is running; the desktop also prevents overlapping setting changes.
 The Chat Completions adapter sends a nonstandard `thinking` parameter when
 enabled, so the endpoint must support it. In ACP sessions it requests Chat
 Completions streaming and forwards text and `reasoning_content` deltas as

@@ -242,6 +242,7 @@ pub(crate) struct InteractiveSession {
     pub(crate) config: ApiProviderConfig,
     pub(crate) model_configs: BTreeMap<String, ApiProviderConfig>,
     blend_policy: Option<BlendRoutingPolicy>,
+    pub(crate) blend_policies: BTreeMap<String, BlendRoutingPolicy>,
     pub(crate) arabica_home: PathBuf,
     pub(crate) runner_root: PathBuf,
     pub(crate) read_only: bool,
@@ -281,6 +282,16 @@ impl InteractiveSession {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let session_blend_policy = blend_policy.clone();
         let runner_root = std::env::current_dir()?;
+        let mut blend_policies =
+            crate::config::user_config_blend_policies(&arabica_home, &runner_root)
+                .unwrap_or_default();
+        if let Some(policy) = &blend_policy
+            && !blend_policies.values().any(|candidate| {
+                candidate.policy_id == policy.policy_id && candidate.version == policy.version
+            })
+        {
+            blend_policies.insert(policy.policy_id.clone(), policy.clone());
+        }
         let workspace_id = workspace_id_for(&runner_root);
         let resumed =
             print::resolve_resume(&options.resume, session_store.as_ref(), &workspace_id)?;
@@ -377,6 +388,7 @@ impl InteractiveSession {
             config,
             model_configs,
             blend_policy: session_blend_policy,
+            blend_policies,
             arabica_home,
             runner_root,
             read_only: options.read_only,
@@ -435,12 +447,22 @@ impl InteractiveSession {
         id: &str,
     ) -> Result<InteractiveSession, Box<dyn std::error::Error>> {
         let config = self.config.clone();
-        let model = HostModel::Api(ApiModelProvider::new(config.clone())?);
-        let next = InteractiveSession::open_with_store(
+        let model = crate::host::HostModelCatalog {
+            provider: config.clone(),
+            models: self
+                .model_configs
+                .iter()
+                .map(|(alias, config)| (alias.clone(), config.model.clone()))
+                .collect(),
+            blend_policy: self.blend_policy.clone(),
+            model_configs: self.model_configs.clone(),
+        }
+        .build_model()?;
+        let mut next = InteractiveSession::open_with_store(
             config,
             model,
-            None,
-            BTreeMap::new(),
+            self.blend_policy.clone(),
+            self.model_configs.clone(),
             InteractiveOptions {
                 allow_shell: self.allow_shell,
                 read_only: self.read_only,
@@ -450,6 +472,7 @@ impl InteractiveSession {
             Arc::clone(&self.session_store),
         )
         .await?;
+        next.blend_policies = self.blend_policies.clone();
         self.suspend().await?;
         Ok(next)
     }
@@ -515,6 +538,7 @@ impl InteractiveSession {
             save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
                 settings.model = None;
                 settings.model_alias = Some(model.to_owned());
+                settings.thinking = None;
             })?;
             self.config = next;
             self.blend_policy = Some(policy.clone());
@@ -548,9 +572,12 @@ impl InteractiveSession {
             set_thinking(&mut next, value)?;
             let mut configs = self.model_configs.clone();
             configs.insert(alias.clone(), next.clone());
-            let provider = BlendProvider::from_configs(alias, configs.clone())?;
+            let provider = BlendProvider::from_configs(alias.clone(), configs.clone())?;
             save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
-                settings.thinking = Some(value.to_owned());
+                settings.thinking = None;
+                settings
+                    .model_thinking
+                    .insert(alias.clone(), value.to_owned());
             })?;
             self.config = next;
             self.model_configs = configs;
@@ -566,6 +593,57 @@ impl InteractiveSession {
         self.config = next;
         *self.manager.runtime_mut().model_mut() = HostModel::Api(provider);
         Ok(())
+    }
+
+    pub(crate) fn change_policy(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let policy = self
+            .blend_policies
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("unknown Blend policy {id:?}"))?;
+        let config = self
+            .model_configs
+            .get(&policy.default_model)
+            .cloned()
+            .ok_or("policy default model is unavailable")?;
+        let provider =
+            BlendProvider::from_configs(&policy.default_model, self.model_configs.clone())?;
+        save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+            settings.blend_policy = Some(id.to_owned());
+            settings.model = None;
+            settings.model_alias = None;
+            settings.thinking = None;
+        })?;
+        self.manager
+            .runtime_mut()
+            .set_blend_policy(Some(policy.clone()))?;
+        *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
+        self.blend_policy = Some(policy);
+        self.config = config;
+        Ok(())
+    }
+
+    pub(crate) fn selection_report(&self) -> String {
+        format!(
+            "model: {}\npolicy: {}\nthinking: {}\navailable models: {}\navailable policies: {}\nsupported thinking: {}",
+            self.config.model,
+            self.blend_policy.as_ref().map_or(
+                "none",
+                |policy| crate::config::policy_selection_key(&self.blend_policies, policy)
+            ),
+            crate::config::thinking_level(&self.config),
+            self.model_configs
+                .iter()
+                .map(|(alias, config)| format!("{alias} ({})", config.model))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.blend_policies
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+            crate::config::thinking_levels(self.config.api_type).join(" | ")
+        )
     }
 
     async fn turn(
@@ -738,7 +816,7 @@ pub async fn run_with_model_configs(
         }
         if text == "/help" {
             println!(
-                "/help  /exit  /session  /sessions  /resume <id>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>"
+                "/help  /exit  /session  /sessions  /resume <id>  /diff  /undo  /model [alias]  /policy [name]  /thinking [level]"
             );
             continue;
         }
@@ -832,6 +910,17 @@ pub async fn run_with_model_configs(
                     session = next;
                     println!("session: {}", session.session_id);
                 }
+                Err(error) => eprintln!("error: {error}"),
+            }
+            continue;
+        }
+        if matches!(text, "/model" | "/policy" | "/thinking") {
+            println!("{}", session.selection_report());
+            continue;
+        }
+        if let Some(policy) = text.strip_prefix("/policy ") {
+            match session.change_policy(policy.trim()) {
+                Ok(()) => println!("{}", session.selection_report()),
                 Err(error) => eprintln!("error: {error}"),
             }
             continue;

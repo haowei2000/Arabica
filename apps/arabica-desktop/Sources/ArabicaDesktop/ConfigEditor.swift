@@ -8,6 +8,7 @@ final class ConfigEditor: ObservableObject {
     @Published var providerOptions: [String] = []
     @Published var providerName = "primary"
     @Published var apiType = "open_ai_responses"
+    @Published var authMode = "api_key"
     @Published var baseURL = "https://api.openai.com/v1"
     @Published var apiKeyEnv = "ARABICA_PROVIDER_PRIMARY_API_KEY"
     @Published var apiKey = ""
@@ -26,6 +27,8 @@ final class ConfigEditor: ObservableObject {
     @Published var status = ""
     @Published var canAddEntries = false
     @Published var isSaving = false
+    @Published var isChatGPTAuthRunning = false
+    @Published var chatGPTConnected = false
     @Published var mcpServers: [MCPServerItem] = []
     @Published var skillRoots: [SkillRootItem] = []
     @Published var discoveredSkills: [DiscoveredSkillItem] = []
@@ -57,6 +60,8 @@ final class ConfigEditor: ObservableObject {
         hasSavedKey = false
         clearSavedKey = false
         apiKey = ""
+        authMode = "api_key"
+        chatGPTConnected = Self.hasChatGPTCredentials(at: arabicaHomeURL)
         do {
             original = try String(contentsOf: configURL, encoding: .utf8)
         } catch CocoaError.fileReadNoSuchFile {
@@ -166,6 +171,96 @@ final class ConfigEditor: ObservableObject {
         policyDefaultModel = ConfigDocument(original).values(in: "blend.policies.\(policy)")["default_model"] ?? modelOptions.first ?? ""
     }
 
+    func selectAuthMode(_ mode: String) {
+        authMode = mode
+        if mode == "chatgpt" {
+            apiType = "open_ai_responses"
+            baseURL = "https://api.openai.com/v1"
+            apiKey = ""
+            clearSavedKey = hasSavedKey
+        } else {
+            apiKeyEnv = Self.defaultAPIKeyEnvironmentVariable(providerName: providerName)
+            clearSavedKey = false
+        }
+    }
+
+    func connectChatGPT() {
+        runChatGPTAuth(arguments: ["chatgpt-login"], successMessage: "Connected to ChatGPT. Reopen the workspace to reconnect Arabica.")
+    }
+
+    func disconnectChatGPT() {
+        runChatGPTAuth(arguments: ["chatgpt-logout"], successMessage: "ChatGPT disconnected.")
+    }
+
+    private func runChatGPTAuth(arguments: [String], successMessage: String) {
+        guard !isChatGPTAuthRunning else { return }
+        guard let executable = Self.arabicaExecutableURL() else {
+            status = "Arabica executable was not found. Set ARABICA_EXECUTABLE or rebuild the desktop app."
+            return
+        }
+        isChatGPTAuthRunning = true
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Self.runAuthCommand(executable: executable, arguments: arguments)
+            }.value
+            guard let self else { return }
+            self.isChatGPTAuthRunning = false
+            if result.status == 0 {
+                self.reload()
+                if self.modelOptions.contains(self.policyDefaultModel) {
+                    self.selectModel(self.policyDefaultModel)
+                }
+                self.status = successMessage
+            } else {
+                let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.status = detail.isEmpty ? "ChatGPT sign-in failed (exit \(result.status))." : detail
+            }
+        }
+    }
+
+    private static func arabicaExecutableURL() -> URL? {
+        if let override = ProcessInfo.processInfo.environment["ARABICA_EXECUTABLE"],
+           FileManager.default.isExecutableFile(atPath: override) {
+            return URL(fileURLWithPath: override)
+        }
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("arabica"),
+           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
+        return nil
+    }
+
+    nonisolated private static func runAuthCommand(executable: URL, arguments: [String]) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["auth"] + arguments
+        var environment = ProcessInfo.processInfo.environment
+        if environment["ARABICA_HOME"] == nil {
+            environment["ARABICA_HOME"] = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".arabica", isDirectory: true).path
+        }
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        } catch {
+            return (1, error.localizedDescription)
+        }
+    }
+
+    private static func hasChatGPTCredentials(at home: URL) -> Bool {
+        let path = home.appendingPathComponent("chatgpt-auth.json")
+        guard let data = try? Data(contentsOf: path),
+              let credentials = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accessToken = credentials["access_token"] as? String else { return false }
+        return !accessToken.isEmpty
+    }
+
     func addProvider() {
         guard canAddEntries, saveBeforeSwitch() else {
             if !canAddEntries { status = "Save one provider and model before adding another entry." }
@@ -182,6 +277,7 @@ final class ConfigEditor: ObservableObject {
         modelAlias = alias
         modelSection = nil
         modelID = ""
+        authMode = "api_key"
         apiType = "open_ai_responses"
         baseURL = "https://api.openai.com/v1"
         apiKeyEnv = Self.defaultAPIKeyEnvironmentVariable(providerName: name)
@@ -216,6 +312,7 @@ final class ConfigEditor: ObservableObject {
     private func loadProvider(from document: ConfigDocument) {
         let values = document.values(in: providerSection)
         apiType = values["api_type"] ?? "open_ai_responses"
+        authMode = values["auth"]?.lowercased() == "chatgpt" ? "chatgpt" : "api_key"
         baseURL = values["base_url"] ?? "https://api.openai.com/v1"
         apiKeyEnv = values["api_key_env"] ?? Self.defaultAPIKeyEnvironmentVariable(providerName: providerName)
         originalKey = values["api_key"]
@@ -223,6 +320,9 @@ final class ConfigEditor: ObservableObject {
         apiKey = ""
         clearSavedKey = false
         thinking = values["thinking"] ?? values["reasoning_effort"] ?? ""
+        if apiType == "open_ai_responses", ["off", "default"].contains(thinking) {
+            thinking = ""
+        }
     }
 
     private static func defaultAPIKeyEnvironmentVariable(providerName: String) -> String {
@@ -263,12 +363,16 @@ final class ConfigEditor: ObservableObject {
             status = "Enter a provider name, model alias, model ID, API type, and a valid HTTP(S) base URL."
             return
         }
+        if authMode == "chatgpt", (apiType != "open_ai_responses" || baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) != "https://api.openai.com/v1") {
+            status = "ChatGPT login requires the OpenAI Responses API at https://api.openai.com/v1."
+            return
+        }
         let defaultModel = cleanPolicyDefaultModel.isEmpty ? cleanAlias : cleanPolicyDefaultModel
         guard modelOptions.contains(defaultModel) || defaultModel == cleanAlias else {
             status = "The blend default_model must reference a model alias in [models.<alias>]."
             return
         }
-        guard !apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        guard authMode == "chatgpt" || !apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                 !(apiKey.isEmpty && originalKey == nil) ||
                 !(ProcessInfo.processInfo.environment[apiKeyEnv]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
             status = "Enter an API key or the name of an environment variable that contains it."
@@ -286,14 +390,17 @@ final class ConfigEditor: ObservableObject {
                 providerValues: [
                     "api_type": ConfigDocument.quote(apiType),
                     "base_url": ConfigDocument.quote(baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-                    "api_key_env": ConfigDocument.quote(apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines)),
-                ],
+                ].merging(authMode == "chatgpt"
+                    ? ["auth": ConfigDocument.quote("chatgpt")]
+                    : ["api_key_env": ConfigDocument.quote(apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines))]) { _, new in new },
                 modelValues: ["provider": ConfigDocument.quote(cleanProvider), "model_id": ConfigDocument.quote(cleanModel)],
                 thinking: thinking.trimmingCharacters(in: .whitespacesAndNewlines),
                 defaultPolicy: defaultPolicy,
                 defaultModelAlias: defaultModel,
                 newAPIKey: apiKey.isEmpty ? nil : apiKey,
-                removeAPIKey: clearSavedKey
+                removeAPIKey: clearSavedKey || authMode == "chatgpt",
+                removeAuth: authMode != "chatgpt",
+                removeAPIKeyEnv: authMode == "chatgpt"
             )
             try writeSecurely(result, to: configURL)
             original = result
@@ -320,7 +427,7 @@ final class ConfigEditor: ObservableObject {
         case "open_ai_chat_completions":
             return ["off", "on"]
         case "open_ai_responses":
-            return ["off", "low", "medium", "high"]
+            return ["low", "medium", "high", "xhigh", "max"]
         default:
             return ["off"]
         }
@@ -380,7 +487,9 @@ struct ConfigDocument {
         defaultPolicy: String,
         defaultModelAlias: String,
         newAPIKey: String?,
-        removeAPIKey: Bool
+        removeAPIKey: Bool,
+        removeAuth: Bool = false,
+        removeAPIKeyEnv: Bool = false
     ) throws -> String {
         var result = self
         if oldProviderSection != newProviderSection, result.range(of: newProviderSection) != nil {
@@ -396,6 +505,8 @@ struct ConfigDocument {
             result.appendSection(newProviderSection)
         }
         for (key, value) in providerValues { result.set(key, value: value, in: newProviderSection) }
+        if removeAuth { result.removeKey("auth", in: newProviderSection) }
+        if removeAPIKeyEnv { result.removeKey("api_key_env", in: newProviderSection) }
         if !thinking.isEmpty {
             result.set("thinking", value: Self.quote(thinking), in: newProviderSection)
         }
