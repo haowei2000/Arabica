@@ -49,6 +49,9 @@ jobs:
             archive: structure-windows-x86_64.zip
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -103,6 +106,9 @@ jobs:
             os: macos-15-intel
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Install icon renderer
         run: brew install librsvg
@@ -131,11 +137,14 @@ jobs:
 
   publish-crates:
     name: Publish crates.io (dependency order)
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' || inputs.publish_crates == true }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # crates.io resolves versioned deps from the registry, so crates must
@@ -166,6 +175,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
       - name: Resolve tag
         id: tag
         run: |
@@ -182,7 +194,7 @@ jobs:
         run: |
           tag="${{ steps.tag.outputs.tag }}"
           {
-            echo "## Structure $tag"
+            echo "## Arabica $tag"
             echo
             echo "CLI binaries for Linux (x86_64, aarch64), macOS (x86_64, Apple silicon) and Windows (x86_64)."
             echo "The Arabica macOS desktop app is available for Apple silicon and Intel Macs."
@@ -191,7 +203,11 @@ jobs:
             echo
             echo "### Changes"
             echo
-            git log --format='- %s' "$(git tag --sort=-creatordate | sed -n 2p)..$tag" 2>/dev/null || git log --format='- %s' -20
+            version="${tag#v}"
+            awk -v version="$version" '
+              /^## / { if (found) exit; if ($2 == version) { found=1; next } }
+              found { print }
+            ' CHANGELOG.md
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
       - uses: softprops/action-gh-release@v2

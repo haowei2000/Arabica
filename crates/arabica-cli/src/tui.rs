@@ -971,6 +971,7 @@ const COMMANDS: &[&str] = &[
     "/exit",
     "/help",
     "/model",
+    "/policy",
     "/quit",
     "/resume",
     "/session",
@@ -978,13 +979,17 @@ const COMMANDS: &[&str] = &[
     "/thinking",
     "/undo",
 ];
-const THINKING_LEVELS: &[&str] = &["off", "on", "low", "medium", "high"];
+const THINKING_LEVELS: &[&str] = &[
+    "default", "off", "on", "low", "medium", "high", "xhigh", "max",
+];
 
 fn completion_for(
     input: &str,
     cursor: usize,
     files: &[String],
     models: &[String],
+    policies: &[String],
+    thinking_levels: &[&str],
 ) -> Option<CompletionView> {
     let before = &input[..cursor];
     let word_start = before
@@ -1006,7 +1011,7 @@ fn completion_for(
         } else if before.starts_with("/thinking ") && word_start == "/thinking ".len() {
             Some((
                 word_start,
-                THINKING_LEVELS
+                thinking_levels
                     .iter()
                     .filter(|level| level.starts_with(token))
                     .map(|level| (*level).to_owned())
@@ -1018,6 +1023,15 @@ fn completion_for(
                 models
                     .iter()
                     .filter(|model| model.to_lowercase().contains(&token.to_lowercase()))
+                    .cloned()
+                    .collect(),
+            ))
+        } else if before.starts_with("/policy ") && word_start == "/policy ".len() {
+            Some((
+                word_start,
+                policies
+                    .iter()
+                    .filter(|policy| policy.to_lowercase().contains(&token.to_lowercase()))
                     .cloned()
                     .collect(),
             ))
@@ -1116,6 +1130,8 @@ struct App {
     /// once real output starts.
     live_reasoning: String,
     models: Vec<String>,
+    policies: Vec<String>,
+    thinking_levels: &'static [&'static str],
     status: String,
     /// When set, the next submitted input resolves a `/resume` listing.
     resume_pick: bool,
@@ -1170,6 +1186,8 @@ impl Default for App {
             live: String::new(),
             live_reasoning: String::new(),
             models: Vec::new(),
+            policies: Vec::new(),
+            thinking_levels: THINKING_LEVELS,
             status: "Ready".to_owned(),
             resume_pick: false,
             pick_entries: None,
@@ -1282,6 +1300,8 @@ impl App {
         };
         Self {
             models,
+            policies: session.blend_policies.keys().cloned().collect(),
+            thinking_levels: crate::config::thinking_levels(session.config.api_type),
             ..Self::default()
         }
     }
@@ -1345,6 +1365,8 @@ impl App {
             self.cursor,
             self.file_index.as_deref().unwrap_or(&[]),
             &self.models,
+            &self.policies,
+            self.thinking_levels,
         )
         .filter(|_| !self.busy);
     }
@@ -2814,7 +2836,7 @@ fn command(
         "/help" => {
             print_dim(
                 transcript,
-                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+End latest · Ctrl+O verbose · Ctrl+T thinking · @path mentions files\nHistory: PageUp/PageDown or mouse wheel scroll · click a block then Enter/c copies it · sending or queueing returns to latest\nPermission: Enter allows once by default · ↑↓ select · y/a allow once/session · n/v deny once/session · Esc denies once · Ctrl+C cancels the run",
+                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model [alias]  /policy [name]  /thinking [level]\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+End latest · Ctrl+O verbose · Ctrl+T thinking · @path mentions files\nHistory: PageUp/PageDown or mouse wheel scroll · click a block then Enter/c copies it · sending or queueing returns to latest\nPermission: Enter allows once by default · ↑↓ select · y/a allow once/session · n/v deny once/session · Esc denies once · Ctrl+C cancels the run",
             );
         }
         "/session" => {
@@ -2831,17 +2853,8 @@ fn command(
                 ),
             );
         }
-        "/model" => {
-            print_dim(
-                transcript,
-                &format!(
-                    "current model: {}\nusage: /model <name>",
-                    session.config.model
-                ),
-            );
-        }
-        "/thinking" => {
-            print_dim(transcript, "usage: /thinking <off|on|low|medium|high>");
+        "/model" | "/policy" | "/thinking" => {
+            print_dim(transcript, &session.selection_report());
         }
         "/diff" => {
             print_block(transcript, &session.write_report(), Style::default());
@@ -2909,6 +2922,13 @@ fn command(
                 }
             }
         }
+        _ if text.starts_with("/policy ") => {
+            let policy = text.trim_start_matches("/policy ").trim();
+            match session.change_policy(policy) {
+                Ok(()) => print_tool(transcript, &session.selection_report()),
+                Err(error) => print_error(transcript, &error.to_string()),
+            }
+        }
         _ if text.starts_with("/thinking ") => {
             let level = text.trim_start_matches("/thinking ").trim();
             match session.change_thinking(level) {
@@ -2924,6 +2944,7 @@ fn command(
             print_error(transcript, &format!("unknown command: {text}"));
         }
     }
+    app.thinking_levels = crate::config::thinking_levels(session.config.api_type);
     false
 }
 
@@ -3641,14 +3662,25 @@ mod tests {
     fn completion_for_slash_and_file_tokens() {
         let files = vec!["src/main.rs".to_owned()];
         let models = vec!["m1".to_owned(), "m2".to_owned()];
-        let slash = completion_for("/con", 4, &files, &models).unwrap();
+        let slash = completion_for("/con", 4, &files, &models, &[], THINKING_LEVELS).unwrap();
         assert_eq!(slash.candidates, vec!["/context"]);
-        let none = completion_for("/help", 5, &files, &models);
+        let none = completion_for("/help", 5, &files, &models, &[], THINKING_LEVELS);
         assert!(none.is_none());
-        let file = completion_for("@ma", 3, &files, &models).unwrap();
+        let file = completion_for("@ma", 3, &files, &models, &[], THINKING_LEVELS).unwrap();
         assert_eq!(file.candidates, vec!["@src/main.rs"]);
-        let model = completion_for("/model ", 7, &files, &models).unwrap();
+        let model = completion_for("/model ", 7, &files, &models, &[], THINKING_LEVELS).unwrap();
         assert_eq!(model.candidates.len(), 2);
+        let policies = vec!["routine".to_owned(), "precise".to_owned()];
+        let policy = completion_for(
+            "/policy pre",
+            11,
+            &files,
+            &models,
+            &policies,
+            THINKING_LEVELS,
+        )
+        .unwrap();
+        assert_eq!(policy.candidates, vec!["precise"]);
     }
 
     #[test]

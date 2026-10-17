@@ -194,8 +194,156 @@ async fn terminal_commands_change_the_next_model_request() {
     )
     .unwrap();
     assert!(saved.contains("model_alias = \"other-model\""));
-    assert!(saved.contains("thinking = \"on\""));
+    let preferences: arabica_cli::config::WorkspaceSettings = toml::from_str(&saved).unwrap();
+    assert_eq!(preferences.model_thinking["other-model"], "on");
     assert!(!saved.contains("test-key"));
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}
+
+#[tokio::test]
+async fn policy_switches_restore_defaults_and_keep_thinking_per_model() {
+    async fn completion(
+        State(requests): State<Arc<Mutex<Vec<Value>>>>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        requests.lock().await.push(body);
+        Json(
+            json!({"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}),
+        )
+    }
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", post(completion))
+        .with_state(Arc::clone(&requests));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let root = temp_dir("policy-root");
+    let home = temp_dir("policy-home");
+    std::fs::create_dir_all(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        r#"
+[providers.mock]
+api_key_env = "ARABICA_PROVIDER_MOCK_API_KEY"
+base_url = "http://unused/v1"
+[models.default]
+provider = "mock"
+model_id = "daily-model"
+[models.strong]
+provider = "mock"
+model_id = "strong-model"
+[blend]
+default_policy = "routine"
+[blend.policies.routine]
+default_model = "default"
+tool_call_capable_models = ["default", "strong"]
+[blend.policies.precise]
+default_model = "strong"
+tool_call_capable_models = ["default", "strong"]
+"#,
+    )
+    .unwrap();
+    let result = run_binary(&root, &home, address,
+        "/policy precise\n/thinking on\n/model default\nhello\n/policy precise\nagain\n/policy routine\nthird\n/exit\n").await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let restarted = run_binary(&root, &home, address, "fourth\n/exit\n").await;
+    assert!(
+        restarted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restarted.stderr)
+    );
+    let temporary = run_binary_with_args(
+        &root,
+        &home,
+        address,
+        "fifth\n/exit\n",
+        &["--policy", "precise", "--thinking", "on"],
+    )
+    .await;
+    assert!(
+        temporary.status.success(),
+        "{}",
+        String::from_utf8_lossy(&temporary.stderr)
+    );
+    let alias_flag = run_binary_with_args(
+        &root,
+        &home,
+        address,
+        "sixth\n/exit\n",
+        &[
+            "--policy",
+            "precise",
+            "--model-alias",
+            "default",
+            "--thinking",
+            "off",
+        ],
+    )
+    .await;
+    assert!(
+        alias_flag.status.success(),
+        "{}",
+        String::from_utf8_lossy(&alias_flag.stderr)
+    );
+    let stored = arabica_adapters::SqliteSessionStore::list_sessions(
+        &home,
+        Some(&arabica_cli::host::workspace_id_for(&root)),
+    )
+    .unwrap();
+    let resumed = run_binary(
+        &root,
+        &home,
+        address,
+        &format!(
+            "/resume {}\n/policy precise\nseventh\n/policy routine\n/exit\n",
+            stored[0].header.id
+        ),
+    )
+    .await;
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let requests = requests.lock().await;
+    assert_eq!(
+        requests.len(),
+        7,
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    for (index, expected_model) in [
+        "daily-model",
+        "strong-model",
+        "daily-model",
+        "daily-model",
+        "strong-model",
+        "daily-model",
+        "strong-model",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(requests[index]["model"], *expected_model);
+        assert_eq!(
+            requests[index].get("thinking").is_some(),
+            matches!(index, 1 | 4 | 6)
+        );
+    }
+    let preferences = arabica_cli::config::read_workspace_settings(&home, &root).unwrap();
+    assert_eq!(preferences.blend_policy.as_deref(), Some("routine"));
+    assert_eq!(preferences.model_alias, None);
+    assert_eq!(preferences.model_thinking["strong"], "on");
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_dir_all(home).ok();
 }

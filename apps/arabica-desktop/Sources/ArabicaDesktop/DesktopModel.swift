@@ -60,6 +60,7 @@ final class DesktopModel: ObservableObject {
     @Published var errorText: String?
     @Published var permission: PermissionPrompt?
     @Published var configOptions: [[String: Any]] = []
+    @Published var isConfigUpdating = false
     @Published var availableSessionModes: [[String: Any]] = []
     @Published var plan: [[String: Any]] = []
     @Published var usage: [String: Any] = [:]
@@ -323,7 +324,7 @@ final class DesktopModel: ObservableObject {
 
     func send() async {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!content.isEmpty || !attachedFiles.isEmpty), let id = selectedSessionID, !isRunning else { return }
+        guard (!content.isEmpty || !attachedFiles.isEmpty), let id = selectedSessionID, !isRunning, !isConfigUpdating else { return }
         let files = attachedFiles
         draft = ""
         attachedFiles = []
@@ -373,14 +374,27 @@ final class DesktopModel: ObservableObject {
     }
 
     func setConfigOption(_ optionID: String, value: String) async {
-        guard let id = selectedSessionID else { return }
+        guard let id = selectedSessionID, isConnected, !isRunning, !isConfigUpdating else { return }
+        isConfigUpdating = true
+        defer { isConfigUpdating = false }
         do {
             let result = try await client.request("session/set_config_option", params: [
                 "sessionId": id, "configId": optionID, "value": value,
             ])
-            configOptions = result["configOptions"] as? [[String: Any]] ?? configOptions
-            cacheSessionControls(for: id)
-        } catch { errorText = error.localizedDescription }
+            if let options = result["configOptions"] as? [[String: Any]] {
+                applyConfigOptions(options, for: id)
+            }
+        } catch {
+            if selectedSessionID == id { errorText = error.localizedDescription }
+        }
+    }
+
+    func applyConfigOptions(_ options: [[String: Any]], for sessionID: String) {
+        guard selectedSessionID == sessionID || sessionControlCache[sessionID] != nil else { return }
+        var controls = sessionControlCache[sessionID] ?? SessionControlState()
+        controls.configOptions = options
+        sessionControlCache[sessionID] = controls
+        if selectedSessionID == sessionID { configOptions = options }
     }
 
     func setSessionMode(_ modeID: String) async {
