@@ -3,6 +3,18 @@ import XCTest
 
 @MainActor
 final class SessionRunStateTests: XCTestCase {
+    func testLateConfigOptionResponseDoesNotOverwriteAnotherSession() {
+        let model = DesktopModel(restoreWorkspace: false)
+        model.selectedSessionID = "old"
+        model.applyConfigOptions([["id": "model", "currentValue": "daily"]], for: "old")
+        model.selectedSessionID = "new"
+        model.applyConfigOptions([["id": "model", "currentValue": "strong"]], for: "new")
+        model.applyConfigOptions([["id": "model", "currentValue": "planner"]], for: "old")
+        XCTAssertEqual(model.configOptions.first?["currentValue"] as? String, "strong")
+        model.applyConfigOptions([["id": "model", "currentValue": "unknown"]], for: "closed")
+        XCTAssertEqual(model.configOptions.first?["currentValue"] as? String, "strong")
+    }
+
     func testDismissedPermissionIsResolvedAndWaitingIsSessionScoped() {
         let model = DesktopModel(restoreWorkspace: false)
         model.selectedSessionID = "old"

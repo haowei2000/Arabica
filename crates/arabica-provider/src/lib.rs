@@ -410,6 +410,9 @@ pub struct ApiProviderConfig {
     /// Optional private artifact directory for exact wire request/response
     /// bodies. Authorization headers are never written.
     pub raw_exchange_dir: Option<PathBuf>,
+    /// Protected Sign in with ChatGPT profile used by an OpenAI Responses
+    /// provider. When present, the access token is refreshed from this file.
+    pub chatgpt_credentials: Option<PathBuf>,
 }
 
 impl ApiProviderConfig {
@@ -430,6 +433,7 @@ impl ApiProviderConfig {
             anthropic_cache_static_prefix: false,
             request_timeout_secs: 300,
             raw_exchange_dir: None,
+            chatgpt_credentials: None,
         }
     }
 
@@ -462,6 +466,97 @@ impl ApiProviderConfig {
     pub fn with_raw_exchange_dir(mut self, directory: impl Into<PathBuf>) -> Self {
         self.raw_exchange_dir = Some(directory.into());
         self
+    }
+
+    pub fn with_chatgpt_credentials(mut self, path: impl Into<PathBuf>) -> Self {
+        self.chatgpt_credentials = Some(path.into());
+        self
+    }
+}
+
+/// Local credential record for the official open-source Sign in with ChatGPT
+/// token-sharing flow. Secrets are deliberately omitted from Debug output.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatGptCredentials {
+    pub email: Option<String>,
+    pub subject: String,
+    pub client_id: String,
+    pub ext_agent_host_id: String,
+    pub id_token: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub scopes: Vec<String>,
+    pub expires_at_unix: u64,
+}
+
+impl std::fmt::Debug for ChatGptCredentials {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChatGptCredentials")
+            .field("email", &self.email)
+            .field("client_id", &self.client_id)
+            .field("scopes", &self.scopes)
+            .field("expires_at_unix", &self.expires_at_unix)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Serialize credential rotation and revocation across CLI and desktop processes.
+/// Keep the returned file alive until the credential transaction has finished.
+pub async fn lock_chatgpt_credentials(path: &Path) -> Result<std::fs::File, ProviderError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| ProviderError::new("ChatGPT credentials path has no parent"))?;
+    #[cfg(unix)]
+    let directory_result = {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+    };
+    #[cfg(not(unix))]
+    let directory_result = std::fs::create_dir_all(parent);
+    directory_result.map_err(|error| {
+        ProviderError::new(format!("cannot create credential lock directory: {error}"))
+    })?;
+    let lock_path = path.with_extension("lock");
+    if let Ok(metadata) = std::fs::symlink_metadata(&lock_path)
+        && !metadata.file_type().is_file()
+    {
+        return Err(ProviderError::new(
+            "ChatGPT credential lock must be a regular file",
+        ));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(lock_path).map_err(|error| {
+        ProviderError::new(format!("cannot open ChatGPT credential lock: {error}"))
+    })?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        match fs2::FileExt::try_lock_exclusive(&file) {
+            Ok(()) => return Ok(file),
+            Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(ProviderError::new(
+                        "timed out waiting for another ChatGPT credential operation",
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => {
+                return Err(ProviderError::new(format!(
+                    "cannot lock ChatGPT credentials: {error}"
+                )));
+            }
+        }
     }
 }
 
@@ -513,13 +608,14 @@ impl ApiModelProvider {
                 )))
             }
             ApiType::OpenAiResponses => {
-                let provider_config =
+                let mut provider_config =
                     OpenAiProviderConfig::new(config.api_key, config.base_url, config.model)?
                         .with_optional_max_tokens(config.max_tokens)
                         .with_thinking(config.thinking_enabled)
                         .with_optional_reasoning_effort(config.reasoning_effort)
                         .with_request_timeout_secs(config.request_timeout_secs)
                         .with_optional_raw_exchange_dir(config.raw_exchange_dir);
+                provider_config.chatgpt_credentials = config.chatgpt_credentials;
                 Ok(Self::OpenAiResponses(OpenAiResponsesModelProvider::new(
                     provider_config,
                 )))
@@ -605,6 +701,7 @@ pub struct OpenAiProviderConfig {
     /// Optional private artifact directory for exact wire request/response
     /// bodies. Authorization headers are never written.
     pub raw_exchange_dir: Option<PathBuf>,
+    chatgpt_credentials: Option<PathBuf>,
 }
 
 impl OpenAiProviderConfig {
@@ -623,6 +720,7 @@ impl OpenAiProviderConfig {
             reasoning_effort: None,
             request_timeout_secs: 300,
             raw_exchange_dir: None,
+            chatgpt_credentials: None,
         };
         if config.api_key.trim().is_empty() {
             return Err(ProviderError::new("OpenAI API key must not be empty"));
@@ -1099,6 +1197,102 @@ impl OpenAiResponsesModelProvider {
         format!("{}/responses", self.config.base_url)
     }
 
+    async fn chatgpt_access_token(&self) -> Result<Option<String>, ProviderError> {
+        let Some(path) = self.config.chatgpt_credentials.as_ref() else {
+            return Ok(None);
+        };
+        let _credential_lock = lock_chatgpt_credentials(path).await?;
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+            ProviderError::new(format!("cannot inspect ChatGPT credentials: {error}"))
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(ProviderError::new(
+                "ChatGPT credentials must be a regular file",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(ProviderError::new(
+                    "ChatGPT credentials file must be owner-only (chmod 600)",
+                ));
+            }
+        }
+        let mut credentials: ChatGptCredentials =
+            serde_json::from_slice(&std::fs::read(path).map_err(|error| {
+                ProviderError::new(format!("cannot read ChatGPT credentials: {error}"))
+            })?)
+            .map_err(|error| ProviderError::new(format!("invalid ChatGPT credentials: {error}")))?;
+        if credentials.access_token.is_empty() || credentials.refresh_token.is_empty() {
+            return Err(ProviderError::new(
+                "ChatGPT plan is signed out; run `arabica auth chatgpt-login`",
+            ));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if credentials.expires_at_unix <= now.saturating_add(60) {
+            #[derive(Deserialize)]
+            struct TokenResponse {
+                access_token: String,
+                refresh_token: String,
+                expires_in: u64,
+                #[serde(default)]
+                scope: Option<String>,
+            }
+            let refresh_body = encode_form_pairs(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", &credentials.client_id),
+                ("refresh_token", &credentials.refresh_token),
+                ("resource", "https://api.openai.com/v1"),
+            ]);
+            let response = self
+                .client
+                .post("https://auth.openai.com/api/accounts/oauth/token")
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(refresh_body)
+                .send()
+                .await
+                .map_err(|error| {
+                    ProviderError::new(format!("ChatGPT token refresh failed: {error}"))
+                })?;
+            let status = response.status();
+            let body: Value = response.json().await.map_err(|error| {
+                ProviderError::new(format!("invalid ChatGPT token response: {error}"))
+            })?;
+            if !status.is_success() {
+                return Err(ProviderError::new(format!(
+                    "ChatGPT token refresh rejected (HTTP {status}); run `arabica auth chatgpt-login`"
+                )));
+            }
+            let refreshed: TokenResponse = serde_json::from_value(body).map_err(|error| {
+                ProviderError::new(format!("invalid ChatGPT token response: {error}"))
+            })?;
+            if let Some(scope) = refreshed.scope {
+                credentials.scopes = scope.split_whitespace().map(str::to_owned).collect();
+            }
+            if !credentials
+                .scopes
+                .iter()
+                .any(|scope| scope == "chatgpt.tokens.use.direct")
+            {
+                return Err(ProviderError::new(
+                    "ChatGPT plan usage permission is no longer active; run `arabica auth chatgpt-login`",
+                ));
+            }
+            credentials.access_token = refreshed.access_token;
+            credentials.refresh_token = refreshed.refresh_token;
+            credentials.expires_at_unix = now.saturating_add(refreshed.expires_in);
+            save_chatgpt_credentials(path, &credentials)?;
+        }
+        Ok(Some(credentials.access_token))
+    }
+
     fn map_prepared_request(
         &self,
         request: &RuntimeRequest,
@@ -1138,6 +1332,132 @@ impl OpenAiResponsesModelProvider {
     }
 }
 
+fn encode_form_pairs(pairs: &[(&str, &str)]) -> String {
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (key, value) in pairs {
+        serializer.append_pair(key, value);
+    }
+    serializer.finish()
+}
+
+fn chatgpt_responses_payload(mut request: Value) -> Result<Value, ProviderError> {
+    // The supported SIWC Responses route requires HTTP streaming and rejects
+    // system-role messages and max_output_tokens. Function tools are supplied
+    // through the supported additional_tools input item.
+    request["stream"] = json!(true);
+    if let Some(object) = request.as_object_mut() {
+        object.remove("max_output_tokens");
+        let tools = object
+            .remove("tools")
+            .filter(|tools| tools.as_array().is_some_and(|array| !array.is_empty()));
+        if let Some(tools) = tools {
+            request
+                .get_mut("input")
+                .and_then(Value::as_array_mut)
+                .ok_or_else(|| ProviderError::new("OpenAI Responses input must be an array"))?
+                .push(json!({
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": tools,
+                }));
+        }
+    }
+    if let Some(input) = request.get_mut("input").and_then(Value::as_array_mut) {
+        for item in input {
+            if item.get("role").and_then(Value::as_str) == Some("system") {
+                item["role"] = json!("developer");
+            }
+        }
+    }
+    Ok(request)
+}
+
+fn parse_chatgpt_responses_stream(body: &str) -> Result<Value, ProviderError> {
+    let mut terminal_response = None;
+    let mut failure = None;
+    let mut output_items = BTreeMap::<usize, Value>::new();
+    let mut output_text = BTreeMap::<usize, String>::new();
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            continue;
+        };
+        if data == "[DONE]" {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        let output_index = event
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .unwrap_or(0);
+        match event.get("type").and_then(Value::as_str) {
+            Some("response.output_item.done") => {
+                if let Some(item) = event.get("item") {
+                    output_items.insert(output_index, item.clone());
+                }
+            }
+            Some("response.output_text.delta") => {
+                if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                    output_text.entry(output_index).or_default().push_str(delta);
+                }
+            }
+            Some("response.output_text.done") => {
+                if let Some(text) = event.get("text").and_then(Value::as_str) {
+                    output_text
+                        .entry(output_index)
+                        .or_insert_with(|| text.to_owned());
+                }
+            }
+            Some("response.completed" | "response.incomplete") => {
+                terminal_response = event.get("response").cloned();
+            }
+            Some("response.failed") => {
+                failure = event
+                    .pointer("/response/error/message")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| Some("the Responses stream failed".to_owned()));
+            }
+            _ => {}
+        }
+    }
+    if let Some(message) = failure {
+        return Err(ProviderError::new(format!(
+            "ChatGPT Responses request failed: {message}"
+        )));
+    }
+    let mut response = terminal_response.ok_or_else(|| {
+        ProviderError::new("ChatGPT Responses stream ended without a terminal response event")
+    })?;
+    let response_has_output = response
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
+    if !response_has_output {
+        let mut items = output_items.into_values().collect::<Vec<_>>();
+        if items.is_empty() {
+            items.extend(
+                output_text
+                    .into_values()
+                    .filter(|text| !text.is_empty())
+                    .map(|text| {
+                        json!({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": text, "annotations": []}],
+                        })
+                    }),
+            );
+        }
+        if !items.is_empty() {
+            response["output"] = json!(items);
+        }
+    }
+    Ok(response)
+}
+
 impl ModelProvider for OpenAiResponsesModelProvider {
     async fn complete(
         &mut self,
@@ -1151,20 +1471,28 @@ impl ModelProvider for OpenAiResponsesModelProvider {
         prepared_request.generation.reasoning_effort = self.config.reasoning_effort.clone();
         let result = async {
             let wire_request = self.map_prepared_request(&prepared_request)?;
-            let request_body = serde_json::to_vec(&wire_request).map_err(|error| {
+            let mut request_value = serde_json::to_value(&wire_request).map_err(|error| {
+                ProviderError::new(format!(
+                    "OpenAI Responses request serialization failed: {error}"
+                ))
+            })?;
+            let chatgpt_token = self.chatgpt_access_token().await?;
+            if chatgpt_token.is_some() {
+                request_value = chatgpt_responses_payload(request_value)?;
+            }
+            let request_body = serde_json::to_vec(&request_value).map_err(|error| {
                 ProviderError::new(format!(
                     "OpenAI Responses request serialization failed: {error}"
                 ))
             })?;
             let raw_exchange = self.begin_raw_exchange(&run_id, &request_body)?;
-            let response = self
+            let mut builder = self
                 .client
                 .post(self.endpoint())
-                .bearer_auth(&self.config.api_key)
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(request_body)
-                .send()
-                .await;
+                .body(request_body);
+            builder = builder.bearer_auth(chatgpt_token.as_deref().unwrap_or(&self.config.api_key));
+            let response = builder.send().await;
             let response = match response {
                 Ok(response) => response,
                 Err(error) => {
@@ -1207,14 +1535,31 @@ impl ModelProvider for OpenAiResponsesModelProvider {
                     "OpenAI Responses endpoint rejected request: {detail}"
                 )));
             }
-            let wire: Value = serde_json::from_str(body).map_err(|error| {
+            let body = if chatgpt_token.is_some() {
+                let value = parse_chatgpt_responses_stream(body)?;
+                serde_json::to_string(&value).map_err(|error| {
+                    ProviderError::new(format!("invalid completed ChatGPT response: {error}"))
+                })?
+            } else {
+                body.to_owned()
+            };
+            let wire: Value = serde_json::from_str(&body).map_err(|error| {
                 ProviderError::new(format!("invalid OpenAI Responses response: {error}"))
             })?;
             let mut response = OpenAiResponsesCodec.decode(wire)?;
-            response.provider_state = Some(ProviderResponseState::OpenAiResponses {
-                raw_body: body.to_owned(),
-            });
+            response.provider_state =
+                Some(ProviderResponseState::OpenAiResponses { raw_body: body });
             let content = assistant_text(&response.items);
+            if chatgpt_token.is_some()
+                && content.is_empty()
+                && response.finish_reason != Some(FinishReason::ToolCalls)
+            {
+                return Err(ProviderError::new(format!(
+                    "ChatGPT Responses completed without assistant text (finish_reason={:?}, output_items={})",
+                    response.finish_reason,
+                    response.items.len()
+                )));
+            }
             Ok(ModelRunResult {
                 final_output: (!content.is_empty()).then_some(content),
                 prepared_request: Some(prepared_request.clone()),
@@ -2482,6 +2827,62 @@ struct RawExchangeResponse {
 struct RawExchangeError {
     stage: &'static str,
     message: String,
+}
+
+fn save_chatgpt_credentials(
+    path: &Path,
+    credentials: &ChatGptCredentials,
+) -> Result<(), ProviderError> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| ProviderError::new("ChatGPT credentials path has no parent directory"))?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        ProviderError::new(format!(
+            "cannot create ChatGPT credentials directory: {error}"
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).map_err(
+            |error| {
+                ProviderError::new(format!(
+                    "cannot protect ChatGPT credentials directory: {error}"
+                ))
+            },
+        )?;
+    }
+    let temporary = parent.join(format!(".chatgpt-auth-{}.tmp", uuid::Uuid::now_v7()));
+    let result = (|| -> Result<(), ProviderError> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary).map_err(|error| {
+            ProviderError::new(format!("cannot write ChatGPT credentials: {error}"))
+        })?;
+        serde_json::to_writer(&mut file, credentials).map_err(|error| {
+            ProviderError::new(format!("cannot serialize ChatGPT credentials: {error}"))
+        })?;
+        file.write_all(b"\n").map_err(|error| {
+            ProviderError::new(format!("cannot finish ChatGPT credentials: {error}"))
+        })?;
+        file.sync_all().map_err(|error| {
+            ProviderError::new(format!("cannot sync ChatGPT credentials: {error}"))
+        })?;
+        std::fs::rename(&temporary, path).map_err(|error| {
+            ProviderError::new(format!("cannot replace ChatGPT credentials: {error}"))
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
 }
 
 fn write_json_file(path: &Path, value: &impl Serialize) -> Result<(), ProviderError> {
@@ -4385,6 +4786,76 @@ mod tests {
         assert_eq!(value["reasoning"]["summary"], "auto");
         assert_eq!(value["include"][0], "reasoning.encrypted_content");
         assert_eq!(value["tools"][0]["name"], "read_file");
+    }
+
+    #[tokio::test]
+    async fn chatgpt_credential_lock_serializes_independent_handles() {
+        let home =
+            std::env::temp_dir().join(format!("arabica-credential-lock-{}", uuid::Uuid::now_v7()));
+        let path = home.join("chatgpt-auth.json");
+        let first = lock_chatgpt_credentials(&path).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(120), lock_chatgpt_credentials(&path))
+                .await
+                .is_err()
+        );
+        drop(first);
+        let second = tokio::time::timeout(Duration::from_secs(2), lock_chatgpt_credentials(&path))
+            .await
+            .unwrap()
+            .unwrap();
+        drop(second);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn chatgpt_payload_uses_supported_streaming_and_tool_contract() {
+        let adapted = chatgpt_responses_payload(json!({
+            "model": "gpt-6.1-sol",
+            "store": false,
+            "max_output_tokens": 2048,
+            "input": [
+                {"role": "system", "content": "Instructions"},
+                {"role": "user", "content": "hello"}
+            ],
+            "tools": [{"type": "function", "name": "read_file"}],
+            "tool_choice": "auto"
+        }))
+        .expect("ChatGPT payload adapts");
+
+        assert_eq!(adapted["stream"], true);
+        assert_eq!(adapted["store"], false);
+        assert!(adapted.get("max_output_tokens").is_none());
+        assert!(adapted.get("tools").is_none());
+        assert_eq!(adapted["input"][0]["role"], "developer");
+        assert_eq!(adapted["input"][2]["type"], "additional_tools");
+        assert_eq!(adapted["input"][2]["tools"][0]["name"], "read_file");
+    }
+
+    #[test]
+    fn chatgpt_stream_reassembles_text_when_completed_event_has_empty_output() {
+        let response = parse_chatgpt_responses_stream(
+            "event: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"Hello\"}\r\n\r\nevent: response.completed\r\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\r\n\r\ndata: [DONE]\r\n",
+        )
+        .expect("stream produces a completed response");
+        assert_eq!(response["output"][0]["type"], "message");
+        assert_eq!(response["output"][0]["content"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn chatgpt_stream_preserves_completed_tool_items_and_failures() {
+        let response = parse_chatgpt_responses_stream(
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n",
+        )
+        .expect("tool output item is retained");
+        assert_eq!(response["output"][0]["type"], "function_call");
+        assert_eq!(response["output"][0]["call_id"], "call_1");
+
+        let error = parse_chatgpt_responses_stream(
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"unavailable\"}}}\n",
+        )
+        .expect_err("failed stream is surfaced");
+        assert!(error.to_string().contains("unavailable"));
     }
 
     #[tokio::test]

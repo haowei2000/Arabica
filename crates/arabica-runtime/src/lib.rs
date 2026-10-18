@@ -4769,7 +4769,7 @@ pub fn memory_search_definition() -> ToolDefinition {
                     "maximum": 10
                 }
             },
-            "required": ["query"],
+            "required": ["query", "limit"],
             "additionalProperties": false
         }),
         strict: Some(true),

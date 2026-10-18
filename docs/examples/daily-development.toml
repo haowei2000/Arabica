@@ -1,0 +1,37 @@
+# Starting configuration for an installation connected through
+# `arabica auth chatgpt-login`. Merge entries with an existing configuration.
+[providers.chatgpt]
+auth = "chatgpt"
+api_type = "open_ai_responses"
+
+[models.daily]
+provider = "chatgpt"
+model_id = "gpt-6-luna"
+
+[models.planner]
+provider = "chatgpt"
+model_id = "gpt-6-astra"
+
+[models.repair]
+provider = "chatgpt"
+model_id = "gpt-6.1-sol"
+
+[blend]
+default_policy = "daily-development"
+
+[blend.policies.daily-development]
+version = 1
+default_model = "daily"
+planning_model = "planner"
+after_tool_error = "repair"
+after_tool_success = "daily"
+minimum_model_dwell_steps = 2
+tool_call_capable_models = ["daily", "planner", "repair"]
+typed_completion_capable_models = ["daily", "planner", "repair"]
+
+# With no routing rules, selecting a model keeps all steps on that model.
+[blend.policies.focused]
+version = 1
+default_model = "daily"
+tool_call_capable_models = ["daily", "planner", "repair"]
+typed_completion_capable_models = ["daily", "planner", "repair"]

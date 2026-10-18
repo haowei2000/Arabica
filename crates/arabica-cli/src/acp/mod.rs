@@ -54,6 +54,7 @@ use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType, BlendProvid
 
 #[derive(Clone)]
 struct AcpProviderSettings {
+    overrides: crate::host::HostConfigArgs,
     initial: ApiProviderConfig,
     models: Vec<String>,
     aliases: BTreeMap<String, String>,
@@ -63,22 +64,122 @@ struct AcpProviderSettings {
 }
 
 impl AcpProviderSettings {
+    fn for_workspace(&self, home: &Path, cwd: &Path) -> AcpResult<Self> {
+        let preferences = crate::config::read_workspace_settings(home, cwd)
+            .map_err(|error| AcpError::invalid_params().data(error.to_string()))?;
+        let mut next = self.clone();
+        if let Some(id) = self
+            .overrides
+            .policy
+            .as_ref()
+            .or(preferences.blend_policy.as_ref())
+        {
+            next.blend_policy = Some(self.blend_policies.get(id).cloned().ok_or_else(|| {
+                AcpError::invalid_params().data(format!("unknown Blend policy {id:?}"))
+            })?);
+        }
+        if let Some(policy) = &mut next.blend_policy {
+            if let Some(alias) = self.overrides.model_alias.clone().or_else(|| {
+                self.overrides
+                    .policy
+                    .is_none()
+                    .then(|| preferences.model_alias.clone())
+                    .flatten()
+            }) {
+                if !next.aliases.contains_key(&alias) {
+                    return Err(
+                        AcpError::invalid_params().data(format!("unknown model alias {alias:?}"))
+                    );
+                }
+                policy.default_model = alias;
+            }
+            for (alias, thinking) in &preferences.model_thinking {
+                if let Some(config) = next.model_configs.get_mut(alias) {
+                    crate::config::set_thinking(config, thinking)
+                        .map_err(|error| AcpError::invalid_params().data(error))?;
+                }
+            }
+            let selected = next
+                .model_configs
+                .get_mut(&policy.default_model)
+                .ok_or_else(|| {
+                    AcpError::invalid_params().data("policy default model is unavailable")
+                })?;
+            if let Some(model) = self.overrides.model.clone().or(preferences.model) {
+                selected.model = model;
+            }
+            if let Some(thinking) = self.overrides.thinking.as_ref().or_else(|| {
+                (!preferences
+                    .model_thinking
+                    .contains_key(&policy.default_model))
+                .then_some(preferences.thinking.as_ref())
+                .flatten()
+            }) {
+                crate::config::set_thinking(selected, thinking)
+                    .map_err(|error| AcpError::invalid_params().data(error))?;
+            }
+            next.initial = selected.clone();
+        } else {
+            if let Some(model) = self.overrides.model.clone().or(preferences.model) {
+                next.initial.model = model;
+            }
+            if let Some(thinking) = self
+                .overrides
+                .thinking
+                .as_ref()
+                .or(preferences.thinking.as_ref())
+            {
+                crate::config::set_thinking(&mut next.initial, thinking)
+                    .map_err(|error| AcpError::invalid_params().data(error))?;
+            }
+        }
+        Ok(next)
+    }
+
+    fn build_model(&self) -> AcpResult<HostModel> {
+        crate::host::HostModelCatalog {
+            provider: self.initial.clone(),
+            models: self.aliases.clone(),
+            blend_policy: self.blend_policy.clone(),
+            model_configs: self.model_configs.clone(),
+        }
+        .build_model()
+        .map_err(provider_error)
+    }
+
     fn options(
         &self,
         config: &ApiProviderConfig,
         policy: Option<&BlendRoutingPolicy>,
     ) -> Vec<SessionConfigOption> {
-        let models = self
-            .models
-            .iter()
-            .map(|model| SessionConfigSelectOption::new(model.clone(), model.clone()))
-            .collect::<Vec<_>>();
         let selected_model = policy
             .map(|policy| policy.default_model.as_str())
             .unwrap_or(&config.model);
+        let models = self
+            .models
+            .iter()
+            .map(|model| {
+                SessionConfigSelectOption::new(
+                    model.clone(),
+                    if model == selected_model && self.aliases.contains_key(model) {
+                        format!("{model} · {}", config.model)
+                    } else {
+                        self.model_configs.get(model).map_or_else(
+                            || model.clone(),
+                            |config| format!("{model} · {}", config.model),
+                        )
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
         let mut options = vec![
-            SessionConfigOption::select("model", "Model", selected_model.to_owned(), models)
-                .category(SessionConfigOptionCategory::Model),
+            SessionConfigOption::select(
+                "model",
+                "Default Model",
+                selected_model.to_owned(),
+                models,
+            )
+            .category(SessionConfigOptionCategory::Model),
         ];
         if let Some(policy) = policy {
             let policies = self
@@ -86,12 +187,13 @@ impl AcpProviderSettings {
                 .keys()
                 .map(|id| SessionConfigSelectOption::new(id.clone(), id.clone()))
                 .collect::<Vec<_>>();
-            if policies.len() > 1 {
+            if !policies.is_empty() {
                 options.push(
                     SessionConfigOption::select(
                         "blend.policy",
-                        "Policy",
-                        policy.policy_id.clone(),
+                        "Blend Policy",
+                        crate::config::policy_selection_key(&self.blend_policies, policy)
+                            .to_owned(),
                         policies,
                     )
                     .category(SessionConfigOptionCategory::ModelConfig),
@@ -104,25 +206,16 @@ impl AcpProviderSettings {
         ) {
             return options;
         }
-        let levels = if config.api_type == ApiType::OpenAiResponses {
-            vec!["off", "low", "medium", "high"]
-        } else {
-            vec!["off", "on"]
-        };
-        let current = if !config.thinking_enabled {
-            "off"
-        } else if config.api_type == ApiType::OpenAiResponses {
-            config.reasoning_effort.as_deref().unwrap_or("medium")
-        } else {
-            "on"
-        };
+        let levels = crate::config::thinking_levels(config.api_type);
+        let current = crate::config::thinking_level(config);
         options.push(
             SessionConfigOption::select(
                 "thinking",
                 "Thinking",
                 current.to_owned(),
                 levels
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .map(|level| SessionConfigSelectOption::new(level, level))
                     .collect::<Vec<_>>(),
             )
@@ -215,10 +308,8 @@ impl AcpState {
         self
     }
 
-    fn config_options(&self) -> Option<Vec<SessionConfigOption>> {
-        self.provider_settings
-            .as_ref()
-            .map(|settings| settings.options(&settings.initial, settings.blend_policy.as_ref()))
+    fn config_options(settings: Option<&AcpProviderSettings>) -> Option<Vec<SessionConfigOption>> {
+        settings.map(|settings| settings.options(&settings.initial, settings.blend_policy.as_ref()))
     }
 
     fn build_runtime(
@@ -226,6 +317,7 @@ impl AcpState {
         model: HostModel,
         cwd: &Path,
         mcp: crate::mcp::McpTools,
+        settings: Option<&AcpProviderSettings>,
     ) -> Result<HostRuntime, AcpError> {
         build_host_runtime_with_blend(
             model,
@@ -233,9 +325,7 @@ impl AcpState {
             self.tool_policy.clone(),
             &self.arabica_home,
             mcp,
-            self.provider_settings
-                .as_ref()
-                .and_then(|settings| settings.blend_policy.clone()),
+            settings.and_then(|settings| settings.blend_policy.clone()),
         )
         .map_err(runtime_error)
     }
@@ -287,10 +377,18 @@ impl AcpState {
                 .data(format!("cwd must be absolute: {}", request.cwd.display())));
         }
         let workspace_id = crate::host::workspace_id_for(&request.cwd);
-        let model = (self.model_factory)()?;
+        let session_settings = self
+            .provider_settings
+            .as_ref()
+            .map(|settings| settings.for_workspace(&self.arabica_home, &request.cwd))
+            .transpose()?;
+        let model = match &session_settings {
+            Some(settings) => settings.build_model()?,
+            None => (self.model_factory)()?,
+        };
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
+        let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let instructions_sha256 =
             crate::instructions::sha256(manager.runtime().system_instructions());
@@ -341,22 +439,20 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store,
-                    provider_config: self
-                        .provider_settings
+                    provider_config: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
-                    model_configs: self
-                        .provider_settings
+                    model_configs: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.model_configs.clone())),
-                    blend_policy: self
-                        .provider_settings
+                    blend_policy: session_settings
                         .as_ref()
                         .and_then(|settings| settings.blend_policy.clone())
                         .map(Mutex::new),
                 }),
             );
-        Ok(NewSessionResponse::new(acp_session_id).config_options(self.config_options()))
+        Ok(NewSessionResponse::new(acp_session_id)
+            .config_options(Self::config_options(session_settings.as_ref())))
     }
 
     /// `session/load`: only reachable once `initialize` has advertised
@@ -395,10 +491,18 @@ impl AcpState {
             .open(&workspace_id, &arabica_session_id)
             .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
 
-        let model = (self.model_factory)()?;
+        let session_settings = self
+            .provider_settings
+            .as_ref()
+            .map(|settings| settings.for_workspace(&self.arabica_home, &request.cwd))
+            .transpose()?;
+        let model = match &session_settings {
+            Some(settings) => settings.build_model()?,
+            None => (self.model_factory)()?,
+        };
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
+        let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let restore_report = manager
             .restore_session(
@@ -441,23 +545,21 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store,
-                    provider_config: self
-                        .provider_settings
+                    provider_config: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
-                    model_configs: self
-                        .provider_settings
+                    model_configs: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.model_configs.clone())),
-                    blend_policy: self
-                        .provider_settings
+                    blend_policy: session_settings
                         .as_ref()
                         .and_then(|settings| settings.blend_policy.clone())
                         .map(Mutex::new),
                 }),
             );
 
-        Ok(LoadSessionResponse::new().config_options(self.config_options()))
+        Ok(LoadSessionResponse::new()
+            .config_options(Self::config_options(session_settings.as_ref())))
     }
 
     /// `session/resume`: only reachable once `initialize` has advertised
@@ -495,10 +597,18 @@ impl AcpState {
             .open(&workspace_id, &arabica_session_id)
             .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
 
-        let model = (self.model_factory)()?;
+        let session_settings = self
+            .provider_settings
+            .as_ref()
+            .map(|settings| settings.for_workspace(&self.arabica_home, &request.cwd))
+            .transpose()?;
+        let model = match &session_settings {
+            Some(settings) => settings.build_model()?,
+            None => (self.model_factory)()?,
+        };
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
+        let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         manager
             .restore_session(
@@ -521,23 +631,21 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store,
-                    provider_config: self
-                        .provider_settings
+                    provider_config: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
-                    model_configs: self
-                        .provider_settings
+                    model_configs: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.model_configs.clone())),
-                    blend_policy: self
-                        .provider_settings
+                    blend_policy: session_settings
                         .as_ref()
                         .and_then(|settings| settings.blend_policy.clone())
                         .map(Mutex::new),
                 }),
             );
 
-        Ok(ResumeSessionResponse::new().config_options(self.config_options()))
+        Ok(ResumeSessionResponse::new()
+            .config_options(Self::config_options(session_settings.as_ref())))
     }
 
     fn set_config_option(
@@ -593,6 +701,13 @@ impl AcpState {
                     .map_err(provider_error)?,
                 )
             };
+            crate::config::save_workspace_settings(&self.arabica_home, &entry.cwd, |preferences| {
+                preferences.blend_policy = Some(value.clone());
+                preferences.model = None;
+                preferences.model_alias = None;
+                preferences.thinking = None;
+            })
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
             manager
                 .runtime_mut()
                 .set_blend_policy(Some(policy.clone()))
@@ -614,24 +729,9 @@ impl AcpState {
                 updated = session_model_configs[&value].clone();
                 selected_alias = Some(value.clone());
             }
-            "model" if settings.models.contains(&value) => updated.model = value,
-            "thinking" => match (updated.api_type, value.as_str()) {
-                (_, "off") => {
-                    updated.thinking_enabled = false;
-                    updated.reasoning_effort = None;
-                }
-                (ApiType::OpenAiResponses, "low" | "medium" | "high") => {
-                    updated.thinking_enabled = true;
-                    updated.reasoning_effort = Some(value);
-                }
-                (ApiType::OpenAiChatCompletions, "on") => {
-                    updated.thinking_enabled = true;
-                }
-                _ => {
-                    return Err(AcpError::invalid_params()
-                        .data("unsupported thinking level for this provider"));
-                }
-            },
+            "model" if settings.models.contains(&value) => updated.model = value.clone(),
+            "thinking" => crate::config::set_thinking(&mut updated, &value)
+                .map_err(|error| AcpError::invalid_params().data(error))?,
             "model" => {
                 return Err(AcpError::invalid_params()
                     .data("model is not a configured model or Blend alias"));
@@ -662,6 +762,31 @@ impl AcpState {
         } else {
             HostModel::Api(ApiModelProvider::new(updated.clone()).map_err(provider_error)?)
         };
+        let active_alias = selected_alias.clone().or_else(|| {
+            entry
+                .blend_policy
+                .as_ref()
+                .and_then(|lock| lock.lock().ok().map(|policy| policy.default_model.clone()))
+        });
+        crate::config::save_workspace_settings(&self.arabica_home, &entry.cwd, |preferences| {
+            if config_id == "thinking" {
+                if let Some(alias) = &active_alias {
+                    preferences.thinking = None;
+                    preferences
+                        .model_thinking
+                        .insert(alias.clone(), value.clone());
+                } else {
+                    preferences.thinking = Some(value.clone());
+                }
+            } else if let Some(alias) = &selected_alias {
+                preferences.model = None;
+                preferences.model_alias = Some(alias.clone());
+                preferences.thinking = None;
+            } else {
+                preferences.model = Some(updated.model.clone());
+            }
+        })
+        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
         if let Some(configs) = &entry.model_configs {
             *configs.lock().expect("model configs lock poisoned") = session_model_configs;
         }
@@ -845,17 +970,8 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     } else if !models.contains(&provider_config.model) {
         models.insert(0, provider_config.model.clone());
     }
-    let mut blend_policies = blend_policies;
-    if let Ok(records) = arabica_adapters::SqliteEvaluationStore::read_policy_versions(
-        &arabica_home.join("evaluation.sqlite3"),
-        None,
-    ) {
-        for record in records {
-            let key = format!("{}-v{}", record.policy_id, record.version);
-            blend_policies.entry(key).or_insert(record.policy);
-        }
-    }
     let settings = AcpProviderSettings {
+        overrides: resolved.invocation.clone(),
         initial: provider_config.clone(),
         models,
         aliases: aliases.clone(),
@@ -1359,6 +1475,7 @@ mod round_trip {
         let home = temp_root("streaming-home");
         let state = AcpState::new(factory, LocalRunnerPolicy::coding(), home.clone())
             .with_provider_settings(AcpProviderSettings {
+                overrides: Default::default(),
                 initial,
                 models: vec!["mock-model".to_owned()],
                 aliases: BTreeMap::new(),
@@ -1456,6 +1573,7 @@ mod round_trip {
             arabica_home.clone(),
         )
         .with_provider_settings(AcpProviderSettings {
+            overrides: Default::default(),
             initial,
             models: vec!["first-model".to_owned(), "second-model".to_owned()],
             aliases: BTreeMap::new(),
@@ -1502,7 +1620,7 @@ mod round_trip {
         let root = temp_root("blend-config");
         let arabica_home = temp_root("blend-config-home");
         let initial = ApiProviderConfig::new(
-            ApiType::OpenAiChatCompletions,
+            ApiType::OpenAiResponses,
             "test-key",
             "http://127.0.0.1:9/v1",
             "model-fast",
@@ -1569,6 +1687,7 @@ mod round_trip {
             arabica_home.clone(),
         )
         .with_provider_settings(AcpProviderSettings {
+            overrides: Default::default(),
             initial,
             models: aliases.keys().cloned().collect(),
             aliases,
@@ -1618,6 +1737,27 @@ mod round_trip {
             panic!("model option should be a select");
         };
         assert_eq!(updated_select.current_value.to_string(), "strong");
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "thinking",
+                "max",
+            ))
+            .unwrap();
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "model",
+                "fast",
+            ))
+            .unwrap();
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "thinking",
+                "low",
+            ))
+            .unwrap();
         let entry = state.entry(&session.session_id).unwrap();
         let policy_response = state
             .set_config_option(SetSessionConfigOptionRequest::new(
@@ -1655,6 +1795,74 @@ mod round_trip {
             "strong"
         );
         drop(manager);
+        let saved = crate::config::read_workspace_settings(&arabica_home, &root).unwrap();
+        assert_eq!(saved.blend_policy.as_deref(), Some("simple"));
+        assert!(saved.model_alias.is_none());
+        assert_eq!(saved.model_thinking["strong"], "max");
+        assert_eq!(saved.model_thinking["fast"], "low");
+        let restored = state
+            .new_session(NewSessionRequest::new(root.clone()))
+            .await
+            .unwrap();
+        let restored_entry = state.entry(&restored.session_id).unwrap();
+        assert_eq!(
+            restored_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .policy_id,
+            "simple"
+        );
+        assert_eq!(
+            restored_entry
+                .provider_config
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .reasoning_effort
+                .as_deref(),
+            Some("max")
+        );
+        let other_root = temp_root("blend-other-workspace");
+        let isolated = state
+            .new_session(NewSessionRequest::new(other_root.clone()))
+            .await
+            .unwrap();
+        let isolated_entry = state.entry(&isolated.session_id).unwrap();
+        assert_eq!(
+            isolated_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .default_model,
+            "fast"
+        );
+        assert!(
+            !isolated_entry
+                .provider_config
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .thinking_enabled
+        );
+        let active = restored_entry.manager.lock().await;
+        assert!(
+            state
+                .set_config_option(SetSessionConfigOptionRequest::new(
+                    restored.session_id,
+                    "model",
+                    "fast"
+                ))
+                .is_err()
+        );
+        drop(active);
+        std::fs::remove_dir_all(other_root).ok();
         std::fs::remove_dir_all(root).ok();
         std::fs::remove_dir_all(arabica_home).ok();
     }

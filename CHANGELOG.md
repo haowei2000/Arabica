@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 — 2026-10-17
+
+- Add ChatGPT account login in the CLI and desktop app using the official OAuth flow, protected credential storage, and automatic token refresh.
+- Serialize credential refresh and revocation across desktop and CLI processes.
+- Configure the default Responses provider and model capabilities automatically after login.
+- Add shared CLI and desktop controls for model aliases, Blend policies, and supported thinking levels, with workspace preferences and per-model thinking settings.
+- Preserve Blend routing when resuming CLI sessions and isolate ACP configuration by workspace and session.
+- Include a daily development Blend example with separate planning, execution, and repair models.
+- Reconstruct streamed Responses output when terminal events omit output and correct the strict memory search tool schema.
+- Build manual releases from the requested tag and include changelog entries in release notes.
+
 ## 0.5.1 — 2026-10-13
 
 - Optimize runtime execution speed with SQLite WAL journaling and connection pooling.

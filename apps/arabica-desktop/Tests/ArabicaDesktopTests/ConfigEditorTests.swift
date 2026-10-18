@@ -2,6 +2,50 @@ import XCTest
 @testable import ArabicaDesktop
 
 final class ConfigEditorTests: XCTestCase {
+    func testChatGPTAuthConfigDoesNotPersistAPIKeySettings() throws {
+        let source = """
+        [providers.primary]
+        api_type = "open_ai_responses"
+        base_url = "https://api.openai.com/v1"
+        api_key_env = "ARABICA_PROVIDER_PRIMARY_API_KEY"
+        api_key = "old-secret"
+
+        [models.default]
+        provider = "primary"
+        model_id = "gpt-6.1-sol"
+
+        [blend]
+        default_model = "default"
+        """
+        let result = try ConfigDocument(source).updating(
+            oldProviderSection: "providers.primary",
+            newProviderSection: "providers.primary",
+            oldModelSection: "models.default",
+            newModelSection: "models.default",
+            providerValues: [
+                "auth": ConfigDocument.quote("chatgpt"),
+                "api_type": ConfigDocument.quote("open_ai_responses"),
+                "base_url": ConfigDocument.quote("https://api.openai.com/v1"),
+            ],
+            modelValues: [
+                "provider": ConfigDocument.quote("primary"),
+                "model_id": ConfigDocument.quote("gpt-6.1-sol"),
+            ],
+            thinking: "",
+            defaultPolicy: "",
+            defaultModelAlias: "default",
+            newAPIKey: nil,
+            removeAPIKey: true,
+            removeAPIKeyEnv: true
+        )
+
+        let provider = ConfigDocument(result).values(in: "providers.primary")
+        XCTAssertEqual(provider["auth"], "chatgpt")
+        XCTAssertNil(provider["api_key"])
+        XCTAssertNil(provider["api_key_env"])
+        XCTAssertEqual(ConfigDocument(result).values(in: "models.default")["model_id"], "gpt-6.1-sol")
+    }
+
     func testLegacySingleProviderIsRewrittenAndSecretAndOtherSectionsArePreserved() throws {
         let source = """
         [provider]
