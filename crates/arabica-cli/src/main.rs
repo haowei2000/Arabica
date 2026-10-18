@@ -13,7 +13,7 @@ use clap::{Args, Parser, Subcommand};
 use std::io::IsTerminal;
 
 #[derive(Parser, Debug)]
-#[command(name = "arabica", about = "Arabica coding agent host")]
+#[command(name = "arabica", version, about = "Arabica coding agent host")]
 struct Cli {
     #[command(flatten)]
     config: HostConfigArgs,
@@ -67,6 +67,8 @@ impl PrintArgs {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Install the latest signed release or configure automatic CLI updates.
+    Update(arabica_cli::update::UpdateArgs),
     /// Run as an Agent Client Protocol v1 agent over stdio (for editors like Zed).
     Acp,
     /// Start an interactive terminal session (also the default).
@@ -104,6 +106,14 @@ async fn run(cli: Cli) -> i32 {
     } = cli;
 
     // These commands need no working model provider.
+    if let Some(Commands::Update(args)) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the update subcommand");
+            2
+        } else {
+            arabica_cli::update::run(args).await
+        };
+    }
     if let Some(Commands::Evaluations { action }) = command {
         return if print_args.print.is_some() {
             eprintln!("error: -p cannot be combined with the evaluations subcommand");
@@ -170,6 +180,7 @@ async fn run(cli: Cli) -> i32 {
         (Some(Commands::Auth { .. }), _) => {
             unreachable!("Commands::Auth returns early above")
         }
+        (Some(Commands::Update(_)), _) => unreachable!("update returns early"),
         (None, Some(task)) => run_print(resolved, task.clone(), print_args).await,
         (None, None) => run_chat(resolved, print_args).await,
     }
@@ -179,6 +190,9 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
     if args.output_format != OutputFormat::Text {
         eprintln!("error: --output-format is only available with -p");
         return 2;
+    }
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        arabica_cli::update::schedule_background_update();
     }
     let options = InteractiveOptions {
         allow_shell: args.allow_shell,

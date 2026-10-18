@@ -70,6 +70,14 @@ if [[ -z "$identity" ]]; then
 fi
 
 # Sign nested command-line code first, then the enclosing app bundle.
+framework="$app/Contents/Frameworks/Sparkle.framework"
+for service in Installer Downloader; do
+  codesign --force --options runtime --timestamp --sign "$identity" \
+    --preserve-metadata=entitlements "$framework/Versions/B/XPCServices/${service}.xpc"
+done
+codesign --force --options runtime --timestamp --sign "$identity" "$framework/Versions/B/Autoupdate"
+codesign --force --options runtime --timestamp --sign "$identity" "$framework/Versions/B/Updater.app"
+codesign --force --options runtime --timestamp --sign "$identity" "$framework"
 codesign --force --options runtime --timestamp --sign "$identity" \
   "$app/Contents/Resources/arabica"
 codesign --force --options runtime --timestamp --sign "$identity" \
@@ -122,5 +130,5 @@ codesign --verify --deep --strict --verbose=2 "$app"
 spctl --assess --type execute --verbose=4 "$app"
 
 ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
-shasum -a 256 "$archive" > "$archive.sha256"
+(cd dist && shasum -a 256 "$(basename "$archive")" > "$(basename "$archive").sha256")
 echo "Signed, notarized, and packaged $archive"

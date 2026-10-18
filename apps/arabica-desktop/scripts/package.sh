@@ -2,10 +2,6 @@
 set -euo pipefail
 
 profile="${1:-release}"
-app_version="${ARABICA_VERSION:-0.1.0}"
-app_version="${app_version#v}"
-app_version="${app_version%%-*}"
-app_version="${app_version%%+*}"
 if [[ "$profile" != "debug" && "$profile" != "release" ]]; then
   echo "usage: $0 [debug|release]" >&2
   exit 2
@@ -13,6 +9,16 @@ fi
 
 app_root="$(cd "$(dirname "$0")/.." && pwd)"
 repo_root="$(cd "$app_root/../.." && pwd)"
+app_version="${ARABICA_VERSION:-$(awk '/^\[workspace.package\]/ { package=1; next } package && /^version = / { gsub(/"/, "", $3); print $3; exit }' "$repo_root/Cargo.toml")}"
+app_version="${app_version#v}"
+app_version="${app_version%%-*}"
+app_version="${app_version%%+*}"
+update_public_key="$(cat "$repo_root/crates/arabica-cli/src/update-public-key.txt")"
+case "$(uname -m)" in
+  arm64|aarch64) update_arch=aarch64 ;;
+  x86_64) update_arch=x86_64 ;;
+  *) echo 'Unsupported update architecture' >&2; exit 1 ;;
+esac
 swift_args=(-c "$profile")
 cargo_args=(-p arabica-cli)
 if [[ "$profile" == "release" ]]; then cargo_args+=(--release); fi
@@ -28,6 +34,12 @@ mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$swift_bin" "$bundle/Contents/MacOS/ArabicaDesktop"
 cp "$agent_bin" "$bundle/Contents/Resources/arabica"
 chmod 755 "$bundle/Contents/MacOS/ArabicaDesktop" "$bundle/Contents/Resources/arabica"
+mkdir -p "$bundle/Contents/Frameworks"
+swift_bin_dir="$(dirname "$swift_bin")"
+test -d "$swift_bin_dir/Sparkle.framework"
+ditto "$swift_bin_dir/Sparkle.framework" "$bundle/Contents/Frameworks/Sparkle.framework"
+cp "$app_root/.build/artifacts/sparkle/Sparkle/LICENSE" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$bundle/Contents/MacOS/ArabicaDesktop"
 
 icon_work="$(mktemp -d)"
 trap 'rm -rf "$icon_work"' EXIT
@@ -69,7 +81,20 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$app_version</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>SUFeedURL</key><string>https://github.com/haowei2000/Arabica/releases/latest/download/appcast-${update_arch}.xml</string>
+  <key>SUPublicEDKey</key><string>$update_public_key</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUAutomaticallyUpdate</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SURequireSignedFeed</key><true/>
 </dict></plist>
 PLIST
+
+if [[ "$profile" == "debug" ]]; then
+  # install_name_tool invalidates Swift's linker-generated ad-hoc signature.
+  codesign --force --sign - "$bundle/Contents/MacOS/ArabicaDesktop"
+  codesign --force --sign - "$bundle"
+fi
 
 echo "Built $bundle"

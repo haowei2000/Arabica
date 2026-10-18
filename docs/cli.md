@@ -19,6 +19,15 @@ cargo build -p arabica-cli --release
 
 The binary is at `target/release/arabica`.
 
+## Updates
+
+Use `arabica update` to install the latest signed standalone release,
+`arabica update --check` to check without installing, and `arabica update --auto
+off` to disable daily background updates. `arabica --version` prints the installed
+version. Automatic updates run only for interactive standalone installations;
+ACP, scripts, development builds, and package-manager installations do not update
+themselves. See [software updates](updates.md) for details.
+
 ## Configuration
 
 CLI and ACP load the named provider catalog from `$ARABICA_HOME/config.toml`
