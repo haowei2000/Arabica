@@ -52,6 +52,7 @@ final class DesktopModel: ObservableObject {
     @Published var draft = ""
     @Published var attachedFiles: [URL] = []
     @Published private var activeRuns: [String: UUID] = [:]
+    var hasActiveRuns: Bool { !activeRuns.isEmpty }
     var isRunning: Bool {
         selectedSessionID.map { activeRuns[$0] != nil } ?? false
     }

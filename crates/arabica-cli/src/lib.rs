@@ -24,3 +24,4 @@ pub mod print;
 pub mod sessions;
 pub mod skills;
 pub mod tui;
+pub mod update;

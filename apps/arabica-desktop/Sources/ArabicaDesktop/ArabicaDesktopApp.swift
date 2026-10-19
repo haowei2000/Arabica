@@ -24,10 +24,14 @@ enum Palette {
 
 @main
 struct ArabicaDesktopApp: App {
-    @StateObject private var model = DesktopModel()
+    @StateObject private var model: DesktopModel
+    @StateObject private var updater: AppUpdater
     @ObservedObject private var theme = ThemeManager.shared
 
     init() {
+        let model = DesktopModel()
+        _model = StateObject(wrappedValue: model)
+        _updater = StateObject(wrappedValue: AppUpdater(model: model))
         _ = PermissionNotifications.shared
     }
 
@@ -42,6 +46,10 @@ struct ArabicaDesktopApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Conversation") { Task { await model.newSession() } }
                     .keyboardShortcut("n")
@@ -63,6 +71,7 @@ struct ArabicaDesktopApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
+                .environmentObject(updater)
                 .environmentObject(theme)
                 .frame(width: 660, height: 700)
                 .preferredColorScheme(theme.colorScheme)
@@ -1560,6 +1569,7 @@ private struct PermissionView: View {
 
 private struct SettingsView: View {
     @EnvironmentObject var model: DesktopModel
+    @EnvironmentObject var updater: AppUpdater
     @StateObject private var config = ConfigEditor()
     @State private var selectedTab: SettingsTab = .config
 
@@ -1568,6 +1578,7 @@ private struct SettingsView: View {
         case appearance = "Appearance"
         case policy = "Policy"
         case context = "Context"
+        case updates = "Updates"
 
         var id: String { rawValue }
         var icon: String {
@@ -1576,6 +1587,7 @@ private struct SettingsView: View {
             case .appearance: return "paintpalette"
             case .policy: return "point.3.filled.connected.trianglepath.dotted"
             case .context: return "square.stack.3d.up"
+            case .updates: return "arrow.down.circle"
             }
         }
     }
@@ -1604,40 +1616,71 @@ private struct SettingsView: View {
                     PolicyPageView(config: config, evaluation: model.evaluation)
                 case .context:
                     ContextPageView(config: config)
+                case .updates:
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("Software Updates").font(AppFont.sans(20))
+                        Text("Arabica \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")")
+                            .foregroundStyle(Palette.muted)
+                        Toggle("Automatically check for updates", isOn: Binding(
+                            get: { updater.automaticallyChecksForUpdates },
+                            set: { updater.setAutomaticChecks($0) }
+                        ))
+                        Toggle("Download updates and install when quitting", isOn: Binding(
+                            get: { updater.automaticallyDownloadsUpdates },
+                            set: { updater.setAutomaticDownloads($0) }
+                        ))
+                        .disabled(!updater.automaticallyChecksForUpdates)
+                        Button("Check for Updates…") { updater.checkForUpdates() }
+                            .disabled(!updater.canCheckForUpdates)
+                        if updater.waitingForRuns {
+                            Text("The update will restart Arabica after active runs finish.")
+                                .foregroundStyle(Palette.muted)
+                        }
+                        if !updater.isAvailable {
+                            Text("Updates are available in packaged Arabica releases.")
+                                .foregroundStyle(Palette.muted)
+                        }
+                        Spacer()
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .disabled(!updater.isAvailable)
                 }
             }
 
             Divider().background(Palette.rule)
 
-            // Persistent bottom status and action toolbar
-            HStack(spacing: 12) {
-                if !config.status.isEmpty {
-                    let isSaved = config.status.hasPrefix("Saved")
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(isSaved ? Color.green : Color.orange)
-                            .frame(width: 7, height: 7)
-                        Text(config.status)
-                            .font(AppFont.sans(11))
-                            .foregroundStyle(isSaved ? Palette.muted : Color.orange)
-                            .lineLimit(1)
+            if selectedTab != .updates {
+                // Persistent bottom status and action toolbar
+                HStack(spacing: 12) {
+                    if !config.status.isEmpty {
+                        let isSaved = config.status.hasPrefix("Saved")
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(isSaved ? Color.green : Color.orange)
+                                .frame(width: 7, height: 7)
+                            Text(config.status)
+                                .font(AppFont.sans(11))
+                                .foregroundStyle(isSaved ? Palette.muted : Color.orange)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Button("Open config.toml") { config.openConfigFile() }
+                        .font(AppFont.sans(12))
+                    Button("Reload") { config.reload() }
+                        .font(AppFont.sans(12))
+                    if selectedTab == .config {
+                        Button("Save") { config.save() }
+                            .buttonStyle(.borderedProminent)
+                            .font(AppFont.sans(12))
+                            .disabled(config.isSaving)
                     }
                 }
-                Spacer()
-                Button("Open config.toml") { config.openConfigFile() }
-                    .font(AppFont.sans(12))
-                Button("Reload") { config.reload() }
-                    .font(AppFont.sans(12))
-                if selectedTab == .config {
-                    Button("Save") { config.save() }
-                        .buttonStyle(.borderedProminent)
-                        .font(AppFont.sans(12))
-                        .disabled(config.isSaving)
-                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(Palette.raised.opacity(0.6))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Palette.raised.opacity(0.6))
         }
         .frame(width: 660, height: 700)
         .onAppear { config.reload() }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 — 2026-10-18
+
+- Add signed CLI self-updates, daily background updates for interactive standalone installations, opt-out controls, and a version command.
+- Add Sparkle desktop updates with automatic checks, installation on quit, update settings, and relaunch deferral during active agent runs.
+- Publish signed CLI manifests and architecture-specific signed desktop appcasts from the release workflow.
+
 ## 0.6.0 — 2026-10-17
 
 - Add ChatGPT account login in the CLI and desktop app using the official OAuth flow, protected credential storage, and automatic token refresh.

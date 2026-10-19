@@ -85,6 +85,12 @@ The package is named `arabica-cli`; its executable is `arabica`. See the
 for provider credentials, precedence, Blend routing, MCP tools, and server
 settings.
 
+Standalone releases support `arabica update` and daily background updates during
+interactive use. Use `arabica update --auto off` to opt out. The macOS app has
+**Check for Updates…** and **Settings → Updates**, including automatic download
+and installation on quit. See [software updates](docs/updates.md) for package
+manager support, signed downloads, and the one-time upgrade from older versions.
+
 ## Build and Test
 
 ```bash
