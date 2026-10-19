@@ -124,7 +124,23 @@ if [[ "$notary_status" != "Accepted" ]]; then
   exit 1
 fi
 
-xcrun stapler staple "$app"
+# Apple's ticket-delivery service may drop a connection after accepting notarization.
+# Retry the network step while retaining the signed bundle; validation stays mandatory.
+stapled=false
+for attempt in 1 2 3 4 5; do
+  if xcrun stapler staple "$app"; then
+    stapled=true
+    break
+  fi
+  if [[ "$attempt" != 5 ]]; then
+    echo "Notarization ticket delivery failed; retrying ($attempt/5)." >&2
+    sleep "$((attempt * 5))"
+  fi
+done
+if [[ "$stapled" != true ]]; then
+  echo 'Could not staple the accepted notarization ticket after five attempts.' >&2
+  exit 1
+fi
 xcrun stapler validate "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 spctl --assess --type execute --verbose=4 "$app"

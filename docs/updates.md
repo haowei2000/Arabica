@@ -74,6 +74,15 @@ The tag release workflow:
    verifying the signing key matches the tracked public key.
 4. Publishes releases only after signatures and both desktop builds succeed.
 
+Desktop releases use ARM runners for both architectures; the Intel variant is
+cross-compiled with the matching Swift and Rust targets. Accepted notarization
+tickets are stapled with bounded retries for Apple's ticket-delivery service.
+For a manual rebuild of an existing tag, product sources are checked out at that
+tag while packaging/signing tools are pinned to the workflow's commit. This lets
+release infrastructure fixes rebuild the same product version without moving
+its tag. `ARABICA_APP_ROOT` selects the checked-out product, and `ARABICA_ARCH`
+selects the bundle architecture.
+
 `scripts/sign-cli-updates.mjs` uses the pinned Sparkle `sign_update` tool and
 verifies signatures with Node's Ed25519 implementation. Desktop feeds are
 generated with Sparkle's `generate_appcast`. Both signing tools read the private
