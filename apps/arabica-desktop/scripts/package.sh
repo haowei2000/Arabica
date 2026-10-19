@@ -7,14 +7,15 @@ if [[ "$profile" != "debug" && "$profile" != "release" ]]; then
   exit 2
 fi
 
-app_root="$(cd "$(dirname "$0")/.." && pwd)"
+app_root="${ARABICA_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+app_root="$(cd "$app_root" && pwd)"
 repo_root="$(cd "$app_root/../.." && pwd)"
 app_version="${ARABICA_VERSION:-$(awk '/^\[workspace.package\]/ { package=1; next } package && /^version = / { gsub(/"/, "", $3); print $3; exit }' "$repo_root/Cargo.toml")}"
 app_version="${app_version#v}"
 app_version="${app_version%%-*}"
 app_version="${app_version%%+*}"
 update_public_key="$(cat "$repo_root/crates/arabica-cli/src/update-public-key.txt")"
-case "$(uname -m)" in
+case "${ARABICA_ARCH:-$(uname -m)}" in
   arm64|aarch64) update_arch=aarch64 ;;
   x86_64) update_arch=x86_64 ;;
   *) echo 'Unsupported update architecture' >&2; exit 1 ;;
@@ -22,12 +23,21 @@ esac
 swift_args=(-c "$profile")
 cargo_args=(-p arabica-cli)
 if [[ "$profile" == "release" ]]; then cargo_args+=(--release); fi
+agent_bin="$repo_root/target/$profile/arabica"
+case "$(uname -m)" in arm64|aarch64) host_arch=aarch64 ;; x86_64) host_arch=x86_64 ;; esac
+if [[ "$update_arch" != "$host_arch" ]]; then
+  rust_target="${update_arch}-apple-darwin"
+  swift_arch="$update_arch"
+  if [[ "$swift_arch" == "aarch64" ]]; then swift_arch=arm64; fi
+  swift_args+=(--triple "${swift_arch}-apple-macosx14.0")
+  cargo_args+=(--target "$rust_target")
+  agent_bin="$repo_root/target/$rust_target/$profile/arabica"
+fi
 
 swift build --package-path "$app_root" "${swift_args[@]}"
 cargo build --manifest-path "$repo_root/Cargo.toml" "${cargo_args[@]}"
 
 swift_bin="$(swift build --package-path "$app_root" --show-bin-path "${swift_args[@]}")/ArabicaDesktop"
-agent_bin="$repo_root/target/$profile/arabica"
 bundle="$app_root/dist/Arabica.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
