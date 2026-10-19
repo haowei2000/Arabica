@@ -38,6 +38,14 @@ swift build --package-path "$app_root" "${swift_args[@]}"
 cargo build --manifest-path "$repo_root/Cargo.toml" "${cargo_args[@]}"
 
 swift_bin="$(swift build --package-path "$app_root" --show-bin-path "${swift_args[@]}")/ArabicaDesktop"
+mach_arch="$update_arch"
+if [[ "$mach_arch" == "aarch64" ]]; then mach_arch=arm64; fi
+for binary in "$swift_bin" "$agent_bin"; do
+  if [[ "$(lipo -archs "$binary")" != "$mach_arch" ]]; then
+    echo "Unexpected executable architecture in $binary; expected $mach_arch" >&2
+    exit 1
+  fi
+done
 bundle="$app_root/dist/Arabica.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
