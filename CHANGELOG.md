@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 — 2026-10-20
+
+- Add dynamic upstream model discovery for OpenAI, ChatGPT OAuth, Anthropic, and Google Gemini providers.
+- Add `arabica models list`, `discover`, and `sync` commands to inspect available models and register them directly into user configuration.
+- Automatically discover and configure models on ChatGPT sign-in.
+- Support dynamic model catalog reloading in ACP sessions and option updates without restarting the agent host.
+- Add "Sync Provider Models" button and live model catalog refresh in the desktop app.
+
 ## 0.6.1 — 2026-10-18
 
 - Add signed CLI self-updates, daily background updates for interactive standalone installations, opt-out controls, and a version command.
