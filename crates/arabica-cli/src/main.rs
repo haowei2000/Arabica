@@ -90,6 +90,11 @@ enum Commands {
         #[command(subcommand)]
         action: SessionsAction,
     },
+    /// Manage, discover, and sync models from upstream providers.
+    Models {
+        #[command(subcommand)]
+        action: arabica_cli::models::ModelsAction,
+    },
 }
 
 #[tokio::main]
@@ -138,6 +143,14 @@ async fn run(cli: Cli) -> i32 {
             arabica_cli::auth::run(action).await
         };
     }
+    if let Some(Commands::Models { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the models subcommand");
+            2
+        } else {
+            arabica_cli::models::run(action).await
+        };
+    }
 
     let resolved = match (|| {
         let home = arabica_adapters::default_arabica_home()?;
@@ -179,6 +192,9 @@ async fn run(cli: Cli) -> i32 {
         }
         (Some(Commands::Auth { .. }), _) => {
             unreachable!("Commands::Auth returns early above")
+        }
+        (Some(Commands::Models { .. }), _) => {
+            unreachable!("Commands::Models returns early above")
         }
         (Some(Commands::Update(_)), _) => unreachable!("update returns early"),
         (None, Some(task)) => run_print(resolved, task.clone(), print_args).await,

@@ -195,7 +195,7 @@ pub async fn run(action: AuthAction) -> i32 {
         AuthAction::ChatgptLogin => {
             return match chatgpt_login(&home).await {
                 Ok(email) => {
-                    if let Err(error) = configure_chatgpt_default(&home) {
+                    if let Err(error) = configure_chatgpt_default(&home).await {
                         eprintln!(
                             "error: ChatGPT is signed in, but Arabica config was not updated: {error}"
                         );
@@ -281,7 +281,7 @@ pub async fn run(action: AuthAction) -> i32 {
 
 /// Point the configured default model at the ChatGPT Responses provider while
 /// preserving unrelated user settings and TOML comments.
-fn configure_chatgpt_default(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+async fn configure_chatgpt_default(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let path = crate::config::user_config_path(home);
     let source = match fs::read_to_string(&path) {
         Ok(source) => source,
@@ -349,6 +349,24 @@ fn configure_chatgpt_default(home: &Path) -> Result<(), Box<dyn std::error::Erro
     provider.remove("api_key_env");
     provider.remove("base_url");
 
+    // Attempt remote discovery of ChatGPT models
+    let mut probe_config = arabica_provider::ApiProviderConfig::new(
+        arabica_provider::ApiType::OpenAiResponses,
+        "chatgpt-oauth-managed",
+        "https://api.openai.com/v1",
+        "gpt-6.1-sol",
+    );
+    probe_config.chatgpt_credentials = Some(chatgpt_credentials_path(home));
+    let discovered = probe_config
+        .discover_models()
+        .await
+        .ok()
+        .unwrap_or_default();
+    let chat_candidates: Vec<_> = discovered
+        .into_iter()
+        .filter(|m| m.is_chat_completion_candidate())
+        .collect();
+
     let models = document["models"].or_insert(Item::Table(Table::new()));
     let models = models
         .as_table_like_mut()
@@ -358,13 +376,30 @@ fn configure_chatgpt_default(home: &Path) -> Result<(), Box<dyn std::error::Erro
         .or_insert(Item::Table(Table::new()))
         .as_table_like_mut()
         .ok_or("default model entry must be a TOML table")?;
-    model.insert("provider", value(provider_name));
+    model.insert("provider", value(&provider_name));
     let model_id_is_openai = model
         .get("model_id")
         .and_then(Item::as_str)
         .is_some_and(|id| id.starts_with("gpt-") || id == "chat-latest");
     if !model_id_is_openai {
-        model.insert("model_id", value("gpt-6.1-sol"));
+        let best_model = chat_candidates
+            .iter()
+            .find(|m| m.id == "gpt-6.1-sol")
+            .or_else(|| chat_candidates.first())
+            .map(|m| m.id.as_str())
+            .unwrap_or("gpt-6.1-sol");
+        model.insert("model_id", value(best_model));
+    }
+
+    let mut registered_aliases = vec![default_alias.clone()];
+    for candidate in chat_candidates.iter().take(5) {
+        if models.get(&candidate.id).is_none() {
+            let mut entry = Table::new();
+            entry.insert("provider", value(&provider_name));
+            entry.insert("model_id", value(&candidate.id));
+            models.insert(&candidate.id, Item::Table(entry));
+            registered_aliases.push(candidate.id.clone());
+        }
     }
 
     if document.get("blend").is_none() {
@@ -385,10 +420,10 @@ fn configure_chatgpt_default(home: &Path) -> Result<(), Box<dyn std::error::Erro
             .ok_or("[blend.policies] must be a TOML table")?
             .iter_mut()
         {
-            enable_chatgpt_capabilities(policy, &default_alias)?;
+            enable_chatgpt_capabilities(policy, &registered_aliases)?;
         }
     } else {
-        enable_chatgpt_capabilities(&mut document["blend"], &default_alias)?;
+        enable_chatgpt_capabilities(&mut document["blend"], &registered_aliases)?;
     }
 
     #[cfg(unix)]
@@ -416,7 +451,7 @@ fn configure_chatgpt_default(home: &Path) -> Result<(), Box<dyn std::error::Erro
 
 fn enable_chatgpt_capabilities(
     policy: &mut Item,
-    alias: &str,
+    aliases: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let policy = policy
         .as_table_like_mut()
@@ -425,13 +460,18 @@ fn enable_chatgpt_capabilities(
         "tool_call_capable_models",
         "typed_completion_capable_models",
     ] {
-        let aliases = policy
+        let array = policy
             .entry(key)
             .or_insert(value(Array::new()))
             .as_array_mut()
             .ok_or("Blend model capabilities must be arrays")?;
-        if !aliases.iter().any(|value| value.as_str() == Some(alias)) {
-            aliases.push(alias);
+        for alias in aliases {
+            if !array
+                .iter()
+                .any(|value| value.as_str() == Some(alias.as_str()))
+            {
+                array.push(alias.as_str());
+            }
         }
     }
     Ok(())
@@ -848,11 +888,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn chatgpt_login_setup_creates_a_default_responses_config() {
+    #[tokio::test]
+    async fn chatgpt_login_setup_creates_a_default_responses_config() {
         let home =
             std::env::temp_dir().join(format!("arabica-chatgpt-config-{}", uuid::Uuid::now_v7()));
-        configure_chatgpt_default(&home).unwrap();
+        configure_chatgpt_default(&home).await.unwrap();
         let config = fs::read_to_string(crate::config::user_config_path(&home)).unwrap();
         assert!(config.contains("auth = \"chatgpt\""));
         assert!(config.contains("api_type = \"open_ai_responses\""));
@@ -863,8 +903,8 @@ mod tests {
         fs::remove_dir_all(home).unwrap();
     }
 
-    #[test]
-    fn chatgpt_login_setup_preserves_other_settings_and_existing_gpt_model() {
+    #[tokio::test]
+    async fn chatgpt_login_setup_preserves_other_settings_and_existing_gpt_model() {
         let home =
             std::env::temp_dir().join(format!("arabica-chatgpt-config-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&home).unwrap();
@@ -874,7 +914,7 @@ mod tests {
             "# Keep this note\n[providers.anthropic]\nbase_url = 'https://example.test'\n\n[models.default]\nprovider = 'anthropic'\nmodel_id = 'gpt-6-astra'\n\n[blend]\ndefault_model = 'default'\n",
         )
         .unwrap();
-        configure_chatgpt_default(&home).unwrap();
+        configure_chatgpt_default(&home).await.unwrap();
         let config = fs::read_to_string(path).unwrap();
         assert!(config.contains("# Keep this note"));
         assert!(config.contains("base_url = 'https://example.test'"));
@@ -883,16 +923,16 @@ mod tests {
         fs::remove_dir_all(home).unwrap();
     }
 
-    #[test]
-    fn chatgpt_login_setup_updates_named_policy_capabilities_idempotently() {
+    #[tokio::test]
+    async fn chatgpt_login_setup_updates_named_policy_capabilities_idempotently() {
         let home =
             std::env::temp_dir().join(format!("arabica-chatgpt-config-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&home).unwrap();
         let path = crate::config::user_config_path(&home);
         fs::write(&path, "[blend]\ndefault_policy = 'daily'\n[blend.policies.daily]\ndefault_model = 'fast'\ntool_call_capable_models = ['other']\n[blend.policies.focused]\ndefault_model = 'fast'\n").unwrap();
-        configure_chatgpt_default(&home).unwrap();
+        configure_chatgpt_default(&home).await.unwrap();
         let first = fs::read_to_string(&path).unwrap();
-        configure_chatgpt_default(&home).unwrap();
+        configure_chatgpt_default(&home).await.unwrap();
         assert_eq!(first, fs::read_to_string(&path).unwrap());
         let document = first.parse::<DocumentMut>().unwrap();
         assert!(document["blend"].get("default_model").is_none());

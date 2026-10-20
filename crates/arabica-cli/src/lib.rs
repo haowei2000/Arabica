@@ -20,6 +20,7 @@ pub mod host;
 mod instructions;
 pub mod interactive;
 pub mod mcp;
+pub mod models;
 pub mod print;
 pub mod sessions;
 pub mod skills;

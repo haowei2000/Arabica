@@ -64,17 +64,61 @@ struct AcpProviderSettings {
 }
 
 impl AcpProviderSettings {
+    fn from_resolved(
+        overrides: crate::host::HostConfigArgs,
+        resolved: &ResolvedCliConfig,
+    ) -> Result<Self, AcpError> {
+        let catalog = resolved.model_catalog();
+        let blend_policies = resolved.blend_policies.clone();
+        let provider_config = catalog.provider.clone();
+        let aliases = catalog.models.clone();
+        let model_configs = catalog.model_configs.clone();
+        let blend_policy = catalog.blend_policy.clone();
+        let mut models = aliases.keys().cloned().collect::<Vec<_>>();
+        let initial_selection = blend_policy
+            .as_ref()
+            .map(|policy| policy.default_model.clone());
+        if !aliases.is_empty() {
+            if initial_selection
+                .as_ref()
+                .is_none_or(|selected| !aliases.contains_key(selected))
+            {
+                return Err(AcpError::invalid_params()
+                    .data("Blend default_model must name a configured model alias"));
+            }
+        } else if !models.contains(&provider_config.model) {
+            models.insert(0, provider_config.model.clone());
+        }
+        Ok(Self {
+            overrides,
+            initial: provider_config,
+            models,
+            aliases,
+            model_configs,
+            blend_policy,
+            blend_policies,
+        })
+    }
+
     fn for_workspace(&self, home: &Path, cwd: &Path) -> AcpResult<Self> {
+        let base = if let Ok(resolved) =
+            crate::config::resolve_cli_acp_config(&self.overrides, home, cwd, |k| {
+                std::env::var(k).ok()
+            }) {
+            Self::from_resolved(self.overrides.clone(), &resolved).unwrap_or_else(|_| self.clone())
+        } else {
+            self.clone()
+        };
         let preferences = crate::config::read_workspace_settings(home, cwd)
             .map_err(|error| AcpError::invalid_params().data(error.to_string()))?;
-        let mut next = self.clone();
+        let mut next = base;
         if let Some(id) = self
             .overrides
             .policy
             .as_ref()
             .or(preferences.blend_policy.as_ref())
         {
-            next.blend_policy = Some(self.blend_policies.get(id).cloned().ok_or_else(|| {
+            next.blend_policy = Some(next.blend_policies.get(id).cloned().ok_or_else(|| {
                 AcpError::invalid_params().data(format!("unknown Blend policy {id:?}"))
             })?);
         }
@@ -652,12 +696,13 @@ impl AcpState {
         &self,
         request: SetSessionConfigOptionRequest,
     ) -> AcpResult<SetSessionConfigOptionResponse> {
-        let settings = self.provider_settings.as_ref().ok_or_else(|| {
+        let initial_settings = self.provider_settings.as_ref().ok_or_else(|| {
             AcpError::invalid_request().data("provider configuration is unavailable")
         })?;
         let entry = self.entry(&request.session_id).ok_or_else(|| {
             AcpError::invalid_params().data(format!("unknown session {}", request.session_id))
         })?;
+        let settings = initial_settings.for_workspace(&self.arabica_home, &entry.cwd)?;
         let config_lock = entry.provider_config.as_ref().ok_or_else(|| {
             AcpError::invalid_request().data("provider configuration is unavailable")
         })?;
@@ -671,6 +716,11 @@ impl AcpState {
             .as_ref()
             .map(|configs| configs.lock().expect("model configs lock poisoned").clone())
             .unwrap_or_else(|| settings.model_configs.clone());
+        for (k, v) in &settings.model_configs {
+            session_model_configs
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
+        }
         let mut selected_alias = None;
         let value = request
             .value
@@ -948,38 +998,9 @@ fn session_error(error: SessionError) -> AcpError {
 pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) -> AcpResult<()> {
     let arabica_home = arabica_adapters::default_arabica_home()
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
-    let catalog = resolved.model_catalog();
-    let blend_policies = resolved.blend_policies.clone();
-    let provider_config = catalog.provider.clone();
-    let aliases = catalog.models.clone();
-    let model_configs = catalog.model_configs.clone();
-    let blend_policy = catalog.blend_policy.clone();
+    let settings = AcpProviderSettings::from_resolved(resolved.invocation.clone(), &resolved)?;
     let permission_policy = resolved.permission_policy.clone();
-    let mut models = aliases.keys().cloned().collect::<Vec<_>>();
-    let initial_selection = blend_policy
-        .as_ref()
-        .map(|policy| policy.default_model.clone());
-    if !aliases.is_empty() {
-        if initial_selection
-            .as_ref()
-            .is_none_or(|selected| !aliases.contains_key(selected))
-        {
-            return Err(AcpError::invalid_params()
-                .data("Blend default_model must name a configured model alias"));
-        }
-    } else if !models.contains(&provider_config.model) {
-        models.insert(0, provider_config.model.clone());
-    }
-    let settings = AcpProviderSettings {
-        overrides: resolved.invocation.clone(),
-        initial: provider_config.clone(),
-        models,
-        aliases: aliases.clone(),
-        model_configs,
-        blend_policy: blend_policy.clone(),
-        blend_policies,
-    };
-    let model_catalog = catalog.clone();
+    let model_catalog = resolved.model_catalog();
     let model_factory: Arc<ModelFactory> =
         Arc::new(move || model_catalog.build_model().map_err(provider_error));
     serve(
