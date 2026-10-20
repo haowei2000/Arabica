@@ -11,34 +11,35 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var waitingForRuns = false
 
     private var controller: SPUStandardUpdaterController?
-    private weak var model: DesktopModel?
+    private weak var windows: DesktopWindowRegistry?
     private var deferredInstall: (() -> Void)?
     private var activityObserver: AnyCancellable?
 
     var isAvailable: Bool { controller != nil }
 
-    init(model: DesktopModel) {
-        self.model = model
+    init(windows: DesktopWindowRegistry) {
+        self.windows = windows
         super.init()
-        #if !DEBUG
-        // swift run and swift test have no application bundle or update feed.
-        guard Bundle.main.bundleURL.pathExtension == "app",
-              Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") is String,
-              Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") is String else { return }
-        let controller = SPUStandardUpdaterController(
-            startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil
-        )
-        self.controller = controller
-        controller.updater.publisher(for: \.canCheckForUpdates)
-            .receive(on: DispatchQueue.main).assign(to: &$canCheckForUpdates)
-        controller.updater.publisher(for: \.automaticallyChecksForUpdates)
-            .receive(on: DispatchQueue.main).assign(to: &$automaticallyChecksForUpdates)
-        controller.updater.publisher(for: \.automaticallyDownloadsUpdates)
-            .receive(on: DispatchQueue.main).assign(to: &$automaticallyDownloadsUpdates)
-        activityObserver = model.objectWillChange.sink { [weak self] in
+        activityObserver = windows.objectWillChange.sink { [weak self] in
             Task { @MainActor in self?.resumeInstallationWhenIdle() }
         }
-        controller.startUpdater()
+        #if !DEBUG
+            // swift run and swift test have no application bundle or update feed.
+            guard Bundle.main.bundleURL.pathExtension == "app",
+                Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") is String,
+                Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") is String
+            else { return }
+            let controller = SPUStandardUpdaterController(
+                startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil
+            )
+            self.controller = controller
+            controller.updater.publisher(for: \.canCheckForUpdates)
+                .receive(on: DispatchQueue.main).assign(to: &$canCheckForUpdates)
+            controller.updater.publisher(for: \.automaticallyChecksForUpdates)
+                .receive(on: DispatchQueue.main).assign(to: &$automaticallyChecksForUpdates)
+            controller.updater.publisher(for: \.automaticallyDownloadsUpdates)
+                .receive(on: DispatchQueue.main).assign(to: &$automaticallyDownloadsUpdates)
+            controller.startUpdater()
         #endif
     }
 
@@ -57,14 +58,18 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         shouldPostponeRelaunchForUpdate item: SUAppcastItem,
         untilInvokingBlock installHandler: @escaping () -> Void
     ) -> Bool {
-        guard model?.hasActiveRuns == true else { return false }
+        postponeInstallationIfNeeded(installHandler)
+    }
+
+    func postponeInstallationIfNeeded(_ installHandler: @escaping () -> Void) -> Bool {
+        guard windows?.hasActivityPreventingRelaunch == true else { return false }
         deferredInstall = installHandler
         waitingForRuns = true
         return true
     }
 
     private func resumeInstallationWhenIdle() {
-        guard model?.hasActiveRuns != true, let install = deferredInstall else { return }
+        guard windows?.hasActivityPreventingRelaunch != true, let install = deferredInstall else { return }
         deferredInstall = nil
         waitingForRuns = false
         install()

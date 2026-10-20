@@ -30,8 +30,10 @@ final class ACPClientServices {
             while !bytes.isEmpty && String(data: bytes, encoding: .utf8) == nil {
                 bytes.removeFirst()
             }
-            var result: [String: Any] = ["output": String(data: bytes, encoding: .utf8) ?? "",
-                                         "truncated": truncated]
+            var result: [String: Any] = [
+                "output": String(data: bytes, encoding: .utf8) ?? "",
+                "truncated": truncated,
+            ]
             if !process.isRunning { result["exitStatus"] = exitStatus() }
             return result
         }
@@ -46,6 +48,14 @@ final class ACPClientServices {
 
     private var terminals: [String: Terminal] = [:]
 
+    func release(sessionID: String) {
+        for id in terminals.keys.filter({ terminals[$0]?.sessionID == sessionID }) {
+            guard let terminal = terminals.removeValue(forKey: id) else { continue }
+            terminal.pipe.fileHandleForReading.readabilityHandler = nil
+            if terminal.process.isRunning { terminal.process.terminate() }
+        }
+    }
+
     func reset() {
         for terminal in terminals.values {
             terminal.pipe.fileHandleForReading.readabilityHandler = nil
@@ -56,7 +66,8 @@ final class ACPClientServices {
 
     func handle(_ method: String, params: [String: Any], workspace: URL?) async throws -> [String: Any] {
         guard let workspace,
-              let sessionID = params["sessionId"] as? String, !sessionID.isEmpty else {
+            let sessionID = params["sessionId"] as? String, !sessionID.isEmpty
+        else {
             throw ServiceError.invalid("Missing workspace or session ID")
         }
         switch method {
@@ -81,7 +92,8 @@ final class ACPClientServices {
             }
             let cwd = try checkedPath(params["cwd"] ?? workspace.path, workspace: workspace, forWrite: false)
             var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            guard FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue
+            else {
                 throw ServiceError.invalid("Terminal cwd must be a directory")
             }
             let process = Process()
@@ -109,7 +121,8 @@ final class ACPClientServices {
             return ["terminalId": id]
         case "terminal/output", "terminal/release", "terminal/kill", "terminal/wait_for_exit":
             guard let id = params["terminalId"] as? String,
-                  let terminal = terminals[id], terminal.sessionID == sessionID else {
+                let terminal = terminals[id], terminal.sessionID == sessionID
+            else {
                 throw ServiceError.invalid("Unknown terminal")
             }
             switch method {
@@ -144,7 +157,9 @@ final class ACPClientServices {
         }
         let root = workspace.resolvingSymlinksInPath().standardizedFileURL
         let candidate = URL(fileURLWithPath: path).standardizedFileURL
-        let checked = forWrite ? candidate.deletingLastPathComponent().resolvingSymlinksInPath() : candidate.resolvingSymlinksInPath()
+        let checked =
+            forWrite
+            ? candidate.deletingLastPathComponent().resolvingSymlinksInPath() : candidate.resolvingSymlinksInPath()
         guard checked.path == root.path || checked.path.hasPrefix(root.path + "/") else {
             throw ServiceError.invalid("Path is outside the workspace")
         }

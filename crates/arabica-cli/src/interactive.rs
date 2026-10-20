@@ -24,7 +24,7 @@ use arabica_session::{
 };
 use arabica_session::{NewSession, SessionStore, SessionWriter};
 
-use crate::config::{save_workspace_settings, set_thinking};
+use crate::config::{SOE_POLICY_ID, save_workspace_settings, set_thinking, soe_policy};
 use crate::host::{
     HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds,
     build_host_runtime_with_blend, workspace_id_for,
@@ -242,6 +242,7 @@ pub(crate) struct InteractiveSession {
     pub(crate) config: ApiProviderConfig,
     pub(crate) model_configs: BTreeMap<String, ApiProviderConfig>,
     blend_policy: Option<BlendRoutingPolicy>,
+    has_named_soe_policy: bool,
     pub(crate) blend_policies: BTreeMap<String, BlendRoutingPolicy>,
     pub(crate) arabica_home: PathBuf,
     pub(crate) runner_root: PathBuf,
@@ -285,12 +286,18 @@ impl InteractiveSession {
         let mut blend_policies =
             crate::config::user_config_blend_policies(&arabica_home, &runner_root)
                 .unwrap_or_default();
+        let has_named_soe_policy = blend_policies.contains_key(SOE_POLICY_ID);
         if let Some(policy) = &blend_policy
             && !blend_policies.values().any(|candidate| {
                 candidate.policy_id == policy.policy_id && candidate.version == policy.version
             })
         {
             blend_policies.insert(policy.policy_id.clone(), policy.clone());
+        }
+        if !has_named_soe_policy && let Some(policy) = &blend_policy {
+            blend_policies
+                .entry(SOE_POLICY_ID.to_owned())
+                .or_insert_with(|| soe_policy(policy.default_model.clone()));
         }
         let workspace_id = workspace_id_for(&runner_root);
         let resumed =
@@ -388,6 +395,7 @@ impl InteractiveSession {
             config,
             model_configs,
             blend_policy: session_blend_policy,
+            has_named_soe_policy,
             blend_policies,
             arabica_home,
             runner_root,
@@ -522,34 +530,57 @@ impl InteractiveSession {
         }
     }
 
+    fn ensure_builtin_soe(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.has_named_soe_policy {
+            return Err("soe is reserved for the single-model policy; rename the configured policy before changing model or thinking interactively".into());
+        }
+        Ok(())
+    }
+
+    fn soe_model_configs(
+        &self,
+    ) -> Result<BTreeMap<String, ApiProviderConfig>, Box<dyn std::error::Error>> {
+        let mut configs = self.model_configs.clone();
+        let preferences =
+            crate::config::read_workspace_settings(&self.arabica_home, &self.runner_root)?;
+        for (alias, thinking) in preferences.model_thinking {
+            if let Some(config) = configs.get_mut(&alias) {
+                set_thinking(config, &thinking)?;
+            }
+        }
+        Ok(configs)
+    }
+
     pub(crate) fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.ensure_builtin_soe()?;
         if !self.model_configs.is_empty() {
-            let next = self
-                .model_configs
+            let configs = self.soe_model_configs()?;
+            let next = configs
                 .get(model)
                 .cloned()
                 .ok_or_else(|| format!("unknown Blend model alias {model:?}"))?;
-            let mut policy = self
-                .blend_policy
-                .clone()
-                .ok_or("Blend model aliases require a routing policy")?;
-            policy.default_model = model.to_owned();
-            let provider = BlendProvider::from_configs(model, self.model_configs.clone())?;
+            let policy = soe_policy(model.to_owned());
+            let provider = BlendProvider::from_configs(model, configs.clone())?;
             save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+                settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
                 settings.model = None;
                 settings.model_alias = Some(model.to_owned());
                 settings.thinking = None;
             })?;
-            self.config = next;
-            self.blend_policy = Some(policy.clone());
-            self.manager.runtime_mut().set_blend_policy(Some(policy))?;
+            self.manager
+                .runtime_mut()
+                .set_blend_policy(Some(policy.clone()))?;
             *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
+            self.config = next;
+            self.model_configs = configs;
+            self.blend_policy = Some(policy);
             return Ok(());
         }
         let mut next = self.config.clone();
         next.model = model.to_owned();
         let provider = ApiModelProvider::new(next.clone())?;
         save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
             settings.model = Some(model.to_owned());
         })?;
         self.config = next;
@@ -561,33 +592,46 @@ impl InteractiveSession {
         &mut self,
         value: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.ensure_builtin_soe()?;
         if !self.model_configs.is_empty() {
+            // Enter SOE with this session's current model, even if the previous
+            // SOE workspace selection remembered a different alias.
             let alias = self
                 .blend_policy
                 .as_ref()
                 .ok_or("Blend model aliases require a routing policy")?
                 .default_model
                 .clone();
-            let mut next = self.model_configs[&alias].clone();
+            let mut configs = self.soe_model_configs()?;
+            let mut next = self.config.clone();
             set_thinking(&mut next, value)?;
-            let mut configs = self.model_configs.clone();
             configs.insert(alias.clone(), next.clone());
+            let policy = soe_policy(alias.clone());
             let provider = BlendProvider::from_configs(alias.clone(), configs.clone())?;
             save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+                settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+                settings.model = None;
+                settings.model_alias = Some(alias.clone());
                 settings.thinking = None;
                 settings
                     .model_thinking
                     .insert(alias.clone(), value.to_owned());
             })?;
+            self.manager
+                .runtime_mut()
+                .set_blend_policy(Some(policy.clone()))?;
+            *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
             self.config = next;
             self.model_configs = configs;
-            *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
+            self.blend_policy = Some(policy);
             return Ok(());
         }
         let mut next = self.config.clone();
         set_thinking(&mut next, value)?;
         let provider = ApiModelProvider::new(next.clone())?;
         save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+            settings.model = Some(next.model.clone());
             settings.thinking = Some(value.to_owned());
         })?;
         self.config = next;
@@ -596,29 +640,48 @@ impl InteractiveSession {
     }
 
     pub(crate) fn change_policy(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let policy = self
-            .blend_policies
-            .get(id)
-            .cloned()
-            .ok_or_else(|| format!("unknown Blend policy {id:?}"))?;
-        let config = self
-            .model_configs
+        if id == SOE_POLICY_ID && !self.has_named_soe_policy && self.model_configs.is_empty() {
+            save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
+                settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+            })?;
+            return Ok(());
+        }
+        let (policy, configs) = if id == SOE_POLICY_ID && !self.has_named_soe_policy {
+            let preferences =
+                crate::config::read_workspace_settings(&self.arabica_home, &self.runner_root)?;
+            let alias = preferences
+                .model_alias
+                .or_else(|| {
+                    self.blend_policy
+                        .as_ref()
+                        .map(|policy| policy.default_model.clone())
+                })
+                .ok_or("SOE model is unavailable")?;
+            (soe_policy(alias), self.soe_model_configs()?)
+        } else {
+            let policy = self
+                .blend_policies
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("unknown Blend policy {id:?}"))?;
+            let mut configs = self.model_configs.clone();
+            crate::config::reset_configured_model_thinking(&self.arabica_home, &mut configs)?;
+            (policy, configs)
+        };
+        let config = configs
             .get(&policy.default_model)
             .cloned()
             .ok_or("policy default model is unavailable")?;
-        let provider =
-            BlendProvider::from_configs(&policy.default_model, self.model_configs.clone())?;
+        let provider = BlendProvider::from_configs(&policy.default_model, configs.clone())?;
         save_workspace_settings(&self.arabica_home, &self.runner_root, |settings| {
             settings.blend_policy = Some(id.to_owned());
-            settings.model = None;
-            settings.model_alias = None;
-            settings.thinking = None;
         })?;
         self.manager
             .runtime_mut()
             .set_blend_policy(Some(policy.clone()))?;
         *self.manager.runtime_mut().model_mut() = HostModel::Blend(provider);
         self.blend_policy = Some(policy);
+        self.model_configs = configs;
         self.config = config;
         Ok(())
     }

@@ -195,6 +195,7 @@ async fn terminal_commands_change_the_next_model_request() {
     .unwrap();
     assert!(saved.contains("model_alias = \"other-model\""));
     let preferences: arabica_cli::config::WorkspaceSettings = toml::from_str(&saved).unwrap();
+    assert_eq!(preferences.blend_policy.as_deref(), Some("soe"));
     assert_eq!(preferences.model_thinking["other-model"], "on");
     assert!(!saved.contains("test-key"));
     std::fs::remove_dir_all(root).ok();
@@ -250,7 +251,7 @@ tool_call_capable_models = ["default", "strong"]
     )
     .unwrap();
     let result = run_binary(&root, &home, address,
-        "/policy precise\n/thinking on\n/model default\nhello\n/policy precise\nagain\n/policy routine\nthird\n/exit\n").await;
+        "/model default\n/thinking off\n/policy precise\n/thinking on\nprobe\n/model default\nhello\n/policy precise\nagain\n/policy routine\nthird\n/exit\n").await;
     assert!(
         result.status.success(),
         "{}",
@@ -305,7 +306,7 @@ tool_call_capable_models = ["default", "strong"]
         &home,
         address,
         &format!(
-            "/resume {}\n/policy precise\nseventh\n/policy routine\n/exit\n",
+            "/resume {}\n/policy precise\nseventh\n/model strong\neighth\n/policy routine\n/exit\n",
             stored[0].header.id
         ),
     )
@@ -318,17 +319,19 @@ tool_call_capable_models = ["default", "strong"]
     let requests = requests.lock().await;
     assert_eq!(
         requests.len(),
-        7,
+        9,
         "{}",
         String::from_utf8_lossy(&resumed.stderr)
     );
     for (index, expected_model) in [
+        "strong-model",
         "daily-model",
         "strong-model",
         "daily-model",
         "daily-model",
         "strong-model",
         "daily-model",
+        "strong-model",
         "strong-model",
     ]
     .iter()
@@ -337,12 +340,12 @@ tool_call_capable_models = ["default", "strong"]
         assert_eq!(requests[index]["model"], *expected_model);
         assert_eq!(
             requests[index].get("thinking").is_some(),
-            matches!(index, 1 | 4 | 6)
+            matches!(index, 0 | 5 | 8)
         );
     }
     let preferences = arabica_cli::config::read_workspace_settings(&home, &root).unwrap();
     assert_eq!(preferences.blend_policy.as_deref(), Some("routine"));
-    assert_eq!(preferences.model_alias, None);
+    assert_eq!(preferences.model_alias.as_deref(), Some("strong"));
     assert_eq!(preferences.model_thinking["strong"], "on");
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_dir_all(home).ok();

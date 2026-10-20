@@ -1,10 +1,11 @@
 import XCTest
+
 @testable import ArabicaDesktop
 
 @MainActor
 final class SessionRunStateTests: XCTestCase {
     func testLateConfigOptionResponseDoesNotOverwriteAnotherSession() {
-        let model = DesktopModel(restoreWorkspace: false)
+        let model = DesktopModel(restoreWorkspace: false, sidebarLibrary: .testInstance())
         model.selectedSessionID = "old"
         model.applyConfigOptions([["id": "model", "currentValue": "daily"]], for: "old")
         model.selectedSessionID = "new"
@@ -16,7 +17,7 @@ final class SessionRunStateTests: XCTestCase {
     }
 
     func testDismissedPermissionIsResolvedAndWaitingIsSessionScoped() {
-        let model = DesktopModel(restoreWorkspace: false)
+        let model = DesktopModel(restoreWorkspace: false, sidebarLibrary: .testInstance())
         model.selectedSessionID = "old"
         model.permission = PermissionPrompt(
             id: .int(1), title: "Run a tool", detail: "", options: [],
@@ -30,7 +31,7 @@ final class SessionRunStateTests: XCTestCase {
     }
 
     func testStringRequestIDCreatesPermissionPrompt() {
-        let model = DesktopModel(restoreWorkspace: false)
+        let model = DesktopModel(restoreWorkspace: false, sidebarLibrary: .testInstance())
         let id = ACPRequestID(from: "permission-uuid")!
         let client = ACPClient()
         client.onRequest = { id, method, params in
@@ -50,7 +51,7 @@ final class SessionRunStateTests: XCTestCase {
     }
 
     func testWorkingBelongsToSelectedSession() {
-        let model = DesktopModel(restoreWorkspace: false)
+        let model = DesktopModel(restoreWorkspace: false, sidebarLibrary: .testInstance())
         model.selectedSessionID = "old"
         let oldRun = model.beginRun(for: "old")
         XCTAssertTrue(model.isRunning)
@@ -64,7 +65,7 @@ final class SessionRunStateTests: XCTestCase {
     }
 
     func testStaleCompletionDoesNotClearReplacementRun() {
-        let model = DesktopModel(restoreWorkspace: false)
+        let model = DesktopModel(restoreWorkspace: false, sidebarLibrary: .testInstance())
         model.selectedSessionID = "session"
         let oldRun = model.beginRun(for: "session")
         let newRun = model.beginRun(for: "session")
@@ -75,17 +76,21 @@ final class SessionRunStateTests: XCTestCase {
     }
 
     func testBackgroundChunksDoNotChangeSelectedConversation() async {
-        let model = DesktopModel(restoreWorkspace: false)
+        let model = DesktopModel(restoreWorkspace: false, sidebarLibrary: .testInstance())
         model.workspace = URL(fileURLWithPath: "/tmp")
         model.sessions = [DesktopSession(id: "old", cwd: "/tmp", title: "Old conversation")]
         model.selectedSessionID = "new"
         model.items = [ChatItem(kind: .user, text: "New conversation")]
         let oldRun = model.beginRun(for: "old")
-        model.handleNotification("session/update", params: [
-            "sessionId": "old",
-            "update": ["sessionUpdate": "agent_message_chunk",
-                       "content": ["type": "text", "text": "Background reply"]],
-        ])
+        model.handleNotification(
+            "session/update",
+            params: [
+                "sessionId": "old",
+                "update": [
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": ["type": "text", "text": "Background reply"],
+                ],
+            ])
         model.finishRun(for: "old", runID: oldRun)
         XCTAssertEqual(model.items.map(\.text), ["New conversation"])
         await model.selectSession("old")

@@ -29,7 +29,7 @@ final class PermissionNotifications: NSObject, UNUserNotificationCenterDelegate 
         )
     }
 
-    func post(sessionID: String, title: String, detail: String) {
+    func post(sessionID: String, windowID: UUID? = nil, title: String, detail: String) {
         guard !isApplicationActive else { return }
         let content = UNMutableNotificationContent()
         content.title = "Permission required"
@@ -37,8 +37,9 @@ final class PermissionNotifications: NSObject, UNUserNotificationCenterDelegate 
         content.body = detail.isEmpty ? "Arabica is waiting for your approval." : String(detail.prefix(240))
         content.sound = .default
         content.userInfo = ["sessionId": sessionID]
+        if let windowID { content.userInfo["windowId"] = windowID.uuidString }
         let request = UNNotificationRequest(
-            identifier: "arabica-permission-\(sessionID)",
+            identifier: "arabica-permission-\(windowID?.uuidString ?? "legacy")-\(sessionID)",
             content: content,
             trigger: nil
         )
@@ -54,13 +55,14 @@ final class PermissionNotifications: NSObject, UNUserNotificationCenterDelegate 
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let sessionID = response.notification.request.content.userInfo["sessionId"] as? String
+        let windowID = response.notification.request.content.userInfo["windowId"] as? String
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
             if let sessionID {
                 NotificationCenter.default.post(
                     name: .arabicaPermissionNotificationOpened,
                     object: nil,
-                    userInfo: ["sessionId": sessionID]
+                    userInfo: ["sessionId": sessionID, "windowId": windowID].compactMapValues { $0 }
                 )
             }
             completionHandler()

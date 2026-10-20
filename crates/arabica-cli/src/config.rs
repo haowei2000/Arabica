@@ -18,6 +18,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::host::{HostConfigArgs, workspace_id_for};
 
+pub const SOE_POLICY_ID: &str = "soe";
+
+/// A single-model policy never falls back or routes to another alias.
+pub fn soe_policy(alias: String) -> BlendRoutingPolicy {
+    BlendRoutingPolicy {
+        policy_id: SOE_POLICY_ID.to_owned(),
+        version: 1,
+        default_model: alias.clone(),
+        after_tool_success: None,
+        after_tool_error: None,
+        recovery_model: None,
+        planning_model: None,
+        tool_routes: Vec::new(),
+        recovery_after_no_progress_steps: default_recovery_threshold(),
+        minimum_model_dwell_steps: default_model_dwell_steps(),
+        tool_call_capable_models: [alias.clone()].into(),
+        typed_completion_capable_models: [alias].into(),
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UserConfig {
@@ -645,8 +665,18 @@ fn resolve_runtime_config(
         .or(workspace.blend_policy.as_deref())
         .or_else(|| blend.configured_default_policy_id())
         .ok_or("a Blend policy is required")?;
+    // Existing configured policies named `soe` retain their CLI meaning. ACP
+    // rejects that collision before advertising its built-in SOE control.
+    let is_soe = selected_policy_id == SOE_POLICY_ID && !blend_policies.contains_key(SOE_POLICY_ID);
+    let configured_policy_id = if is_soe {
+        blend
+            .configured_default_policy_id()
+            .ok_or("a Blend policy is required")?
+    } else {
+        selected_policy_id
+    };
     let configured_default_alias = blend_policies
-        .get(selected_policy_id)
+        .get(configured_policy_id)
         .ok_or_else(|| format!("unknown Blend policy {selected_policy_id:?}"))?
         .default_model
         .clone();
@@ -659,12 +689,7 @@ fn resolve_runtime_config(
     let default_alias = args
         .model_alias
         .clone()
-        .or_else(|| {
-            args.policy
-                .is_none()
-                .then(|| workspace.model_alias.clone())
-                .flatten()
-        })
+        .or_else(|| is_soe.then(|| workspace.model_alias.clone()).flatten())
         .unwrap_or(configured_default_alias);
     if !user.models.contains_key(&default_alias) {
         return Err(format!("workspace model alias {default_alias:?} is not configured").into());
@@ -824,12 +849,12 @@ fn resolve_runtime_config(
         if let Some(thinking) = user_provider.thinking.as_deref() {
             set_thinking(&mut config, thinking)?;
         }
-        if let Some(thinking) = workspace.model_thinking.get(alias) {
+        if is_soe && let Some(thinking) = workspace.model_thinking.get(alias) {
             set_thinking(&mut config, thinking)?;
         }
         if alias == &default_alias {
             if let Some(thinking) = args.thinking.as_deref().or_else(|| {
-                (!workspace.model_thinking.contains_key(alias))
+                (is_soe && !workspace.model_thinking.contains_key(alias))
                     .then_some(workspace.thinking.as_deref())
                     .flatten()
             }) {
@@ -838,7 +863,7 @@ fn resolve_runtime_config(
             if let Some(model_id) = args
                 .model
                 .clone()
-                .or(workspace.model.clone())
+                .or_else(|| is_soe.then(|| workspace.model.clone()).flatten())
                 .or_else(|| lookup("ARABICA__MODEL"))
             {
                 config.model = model_id;
@@ -846,7 +871,11 @@ fn resolve_runtime_config(
         }
         model_configs.insert(alias.clone(), config);
     }
-    let mut selected_policy = blend_policies[selected_policy_id].clone();
+    let mut selected_policy = if is_soe {
+        soe_policy(default_alias.clone())
+    } else {
+        blend_policies[selected_policy_id].clone()
+    };
     selected_policy.default_model = default_alias.clone();
     validate_blend_policy(&selected_policy, &models)?;
     let blend_policy = Some(selected_policy);
@@ -1051,6 +1080,39 @@ pub fn thinking_level(config: &ApiProviderConfig) -> &str {
     }
 }
 
+/// Refresh only file-owned thinking, preserving live endpoints and CLI overrides.
+pub(crate) fn reset_configured_model_thinking(
+    home: &Path,
+    configs: &mut BTreeMap<String, ApiProviderConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let user = read_user_config(home)?;
+    for (alias, config) in configs {
+        let Some(model) = user.models.get(alias) else {
+            continue;
+        };
+        let provider = user
+            .providers
+            .get(&model.provider)
+            .ok_or_else(|| format!("model alias {alias:?} references an unknown provider"))?;
+        if provider.thinking.is_some() && provider.reasoning_effort.is_some() {
+            return Err(format!(
+                "configure only one of thinking or reasoning_effort for provider {:?}",
+                model.provider
+            )
+            .into());
+        }
+        set_thinking(config, "off")?;
+        if let Some(thinking) = provider
+            .thinking
+            .as_deref()
+            .or(provider.reasoning_effort.as_deref())
+        {
+            set_thinking(config, thinking)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn policy_selection_key<'a>(
     policies: &'a BTreeMap<String, BlendRoutingPolicy>,
     policy: &'a BlendRoutingPolicy,
@@ -1129,6 +1191,7 @@ mod tests {
         assert!(defaults.thinking_enabled);
 
         save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
             settings.model = Some("workspace-model".to_owned());
             settings.thinking = Some("off".to_owned());
         })
@@ -1250,9 +1313,47 @@ planning_model = "strong"
         let saved =
             resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
         assert_eq!(saved.blend_policy.as_ref().unwrap().policy_id, "precise");
-        assert_eq!(saved.provider.model, "daily-model");
-        assert_eq!(thinking_level(&saved.provider), "low");
+        assert_eq!(saved.provider.model, "strong-model");
+        assert_eq!(thinking_level(&saved.provider), "default");
         assert_eq!(saved.blend_policies["precise"].default_model, "strong");
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+        })
+        .unwrap();
+        let soe = resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        let policy = soe.blend_policy.as_ref().unwrap();
+        assert_eq!(policy.policy_id, SOE_POLICY_ID);
+        assert_eq!(policy.default_model, "daily");
+        assert!(policy.planning_model.is_none());
+        assert!(policy.after_tool_error.is_none());
+        assert_eq!(
+            policy.tool_call_capable_models,
+            BTreeSet::from(["daily".to_owned()])
+        );
+        assert_eq!(thinking_level(&soe.provider), "low");
+        assert_eq!(thinking_level(&soe.model_configs["strong"]), "high");
+        let soe_flags = HostConfigArgs {
+            policy: Some(SOE_POLICY_ID.to_owned()),
+            model_alias: Some("strong".to_owned()),
+            thinking: Some("max".to_owned()),
+            ..Default::default()
+        };
+        let explicit_soe = resolve_cli_runtime_config(&soe_flags, &home, &cwd, env).unwrap();
+        assert_eq!(explicit_soe.provider.model, "strong-model");
+        assert_eq!(thinking_level(&explicit_soe.provider), "max");
+        assert_eq!(thinking_level(&explicit_soe.model_configs["daily"]), "low");
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some("precise".to_owned());
+        })
+        .unwrap();
+        let returned =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        assert_eq!(returned.provider.model, "strong-model");
+        assert_eq!(thinking_level(&returned.provider), "default");
+        assert_eq!(thinking_level(&returned.model_configs["daily"]), "default");
+        let remembered = read_workspace_settings(&home, &cwd).unwrap();
+        assert_eq!(remembered.model_thinking["daily"], "low");
+        assert_eq!(remembered.model_thinking["strong"], "high");
         let flags = HostConfigArgs {
             policy: Some("precise".to_owned()),
             thinking: Some("max".to_owned()),
@@ -1261,7 +1362,7 @@ planning_model = "strong"
         let selected = resolve_cli_runtime_config(&flags, &home, &cwd, env).unwrap();
         assert_eq!(selected.provider.model, "strong-model");
         assert_eq!(thinking_level(&selected.provider), "max");
-        assert_eq!(thinking_level(&selected.model_configs["daily"]), "low");
+        assert_eq!(thinking_level(&selected.model_configs["daily"]), "default");
         let acp = resolve_cli_acp_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
         assert_eq!(acp.blend_policy.as_ref().unwrap().policy_id, "routine");
         assert_eq!(thinking_level(&acp.provider), "default");
@@ -1274,6 +1375,75 @@ planning_model = "strong"
                 .unwrap_err()
                 .to_string()
                 .contains("unknown Blend policy")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_named_soe_retains_its_cli_routes_and_ignores_builtin_preferences() {
+        let root = std::env::temp_dir().join(format!("arabica-named-soe-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(
+            user_config_path(&home),
+            r#"
+[providers.test]
+api_type = "open_ai_responses"
+base_url = "https://example.test/v1"
+thinking = "medium"
+[models.fast]
+provider = "test"
+model_id = "model-fast"
+[models.strong]
+provider = "test"
+model_id = "model-strong"
+[blend]
+default_policy = "soe"
+[blend.policies.soe]
+default_model = "fast"
+after_tool_error = "strong"
+planning_model = "strong"
+"#,
+        )
+        .unwrap();
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+            settings.model_alias = Some("strong".to_owned());
+            settings.thinking = Some("off".to_owned());
+            settings
+                .model_thinking
+                .insert("fast".to_owned(), "low".to_owned());
+        })
+        .unwrap();
+        let env =
+            |name: &str| (name == "ARABICA_PROVIDER_TEST_API_KEY").then(|| "test-key".to_owned());
+        let resolved =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        let policy = resolved.blend_policy.as_ref().unwrap();
+        assert_eq!(policy.policy_id, SOE_POLICY_ID);
+        assert_eq!(policy.default_model, "fast");
+        assert_eq!(policy.after_tool_error.as_deref(), Some("strong"));
+        assert_eq!(policy.planning_model.as_deref(), Some("strong"));
+        assert_eq!(thinking_level(&resolved.provider), "medium");
+        let flags = HostConfigArgs {
+            policy: Some(SOE_POLICY_ID.to_owned()),
+            model_alias: Some("strong".to_owned()),
+            thinking: Some("max".to_owned()),
+            ..Default::default()
+        };
+        let selected = resolve_cli_runtime_config(&flags, &home, &cwd, env).unwrap();
+        assert_eq!(selected.provider.model, "model-strong");
+        assert_eq!(thinking_level(&selected.provider), "max");
+        assert_eq!(
+            selected
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .after_tool_error
+                .as_deref(),
+            Some("strong")
         );
         fs::remove_dir_all(root).unwrap();
     }
