@@ -1,39 +1,141 @@
 import Foundation
 
-private final class ACPStartupDiagnostic: @unchecked Sendable {
+final class ACPStartupDiagnostic: @unchecked Sendable {
     private let lock = NSLock()
-    private var message: String?
+    private var rejectedMarker = Marker("invalid TOML in")
+    private var setupMarker = Marker("configure [providers.<name>]")
+    private var location = Location()
+    private var configurationRejected = false
+    private var needsSetup = false
 
     func consume(_ data: Data) {
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        let safeMessage: String?
-        if text.contains("invalid TOML in") {
-            if let range = text.range(of: #"at line ([0-9]+), column ([0-9]+)"#, options: .regularExpression) {
-                safeMessage = "Configuration file was rejected at \(text[range])."
-            } else {
-                safeMessage = "The Arabica configuration file was rejected."
-            }
-        } else if text.contains("configure [providers.<name>]") {
-            safeMessage = "Arabica needs a provider, model alias, and blend configuration in ~/.arabica/config.toml."
-        } else {
-            safeMessage = nil
-        }
-        guard let safeMessage else { return }
         lock.lock()
-        message = safeMessage
-        lock.unlock()
+        defer { lock.unlock() }
+        // Stderr can split anywhere, including inside UTF-8 paths or diagnostic
+        // markers. Recognize ASCII bytes without retaining raw stderr, paths,
+        // source excerpts, or credentials. Only match counters and bounded line
+        // and column digits survive a read.
+        for byte in data {
+            if rejectedMarker.consume(byte) {
+                configurationRejected = true
+                location = Location()
+            }
+            if setupMarker.consume(byte) { needsSetup = true }
+            if configurationRejected { location.consume(byte) }
+        }
     }
 
     var value: String? {
         lock.lock()
         defer { lock.unlock() }
-        return message
+        if configurationRejected {
+            let position = location.value.map { " at line \($0.line), column \($0.column)" } ?? ""
+            return "The Arabica configuration file was rejected\(position). "
+                + "It contains invalid or unsupported TOML. Open Settings to review and repair the configuration."
+        }
+        if needsSetup {
+            return "Arabica needs a provider, model alias, and blend configuration. Open Settings to configure them."
+        }
+        return nil
     }
 
     func reset() {
         lock.lock()
-        message = nil
-        lock.unlock()
+        defer { lock.unlock() }
+        rejectedMarker.reset()
+        setupMarker.reset()
+        location = Location()
+        configurationRejected = false
+        needsSetup = false
+    }
+
+    private struct Marker {
+        private let bytes: [UInt8]
+        private let fallback: [Int]
+        private var matched = 0
+
+        init(_ literal: String) {
+            bytes = Array(literal.utf8)
+            var prefixes = Array(repeating: 0, count: bytes.count)
+            var count = 0
+            for index in 1..<bytes.count {
+                while count > 0, bytes[index] != bytes[count] { count = prefixes[count - 1] }
+                if bytes[index] == bytes[count] { count += 1 }
+                prefixes[index] = count
+            }
+            fallback = prefixes
+        }
+
+        mutating func consume(_ byte: UInt8) -> Bool {
+            while matched > 0, byte != bytes[matched] { matched = fallback[matched - 1] }
+            if byte == bytes[matched] { matched += 1 }
+            guard matched == bytes.count else { return false }
+            matched = fallback[matched - 1]
+            return true
+        }
+
+        mutating func reset() { matched = 0 }
+    }
+
+    private struct Location {
+        private enum Phase { case searching, line, separator, column, finished }
+        private static let separator = Array(", column ".utf8)
+        private var prefix = Marker("at line ")
+        private var phase = Phase.searching
+        private var separatorIndex = 0
+        private var line = ""
+        private var column = ""
+
+        var value: (line: Int, column: Int)? {
+            guard let line = Int(line), line > 0, let column = Int(column), column > 0 else { return nil }
+            return (line, column)
+        }
+
+        mutating func consume(_ byte: UInt8) {
+            switch phase {
+            case .searching:
+                if prefix.consume(byte) { phase = .line }
+            case .line:
+                if (0x30...0x39).contains(byte) {
+                    guard line.count < 9 else {
+                        restart(with: byte)
+                        return
+                    }
+                    line.append(Character(UnicodeScalar(byte)))
+                } else if !line.isEmpty, byte == Self.separator[0] {
+                    separatorIndex = 1
+                    phase = .separator
+                } else {
+                    restart(with: byte)
+                }
+            case .separator:
+                guard byte == Self.separator[separatorIndex] else {
+                    restart(with: byte)
+                    return
+                }
+                separatorIndex += 1
+                if separatorIndex == Self.separator.count { phase = .column }
+            case .column:
+                if (0x30...0x39).contains(byte) {
+                    guard column.count < 9 else {
+                        restart(with: byte)
+                        return
+                    }
+                    column.append(Character(UnicodeScalar(byte)))
+                } else if value != nil {
+                    phase = .finished
+                } else {
+                    restart(with: byte)
+                }
+            case .finished:
+                break
+            }
+        }
+
+        private mutating func restart(with byte: UInt8) {
+            self = Location()
+            if prefix.consume(byte) { phase = .line }
+        }
     }
 }
 
@@ -56,7 +158,7 @@ enum ACPError: LocalizedError {
 enum ACPRemoteErrorMessage {
     static func resolve(_ error: [String: Any]) -> String {
         let message = error["message"] as? String ?? "ACP request failed"
-        guard message == "Internal error" else { return message }
+        guard ["Internal error", "Invalid params", "Invalid request"].contains(message) else { return message }
 
         if let detail = error["data"] as? String {
             let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,12 +167,15 @@ enum ACPRemoteErrorMessage {
         if let detail = error["data"] as? [String: Any] {
             for key in ["message", "detail", "reason"] {
                 if let value = detail[key] as? String,
-                   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
                     return value
                 }
             }
         }
-        return "The agent could not complete this run. Check the provider configuration and connection."
+        return message == "Internal error"
+            ? "The agent could not complete this run. Check the provider configuration and connection."
+            : message
     }
 }
 
@@ -84,7 +189,8 @@ struct ACPLineDecoder {
             let line = buffer.prefix(upTo: newline)
             buffer.removeSubrange(...newline)
             if let object = try? JSONSerialization.jsonObject(with: line),
-               let message = object as? [String: Any] {
+                let message = object as? [String: Any]
+            {
                 messages.append(message)
             }
         }
@@ -181,11 +287,13 @@ final class ACPClient {
     }
 
     func initialize() async throws -> [String: Any] {
-        let result = try await request("initialize", params: [
-            "protocolVersion": 1,
-            "clientCapabilities": ["fs": ["readTextFile": true, "writeTextFile": true], "terminal": true],
-            "clientInfo": ["name": "arabica-desktop", "version": "0.1.0"],
-        ])
+        let result = try await request(
+            "initialize",
+            params: [
+                "protocolVersion": 1,
+                "clientCapabilities": ["fs": ["readTextFile": true, "writeTextFile": true], "terminal": true],
+                "clientInfo": ["name": "arabica-desktop", "version": "0.1.0"],
+            ])
         guard result["protocolVersion"] as? Int == 1 else { throw ACPError.invalidResponse }
         return result
     }
@@ -227,8 +335,10 @@ final class ACPClient {
     }
 
     func reject(id: ACPRequestID, message: String, code: Int = -32602) throws {
-        try write(["jsonrpc": "2.0", "id": id.jsonValue,
-                   "error": ["code": code, "message": message]])
+        try write([
+            "jsonrpc": "2.0", "id": id.jsonValue,
+            "error": ["code": code, "message": message],
+        ])
     }
 
     func stop() {
@@ -265,9 +375,10 @@ final class ACPClient {
                 onNotification?(method, params)
             }
         } else if let rawID = message["id"],
-                  let reqID = ACPRequestID(from: rawID),
-                  case .int(let id) = reqID,
-                  let continuation = pending.removeValue(forKey: id) {
+            let reqID = ACPRequestID(from: rawID),
+            case .int(let id) = reqID,
+            let continuation = pending.removeValue(forKey: id)
+        {
             if let error = message["error"] as? [String: Any] {
                 continuation.resume(throwing: ACPError.remote(ACPRemoteErrorMessage.resolve(error)))
             } else if let result = message["result"] as? [String: Any] {
@@ -294,11 +405,13 @@ final class ACPClient {
 
     private static func executableURL() throws -> URL {
         if let override = ProcessInfo.processInfo.environment["ARABICA_EXECUTABLE"],
-           FileManager.default.isExecutableFile(atPath: override) {
+            FileManager.default.isExecutableFile(atPath: override)
+        {
             return URL(fileURLWithPath: override)
         }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("arabica"),
-           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            FileManager.default.isExecutableFile(atPath: bundled.path)
+        {
             return bundled
         }
         throw ACPError.executableMissing

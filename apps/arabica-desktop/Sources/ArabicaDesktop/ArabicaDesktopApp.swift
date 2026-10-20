@@ -24,58 +24,94 @@ enum Palette {
 
 @main
 struct ArabicaDesktopApp: App {
-    @StateObject private var model: DesktopModel
+    @StateObject private var windows: DesktopWindowRegistry
     @StateObject private var updater: AppUpdater
     @ObservedObject private var theme = ThemeManager.shared
+    @FocusedObject private var model: DesktopModel?
+    @FocusedBinding(\.projectSidebarVisible) private var sidebarVisible
+    @FocusedValue(\.searchConversations) private var searchConversations
+    @Environment(\.openWindow) private var openWindow
 
     init() {
-        let model = DesktopModel()
-        _model = StateObject(wrappedValue: model)
-        _updater = StateObject(wrappedValue: AppUpdater(model: model))
+        let windows = DesktopWindowRegistry()
+        _windows = StateObject(wrappedValue: windows)
+        _updater = StateObject(wrappedValue: AppUpdater(windows: windows))
         _ = PermissionNotifications.shared
     }
 
     var body: some Scene {
-        WindowGroup {
-            DesktopView()
-                .environmentObject(model)
+        WindowGroup("Arabica", id: "conversation") {
+            DesktopWindowView(windows: windows)
                 .environmentObject(theme)
+                .environmentObject(updater)
                 .frame(minWidth: 540, minHeight: 480)
                 .preferredColorScheme(theme.colorScheme)
-                .ignoresSafeArea(.all, edges: .top)
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(!updater.canCheckForUpdates)
             }
             CommandGroup(replacing: .newItem) {
-                Button("New Conversation") { Task { await model.newSession() } }
-                    .keyboardShortcut("n")
+                Button("New Conversation") {
+                    guard let model else { return }
+                    Task { await model.newSession() }
+                }
+                .keyboardShortcut("n")
+                .disabled(model?.isConnected != true || model?.isConnecting == true || model?.isCreatingSession == true)
+                Button("New Window") { openWindow(id: "conversation") }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .sidebar) {
                 Button("Toggle Sidebar") {
-                    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                    sidebarVisible?.toggle()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(sidebarVisible == nil)
+            }
+            CommandGroup(after: .textEditing) {
+                Button("Search Conversations") { searchConversations?() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                    .disabled(searchConversations == nil)
             }
             CommandMenu("Workspace") {
-                Button("Open Workspace…") { model.chooseWorkspace() }
+                Button("Open Workspace…") { model?.chooseWorkspace() }
                     .keyboardShortcut("o")
-                Button("Stop Run") { model.cancel() }
+                    .disabled(model == nil)
+                Button("Stop Run") { model?.cancel() }
                     .keyboardShortcut(".")
-                    .disabled(!model.isRunning)
+                    .disabled(model?.isRunning != true || model?.isStopping == true)
             }
         }
         Settings {
-            SettingsView()
-                .environmentObject(model)
+            DesktopSettingsWindowView(windows: windows)
                 .environmentObject(updater)
                 .environmentObject(theme)
-                .frame(width: 660, height: 700)
+                .frame(minWidth: 660, idealWidth: 760, minHeight: 620, idealHeight: 700)
                 .preferredColorScheme(theme.colorScheme)
         }
+    }
+}
+
+private struct ProjectSidebarVisibleKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
+private struct SearchConversationsKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    fileprivate var searchConversations: (() -> Void)? {
+        get { self[SearchConversationsKey.self] }
+        set { self[SearchConversationsKey.self] = newValue }
+    }
+
+    fileprivate var projectSidebarVisible: Binding<Bool>? {
+        get { self[ProjectSidebarVisibleKey.self] }
+        set { self[ProjectSidebarVisibleKey.self] = newValue }
     }
 }
 
@@ -102,60 +138,103 @@ final class WindowConfiguratorView: NSView {
     func updateWindowAppearance() {
         guard let window = self.window else { return }
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
-        window.toolbar = nil
-        window.isMovableByWindowBackground = true
+        window.titlebarAppearsTransparent = false
+        window.isMovableByWindowBackground = false
 
         let isDark = ThemeManager.shared.isDark
         window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
     }
 }
 
-private struct DesktopView: View {
+struct DesktopView: View {
     @EnvironmentObject var model: DesktopModel
+    @Environment(\.desktopWindowID) private var windowID
     @ObservedObject private var theme = ThemeManager.shared
     @AppStorage("showEvaluationInspector") private var showEvaluation = false
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var sidebarWidth: CGFloat = 260
+    @State private var sidebarVisible = true
+    @State private var windowWidth: CGFloat = 900
+    @State private var preferredSidebarWidth = SidebarLayout.defaultWidth
+    @StateObject private var sidebarState = SidebarState()
 
     var body: some View {
-        HStack(spacing: 0) {
-            if columnVisibility != .detailOnly {
-                ProjectsSidebarView(model: model, columnVisibility: $columnVisibility)
-                    .frame(width: sidebarWidth)
-                    .frame(maxHeight: .infinity)
-                    .id("sidebar-\(theme.activeThemeID)-\(theme.activeTheme.sidebarHex)")
-                    .transition(.move(edge: .leading))
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if sidebarVisible && SidebarLayout.canShowSidebar(availableWidth: geometry.size.width) {
+                    ProjectsSidebarView(model: model, state: sidebarState)
+                        .frame(
+                            width: SidebarLayout.resolvedWidth(
+                                preferredSidebarWidth, availableWidth: geometry.size.width)
+                        )
+                        .frame(maxHeight: .infinity)
+                        .transition(.move(edge: .leading))
 
-                Rectangle()
-                    .fill(Palette.rule)
-                    .frame(width: 1)
-                    .frame(maxHeight: .infinity)
+                    SidebarResizeHandle(preferredWidth: $preferredSidebarWidth, availableWidth: geometry.size.width)
+                }
+
+                conversation
+                    .frame(maxWidth: .infinity)
             }
-
-            conversation
-                .frame(maxWidth: .infinity)
+            .onChange(of: geometry.size.width, initial: true) { _, width in
+                windowWidth = width
+            }
         }
         .background(WindowConfigurator())
-        .ignoresSafeArea(.all, edges: .top)
         .background(Palette.canvas)
-        .sheet(item: $model.permission) { prompt in
+        .focusedSceneValue(\.projectSidebarVisible, $sidebarVisible)
+        .focusedSceneValue(\.searchConversations, presentConversationSearch)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        sidebarVisible.toggle()
+                    }
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.left")
+                }
+                .help("Toggle Sidebar (Cmd+Opt+S)")
+
+                Button(action: presentConversationSearch) {
+                    Label("Search Conversations", systemImage: "magnifyingglass")
+                }
+                .tint(sidebarState.hasSearchQuery ? .accentColor : nil)
+                .accessibilityValue(sidebarState.hasSearchQuery ? "Filtering: \(sidebarState.searchText)" : "No filter")
+                .help("Search Conversations (Cmd+Shift+F)")
+                .popover(isPresented: $sidebarState.isSearchPresented, arrowEdge: .bottom) {
+                    conversationSearch
+                }
+
+                Button(action: model.chooseWorkspace) {
+                    Label("Open Workspace", systemImage: "folder.badge.plus")
+                }
+                .help("Open Workspace (Cmd+O)")
+
+                workspaceChooser
+            }
+            if windowWidth >= 760 {
+                ToolbarItem(placement: .principal) {
+                    workspaceBreadcrumb
+                }
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                buttonSection
+            }
+        }
+        .toolbarBackground(Palette.canvas, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .sheet(item: Binding(get: { model.permission }, set: model.dismissPermission)) { prompt in
             PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
                 .frame(minWidth: 500)
         }
         .onChange(of: model.permission?.id) { _, _ in
             guard let prompt = model.permission,
-                  let sessionID = prompt.params["sessionId"] as? String else { return }
+                let sessionID = prompt.params["sessionId"] as? String
+            else { return }
             PermissionNotifications.shared.post(
                 sessionID: sessionID,
+                windowID: windowID,
                 title: prompt.title,
                 detail: prompt.detail
             )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .arabicaPermissionNotificationOpened)) { event in
-            guard let sessionID = event.userInfo?["sessionId"] as? String else { return }
-            Task { await model.selectSession(sessionID) }
         }
         .inspector(isPresented: $showEvaluation) {
             EvaluationPanel(model: model.evaluation, isVisible: showEvaluation)
@@ -165,17 +244,6 @@ private struct DesktopView: View {
 
     private var conversation: some View {
         VStack(spacing: 0) {
-            topBar
-            Divider().overlay(Palette.rule)
-
-            if let prompt = model.permission {
-                PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 12)
-                Rectangle().fill(Palette.rule).frame(height: 1)
-            }
-
             if !model.plan.isEmpty {
                 PlanProgressView(plan: model.plan)
             }
@@ -183,30 +251,7 @@ private struct DesktopView: View {
             if model.selectedSessionID == nil {
                 emptyState
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 16) {
-                            ForEach(model.items.groupedForFeed) { group in
-                                ChatGroupRow(group: group, isRunning: model.isRunning)
-                                    .id(group.id)
-                            }
-                            if model.isRunning {
-                                HStack(spacing: 8) {
-                                    ProgressView().controlSize(.small)
-                                    Text(model.isWaitingForPermission ? "Waiting for permission…" : "Working…").foregroundStyle(Palette.muted)
-                                }
-                                .padding(.top, 4)
-                            }
-                        }
-                        .frame(maxWidth: 760)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 20)
-                    }
-                    .onChange(of: model.items.count) { _, _ in
-                        if let last = model.items.last { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
-                }
+                ConversationFeedView(model: model)
             }
 
             if let error = model.errorText {
@@ -217,6 +262,28 @@ private struct DesktopView: View {
                         .font(AppFont.sans(12))
                         .foregroundStyle(.orange)
                         .lineLimit(2)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    if !model.isConnected, let workspace = model.workspace {
+                        Button("Reconnect") {
+                            Task { await model.openWorkspace(workspace) }
+                        }
+                        .disabled(model.isConnecting)
+                    } else if !model.isSessionReady, let sessionID = model.selectedSessionID {
+                        Button("Retry") {
+                            Task { await model.selectSession(sessionID) }
+                        }
+                        .disabled(model.isLoadingSession)
+                    }
+                    Button {
+                        model.errorText = nil
+                    } label: {
+                        Label("Dismiss Error", systemImage: "xmark")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss error")
                 }
                 .help(error)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -229,135 +296,157 @@ private struct DesktopView: View {
         .background(Palette.canvas)
     }
 
-    // MARK: - Single-Line Unified Breadcrumb Top Bar (38pt)
+    private func presentConversationSearch() {
+        sidebarVisible = true
+        sidebarState.presentSearch()
+    }
 
-    private var topBar: some View {
-        HStack(spacing: 8) {
-            if columnVisibility == .detailOnly {
-                Color.clear.frame(width: 68, height: 1)
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        columnVisibility = .all
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-                .buttonStyle(.plain)
-                .help("Show Sidebar (Cmd+Opt+S)")
-            }
-
-            // Breadcrumb: ProjectName / SessionTitle
-            HStack(spacing: 7) {
-                let projectName = model.workspace.map { DesktopModel.projectName(for: $0.path) } ?? "Workspace"
-                Button(action: model.chooseWorkspace) {
-                    Text(projectName)
-                        .font(AppFont.sans(12.5, weight: .regular))
-                        .foregroundStyle(Palette.muted)
-                }
-                .buttonStyle(.plain)
-                .help("Workspace: \(model.workspace?.path ?? "None") (Click to change)")
-
-                Text("/")
-                    .font(AppFont.sans(11, weight: .regular))
-                    .foregroundStyle(Palette.subtle)
-
-                let currentTitle = model.sessions.first(where: { $0.id == model.selectedSessionID })?.title ?? "New Conversation"
-                Text(currentTitle)
-                    .font(AppFont.sans(12.5, weight: .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-
-                Circle()
-                    .fill(model.isConnected ? Color.green.opacity(0.85) : (model.errorText != nil ? Color.red : Color.orange))
-                    .frame(width: 5.5, height: 5.5)
-                    .help(model.isConnected ? "Agent connected" : (model.errorText ?? "Agent connecting/disconnected"))
-            }
-
-            Spacer(minLength: 8)
-
-            buttonSection
+    private var conversationSearch: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Search Conversations")
+                .font(.headline)
+            ToolbarConversationSearchField(
+                text: $sidebarState.searchText,
+                onCommit: { sidebarState.focusConversationResults() },
+                onEscape: { sidebarState.escapeSearch() }
+            )
+            .frame(height: 28)
+            Text(
+                "Filter by title, project name, path, or conversation ID. Press Return or Down Arrow to browse results."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, columnVisibility == .detailOnly ? 0 : 12)
-        .padding(.trailing, 12)
-        .frame(height: 38)
-        .background(Palette.canvas)
+        .padding(16)
+        .frame(width: 320)
+    }
+
+    private var workspaceChooser: some View {
+        Menu {
+            if !model.projectGroups.isEmpty {
+                Picker(
+                    "Current Workspace",
+                    selection: Binding(
+                        get: { model.workspace?.standardizedFileURL.path ?? "" },
+                        set: { model.activateProject($0) }
+                    )
+                ) {
+                    ForEach(model.projectGroups) { project in
+                        Text("\(project.name) — \(project.path)")
+                            .tag(project.path)
+                            .disabled(!model.selectProjectAvailability(project.path).isEnabled)
+                            .help(model.selectProjectAvailability(project.path).explanation ?? project.path)
+                    }
+                }
+                .pickerStyle(.inline)
+                Divider()
+            }
+            Button("Open Other Workspace…", systemImage: "folder.badge.plus", action: model.chooseWorkspace)
+            Button("Refresh Projects", systemImage: "arrow.clockwise") {
+                Task { await model.refreshSessions() }
+            }
+            .disabled(!model.isConnected || model.isConnecting)
+            .help(
+                model.isConnected
+                    ? "Refresh projects and conversation history." : "Connect to a workspace before refreshing.")
+        } label: {
+            Label {
+                Text("Choose Workspace")
+            } icon: {
+                Image(
+                    nsImage: NSImage(systemSymbolName: "folder", accessibilityDescription: "Choose Workspace")
+                        ?? NSImage()
+                )
+                .accessibilityLabel("Choose Workspace")
+            }
+            .accessibilityLabel("Choose Workspace")
+        }
+        .accessibilityLabel("Choose Workspace")
+        .accessibilityValue(model.workspace?.path ?? "No workspace selected")
+        .help("Choose Workspace: \(model.workspace?.path ?? "None")")
+    }
+
+    private var workspaceBreadcrumb: some View {
+        HStack(spacing: 7) {
+            let currentTitle =
+                model.sessions.first(where: { $0.id == model.selectedSessionID })?.title ?? "New Conversation"
+            Text(currentTitle)
+                .font(AppFont.sans(12.5, weight: .semibold))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .help(currentTitle)
+            Image(
+                systemName: model.isConnecting
+                    ? "arrow.triangle.2.circlepath"
+                    : (model.isConnected ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+            )
+            .font(AppFont.sans(11))
+            .foregroundStyle(model.isConnected ? Color.green : (model.errorText != nil ? Color.red : Color.orange))
+            .accessibilityLabel(connectionStatus)
+            .help(connectionStatus)
+        }
+        .frame(maxWidth: 240)
+    }
+
+    private var connectionStatus: String {
+        if model.isConnecting { return "Connecting to agent…" }
+        if model.isConnected { return "Agent connected" }
+        return model.errorText ?? "Agent disconnected. Open a workspace to reconnect."
     }
 
     private var buttonSection: some View {
-        HStack(spacing: 6) {
-            if let used = model.usage["used"] as? Int,
-               let size = model.usage["size"] as? Int {
-                HStack(spacing: 3) {
-                    Image(systemName: "gauge.with.needle")
-                        .font(AppFont.sans(8))
-                    Text("\(used)/\(size)")
-                        .font(AppFont.code(9))
-                }
-                .foregroundStyle(Palette.muted)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Palette.raised.opacity(0.6), in: Capsule())
-                .help("\(used) of \(size) tokens used")
-            }
-
+        Group {
             if model.isRunning {
                 Button(action: model.cancel) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "stop.fill")
-                            .font(AppFont.sans(7.5))
-                        Text("Stop")
-                            .font(AppFont.sans(10, weight: .medium))
-                    }
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.red.opacity(0.12), in: Capsule())
-                    .overlay(Capsule().stroke(Color.red.opacity(0.3), lineWidth: 1))
+                    Label(model.isStopping ? "Stopping…" : "Stop Run", systemImage: "stop.fill")
                 }
-                .buttonStyle(.plain)
+                .disabled(model.isStopping)
+                .tint(.red)
                 .help("Stop execution (Cmd+.)")
             }
 
             Button {
                 Task { await model.newSession() }
             } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(AppFont.sans(11))
-                    .foregroundStyle(Palette.ink)
-                    .frame(width: 20, height: 20)
-                    .background(Palette.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                Label("New Conversation", systemImage: "square.and.pencil")
             }
-            .buttonStyle(.plain)
-            .disabled(!model.isConnected || model.isConnecting)
+            .disabled(!model.isConnected || model.isConnecting || model.isCreatingSession)
             .help("New Conversation (Cmd+N)")
 
-            Button {
-                showEvaluation.toggle()
-            } label: {
-                Image(systemName: "chart.bar.doc.horizontal")
-                    .font(AppFont.sans(11))
-                    .foregroundStyle(showEvaluation ? Palette.accent : Palette.muted)
-                    .frame(width: 20, height: 20)
-                    .background(showEvaluation ? Palette.accent.opacity(0.15) : Palette.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
-            }
-            .buttonStyle(.plain)
-            .help(showEvaluation ? "Hide evaluation panel (Cmd+Opt+I)" : "Show evaluation panel (Cmd+Opt+I)")
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    theme.cycleMode()
+            Menu {
+                if let used = model.usage["used"] as? Int,
+                    let size = model.usage["size"] as? Int
+                {
+                    Text("Context usage: \(used) of \(size) tokens")
+                    Divider()
+                }
+                Toggle("Show Archived Conversations", isOn: Binding(
+                    get: { sidebarState.showsArchived },
+                    set: { sidebarState.showsArchived = $0; sidebarVisible = true }
+                ))
+                Divider()
+                Toggle("Show Evaluation Panel", isOn: $showEvaluation)
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { theme.cycleMode() }
+                } label: {
+                    Label("Change Appearance (\(theme.mode.rawValue))", systemImage: theme.mode.icon)
                 }
             } label: {
-                Image(systemName: theme.mode.icon)
-                    .font(AppFont.sans(10.5))
-                    .foregroundStyle(Palette.muted)
-                    .frame(width: 20, height: 20)
-                    .background(Palette.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                Label {
+                    Text("View Options")
+                } icon: {
+                    Image(
+                        nsImage: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "View Options")
+                            ?? NSImage()
+                    )
+                    .accessibilityLabel("View Options")
+                }
+                .accessibilityLabel("View Options")
             }
-            .buttonStyle(.plain)
-            .help("Theme: \(theme.mode.rawValue) (Click to switch)")
+            .accessibilityLabel("View Options")
+            .help("View Options")
         }
     }
 
@@ -368,20 +457,28 @@ private struct DesktopView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(Palette.accent.opacity(0.85))
 
-            Text(model.workspace == nil ? "Open a workspace to begin" : "How can I help you today?")
-                .font(AppFont.sans(22, weight: .semibold))
-                .foregroundStyle(Palette.ink)
+            Text(
+                model.isConnecting
+                    ? "Connecting to workspace…"
+                    : (model.workspace == nil ? "Open a workspace to begin" : "How can I help you today?")
+            )
+            .font(AppFont.sans(22, weight: .semibold))
+            .foregroundStyle(Palette.ink)
 
-            Text(model.workspace == nil
-                 ? "Select a workspace folder to start working with Arabica."
-                 : "Ask a question, generate code, inspect files, or run tests.")
-                .font(AppFont.sans(13))
-                .foregroundStyle(Palette.muted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
+            Text(
+                model.workspace == nil
+                    ? "Select a workspace folder to start working with Arabica."
+                    : "Ask a question, generate code, inspect files, or run tests."
+            )
+            .font(AppFont.sans(13))
+            .foregroundStyle(Palette.muted)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 380)
 
-            Button(model.workspace == nil || !model.isConnected ? "Open Workspace" : "New Conversation") {
-                if model.workspace == nil || !model.isConnected {
+            Button(model.workspace == nil ? "Open Workspace" : (model.isConnected ? "New Conversation" : "Reconnect")) {
+                if let workspace = model.workspace, !model.isConnected {
+                    Task { await model.openWorkspace(workspace) }
+                } else if model.workspace == nil {
                     model.chooseWorkspace()
                 } else {
                     Task { await model.newSession() }
@@ -391,6 +488,7 @@ private struct DesktopView: View {
             .tint(Palette.ink)
             .foregroundStyle(Palette.canvas)
             .font(AppFont.sans(13, weight: .medium))
+            .disabled(model.isConnecting || model.isCreatingSession)
             .padding(.top, 6)
 
             Spacer()
@@ -400,272 +498,406 @@ private struct DesktopView: View {
     }
 }
 
+private struct ConversationScrollObserver: NSViewRepresentable {
+    var onUserScroll: (Bool) -> Void
+
+    func makeNSView(context: Context) -> ConversationScrollTrackingView {
+        let view = ConversationScrollTrackingView()
+        view.onUserScroll = onUserScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: ConversationScrollTrackingView, context: Context) {
+        nsView.onUserScroll = onUserScroll
+        nsView.observeScrollView()
+    }
+}
+
+private final class ConversationScrollTrackingView: NSView {
+    var onUserScroll: ((Bool) -> Void)?
+    private weak var observedScrollView: NSScrollView?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observeScrollView()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        observeScrollView()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func observeScrollView() {
+        let scrollView = window == nil ? nil : enclosingScrollView
+        guard scrollView !== observedScrollView else { return }
+        NotificationCenter.default.removeObserver(self)
+        observedScrollView = scrollView
+        guard let scrollView else { return }
+        // AppKit sends this only for user-initiated scrolling. Content growth and
+        // scrollTo must never change whether the reader wants to follow output.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(userScrolled(_:)),
+            name: NSScrollView.didLiveScrollNotification,
+            object: scrollView
+        )
+    }
+
+    @objc private func userScrolled(_ notification: Notification) {
+        guard let scrollView = observedScrollView,
+            let document = scrollView.documentView
+        else { return }
+        let visible = scrollView.documentVisibleRect
+        let distance =
+            document.isFlipped
+            ? document.bounds.maxY - visible.maxY
+            : visible.minY - document.bounds.minY
+        onUserScroll?(distance <= 2)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+}
+
+private struct ConversationFeedView: View {
+    @ObservedObject var model: DesktopModel
+    @State private var followsLatest = true
+    private let endID = "conversation-end"
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    if model.isLoadingSession {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading conversation…")
+                                .font(AppFont.sans(12))
+                                .foregroundStyle(Palette.muted)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 16)
+                    }
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(model.items.groupedForFeed) { group in
+                            ChatGroupRow(group: group, isRunning: model.isRunning)
+                                .id(group.id)
+                        }
+                        if model.isRunning {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(model.isWaitingForPermission ? "Waiting for permission…" : "Working…")
+                                    .foregroundStyle(Palette.muted)
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(endID)
+                        .background(ConversationScrollObserver { followsLatest = $0 })
+                }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !followsLatest {
+                    Button {
+                        followsLatest = true
+                        proxy.scrollTo(endID, anchor: .bottom)
+                    } label: {
+                        Label("Jump to Latest", systemImage: "arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .background(Palette.canvas, in: Capsule())
+                    .padding(16)
+                }
+            }
+            .onAppear { proxy.scrollTo(endID, anchor: .bottom) }
+            .onChange(of: model.selectedSessionID) { _, _ in
+                followsLatest = true
+                proxy.scrollTo(endID, anchor: .bottom)
+            }
+            .onChange(of: model.items.count) { _, _ in
+                if followsLatest { proxy.scrollTo(endID, anchor: .bottom) }
+            }
+            .onChange(of: model.items.last?.text.count) { _, _ in
+                if followsLatest { proxy.scrollTo(endID, anchor: .bottom) }
+            }
+            .onChange(of: model.items.last?.detail?.count) { _, _ in
+                if followsLatest { proxy.scrollTo(endID, anchor: .bottom) }
+            }
+        }
+    }
+}
+
+/// Uses the system search field, including its standard clear button and search semantics.
+private struct ToolbarConversationSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let onCommit: () -> Void
+    let onEscape: () -> Void
+
+    func makeNSView(context: Context) -> ToolbarSearchField {
+        let field = ToolbarSearchField()
+        field.placeholderString = "Filter conversations"
+        field.sendsSearchStringImmediately = true
+        field.sendsWholeSearchString = false
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel("Filter Conversations")
+        field.toolTip = "Filter by conversation title, project name, path, or conversation ID"
+        return field
+    }
+
+    func updateNSView(_ field: ToolbarSearchField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text { field.stringValue = text }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var parent: ToolbarConversationSearchField
+        init(parent: ToolbarConversationSearchField) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.moveDown(_:)):
+                parent.onCommit()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                parent.onEscape()
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+private final class ToolbarSearchField: NSSearchField {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, self.window === window else { return }
+            window?.makeFirstResponder(self)
+        }
+    }
+}
+
 // MARK: - Projects Sidebar View
 
 private struct ProjectsSidebarView: View {
     @ObservedObject var model: DesktopModel
-    @Binding var columnVisibility: NavigationSplitViewVisibility
+    @ObservedObject var state: SidebarState
     @ObservedObject private var theme = ThemeManager.shared
-    @State private var expandedProjects = Set<String>()
+    @State private var renamingSession: DesktopSession?
+
+    private var archivedSessionIDs: Set<String> {
+        Set(model.sessions.filter { model.sidebarLibrary.isArchived($0.id) }.map(\.id))
+    }
+
+    private var filteredProjects: [ProjectGroup] {
+        let ordered = SidebarNavigation.orderedProjects(model.projectGroups, preferredOrder: state.projectOrder)
+        let pinned = Set(model.sessions.filter { model.sidebarLibrary.isPinned($0.id) }.map(\.id))
+        return SidebarNavigation.filteredProjects(
+            ordered, query: state.searchText, archivedSessionIDs: archivedSessionIDs,
+            showingArchived: state.showsArchived, pinnedSessionIDs: pinned
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header: Traffic lights clearance (68pt) + Action Icons + Menu
-            HStack(spacing: 7) {
-                // Reserved for macOS traffic lights (🔴 🟡 🟢)
-                Color.clear.frame(width: 68, height: 1)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        columnVisibility = (columnVisibility == .detailOnly ? .all : .detailOnly)
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-                .buttonStyle(.plain)
-                .help("Toggle Sidebar (Cmd+Opt+S)")
-
-                Button { } label: {
-                    Image(systemName: "chevron.left")
-                        .font(AppFont.sans(10))
-                        .foregroundStyle(Palette.subtle.opacity(0.45))
-                }
-                .buttonStyle(.plain)
-                .disabled(true)
-
-                Button { } label: {
-                    Image(systemName: "chevron.right")
-                        .font(AppFont.sans(10))
-                        .foregroundStyle(Palette.subtle.opacity(0.45))
-                }
-                .buttonStyle(.plain)
-                .disabled(true)
-
-                Button { } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-                .buttonStyle(.plain)
-                .help("Search")
-
-                Spacer()
-
-                Menu {
-                    Button("Open Project Folder…") {
-                        model.chooseWorkspace()
-                    }
-                    Button("Refresh Projects") {
-                        Task { await model.refreshSessions() }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 18, height: 18)
-
-                Button {
-                    model.chooseWorkspace()
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-                .buttonStyle(.plain)
-                .help("Open Project Folder…")
-            }
-            .padding(.trailing, 10)
-            .frame(height: 38)
-
-            Divider().overlay(Palette.rule)
+            if state.showsArchived { archiveHeading }
+            if state.hasSearchQuery { activeFilter }
 
             if model.projectGroups.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "folder")
-                        .font(.system(size: 26))
-                        .foregroundStyle(Palette.subtle)
-                    Text("No Projects")
-                        .font(AppFont.sans(12))
-                        .foregroundStyle(Palette.muted)
-                    Button("Open Workspace…") {
-                        model.chooseWorkspace()
-                    }
-                    .font(AppFont.sans(11.5))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Palette.accent)
-                    Spacer()
+                ContentUnavailableView {
+                    Label("No Workspaces", systemImage: "folder")
+                } description: {
+                    Text("Open a workspace from the toolbar to begin.")
                 }
-                .frame(maxWidth: .infinity)
+            } else if filteredProjects.isEmpty {
+                if state.hasSearchQuery {
+                    ContentUnavailableView.search(text: state.searchText)
+                } else {
+                    ContentUnavailableView {
+                        Label("No Archived Conversations", systemImage: "archivebox")
+                    } description: {
+                        Text("Archived conversations remain in your history and can be restored here.")
+                    }
+                }
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(model.projectGroups) { project in
-                            ProjectSectionView(
-                                project: project,
-                                selectedSessionID: model.selectedSessionID,
-                                isRunning: model.isRunning,
-                                isExpanded: expandedProjects.contains(project.id),
-                                onToggleExpanded: {
-                                    if expandedProjects.contains(project.id) {
-                                        expandedProjects.remove(project.id)
-                                    } else {
-                                        expandedProjects.insert(project.id)
-                                    }
-                                },
-                                onSelectSession: { session in
-                                    Task { await model.selectSession(session.id) }
-                                },
-                                onNewSession: {
-                                    Task { await model.newSession(in: project.path) }
-                                }
-                            )
+                SidebarOutlineView(
+                    projects: SidebarOutlineContent.projects(
+                        filteredProjects, model: model,
+                        onSelectConversation: selectConversation,
+                        onRenameConversation: { renamingSession = $0 },
+                        onSelectProject: selectProject
+                    ),
+                    selectedProjectID: model.workspace?.standardizedFileURL.path,
+                    selectedConversationID: state.navigationSessionID,
+                    collapsedProjectIDs: state.collapsedProjects,
+                    showsAllConversationProjectIDs: state.expandedProjects,
+                    isSearching: state.hasSearchQuery,
+                    focusRequest: state.isSearchPresented ? nil : state.conversationFocusRequest,
+                    onSelectProject: selectProject,
+                    onSelectConversation: selectConversation,
+                    onSetProjectExpanded: { id, expanded in
+                        guard !state.hasSearchQuery else { return }
+                        if expanded { state.collapsedProjects.remove(id) } else { state.collapsedProjects.insert(id) }
+                    },
+                    onShowMore: { id in
+                        if state.expandedProjects.contains(id) {
+                            state.expandedProjects.remove(id)
+                        } else {
+                            state.expandedProjects.insert(id)
                         }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.top, 10)
-                    .padding(.bottom, 16)
-                }
+                )
+                .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.sidebar)
+        .sheet(item: $renamingSession) { session in
+            RenameConversationSheet(model: model, session: session)
+        }
+        .onAppear {
+            state.reconcileProjects(model.projectGroups.map(\.id))
+            state.reconcileSelection(model.selectedSessionID)
+            revealSelectedConversation()
+        }
+        .onChange(of: model.selectedSessionID) { _, selectedID in
+            if let selectedID { state.showsArchived = model.sidebarLibrary.isArchived(selectedID) }
+            state.reconcileSelection(selectedID)
+            revealSelectedConversation()
+        }
+        .onChange(of: archivedSessionIDs) { _, archivedIDs in
+            if let selectedID = model.selectedSessionID { state.showsArchived = archivedIDs.contains(selectedID) }
+        }
+        .onChange(of: model.projectGroups.map(\.id)) { _, ids in state.reconcileProjects(ids) }
+    }
+
+    private var archiveHeading: some View {
+        HStack {
+            Button {
+                state.showsArchived = false
+            } label: {
+                Label("Conversations", systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .help("Back to active conversations")
+            Spacer(minLength: 4)
+            Text("Archived").foregroundStyle(Palette.muted)
+        }
+        .font(AppFont.sans(11.5))
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+    }
+
+    private var activeFilter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").accessibilityHidden(true)
+            Text(state.searchText).lineLimit(1)
+            Spacer(minLength: 0)
+            Button {
+                state.searchText = ""
+            } label: {
+                Label("Clear Filter", systemImage: "xmark.circle.fill")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+            .help("Clear conversation filter")
+        }
+        .font(AppFont.sans(11.5))
+        .foregroundStyle(Palette.muted)
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .help("Filtering conversations by: \(state.searchText)")
+    }
+
+    private func revealSelectedConversation() {
+        state.revealSelection(state.navigationSessionID, in: filteredProjects)
+    }
+
+    private func selectProject(_ path: String) {
+        guard model.selectProjectAvailability(path).isEnabled else { return }
+        state.reconcileSelection(nil)
+        model.activateProject(path)
+    }
+
+    private func selectConversation(_ sessionID: String) {
+        let request = state.requestSelection(sessionID)
+        Task {
+            guard state.isCurrent(request) else { return }
+            await model.selectSession(sessionID)
+            state.completeSelection(request, selectedID: model.selectedSessionID)
+        }
     }
 }
 
-private struct ProjectSectionView: View {
-    let project: ProjectGroup
-    let selectedSessionID: String?
-    let isRunning: Bool
-    let isExpanded: Bool
-    let onToggleExpanded: () -> Void
-    let onSelectSession: (DesktopSession) -> Void
-    let onNewSession: () -> Void
-    @ObservedObject private var theme = ThemeManager.shared
-
-    private var visibleSessions: [DesktopSession] {
-        if isExpanded || project.sessions.count <= 5 {
-            return project.sessions
-        }
-        return Array(project.sessions.prefix(5))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Project Header Row
-            HStack(spacing: 7) {
-                Image(systemName: "folder")
-                    .font(AppFont.sans(12))
-                    .foregroundStyle(Palette.ink.opacity(0.85))
-                Text(project.name)
-                    .font(AppFont.sans(13, weight: .medium))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .contextMenu {
-                Button("New Conversation in \(project.name)") {
-                    onNewSession()
-                }
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
-                }
-            }
-
-            // Sessions under this project
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(visibleSessions) { session in
-                    SessionRowView(
-                        session: session,
-                        isSelected: session.id == selectedSessionID,
-                        isRunning: isRunning && session.id == selectedSessionID,
-                        onSelect: { onSelectSession(session) }
-                    )
-                }
-
-                if project.sessions.count > 5 {
-                    Button(action: onToggleExpanded) {
-                        Text(isExpanded ? "Show less" : "Show more")
-                            .font(AppFont.sans(12))
-                            .foregroundStyle(Palette.subtle)
-                            .padding(.leading, 12)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.leading, 8)
-        }
-    }
-}
-
-private struct SessionRowView: View {
+private struct RenameConversationSheet: View {
+    @ObservedObject var model: DesktopModel
     let session: DesktopSession
-    let isSelected: Bool
-    let isRunning: Bool
-    let onSelect: () -> Void
-    @ObservedObject private var theme = ThemeManager.shared
-    @State private var isHovered = false
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var titleHasFocus: Bool
+    @State private var title: String
+    @State private var isSaving = false
+    @State private var saveError: String?
+
+    init(model: DesktopModel, session: DesktopSession) {
+        self.model = model
+        self.session = session
+        _title = State(initialValue: session.title)
+    }
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                Text(session.title)
-                    .font(AppFont.sans(12.5))
-                    .foregroundStyle(isSelected ? Palette.ink : Palette.ink.opacity(0.82))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: 4)
-
-                HStack(spacing: 5) {
-                    if isHovered || session.cwd.contains("worktrees") || session.cwd.contains("develop") {
-                        Image(systemName: "arrow.up.right")
-                            .font(AppFont.sans(9.5))
-                            .foregroundStyle(Palette.muted)
-                    }
-
-                    if isRunning {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else if isSelected {
-                        Circle()
-                            .strokeBorder(Palette.subtle, lineWidth: 1.2)
-                            .frame(width: 9, height: 9)
-                    } else {
-                        Image(systemName: "point.3.connected.trianglepath")
-                            .font(AppFont.sans(10))
-                            .foregroundStyle(Color(red: 175 / 255, green: 110 / 255, blue: 245 / 255))
-                    }
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Rename Conversation").font(AppFont.sans(16, weight: .semibold))
+            TextField("Conversation title", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .focused($titleHasFocus)
+                .disabled(isSaving)
+                .onSubmit { save() }
+            if let saveError {
+                Text(saveError).font(AppFont.sans(12)).foregroundStyle(.red).textSelection(.enabled)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                isSelected
-                    ? Palette.selectionBg
-                    : (isHovered ? Palette.hoverBg : Color.clear),
-                in: RoundedRectangle(cornerRadius: 6)
-            )
+            HStack {
+                if isSaving { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isSaving)
+                Button(isSaving ? "Saving…" : "Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .contextMenu {
-            Button("Select Conversation") { onSelect() }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.cwd)])
-            }
-            Button("Copy Title") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(session.title, forType: .string)
+        .padding(24).frame(width: 380)
+        .interactiveDismissDisabled(isSaving)
+        .onAppear { titleHasFocus = true }
+    }
+
+    private func save() {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isSaving, !title.isEmpty else { return }
+        isSaving = true
+        saveError = nil
+        Task {
+            if await model.renameSession(session.id, title: title) {
+                dismiss()
+            } else {
+                saveError = model.errorText ?? "The conversation could not be renamed. Try again."
+                isSaving = false
             }
         }
     }
@@ -827,7 +1059,9 @@ enum ToolVisuals {
         let k = kind?.lowercased() ?? ""
         let t = title.lowercased()
 
-        if k == "execute" || t.contains("terminal") || t.contains("bash") || t.contains("command") || t.hasPrefix("cargo") || t.hasPrefix("run") {
+        if k == "execute" || t.contains("terminal") || t.contains("bash") || t.contains("command")
+            || t.hasPrefix("cargo") || t.hasPrefix("run")
+        {
             return "terminal_command"
         }
         if k == "read" || t.contains("read") || t.contains("view") || t.contains("cat") {
@@ -880,13 +1114,15 @@ enum ToolVisuals {
 
     static func iconImage(for kind: String?, title: String = "") -> NSImage? {
         let name = iconResourceName(for: kind, title: title)
-        var url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "tool-icons")
+        var url =
+            Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "tool-icons")
             ?? Bundle.main.url(forResource: name, withExtension: "png")
         #if SWIFT_PACKAGE
-        if url == nil {
-            url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "tool-icons")
-                ?? Bundle.module.url(forResource: name, withExtension: "png")
-        }
+            if url == nil {
+                url =
+                    Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "tool-icons")
+                    ?? Bundle.module.url(forResource: name, withExtension: "png")
+            }
         #endif
         if let url, let img = NSImage(contentsOf: url) {
             img.isTemplate = true
@@ -899,7 +1135,9 @@ enum ToolVisuals {
         let k = kind?.lowercased() ?? ""
         let t = title.lowercased()
 
-        if k == "execute" || t.contains("terminal") || t.contains("bash") || t.contains("command") || t.hasPrefix("cargo") || t.hasPrefix("test") {
+        if k == "execute" || t.contains("terminal") || t.contains("bash") || t.contains("command")
+            || t.hasPrefix("cargo") || t.hasPrefix("test")
+        {
             return "terminal"
         }
         if k == "read" || t.contains("read") || t.contains("view") || t.contains("cat") {
@@ -1311,213 +1549,6 @@ private struct PlanProgressView: View {
     }
 }
 
-// MARK: - Composer View
-
-private struct ComposerView: View {
-    @ObservedObject var model: DesktopModel
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Attached files chips
-                if !model.attachedFiles.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 6) {
-                            ForEach(model.attachedFiles, id: \.self) { file in
-                                HStack(spacing: 5) {
-                                    Image(systemName: "paperclip")
-                                        .font(AppFont.sans(10))
-                                    Text(file.lastPathComponent)
-                                        .font(AppFont.code(11))
-                                        .lineLimit(1)
-                                    Button {
-                                        model.attachedFiles.removeAll { $0 == file }
-                                    } label: {
-                                        Image(systemName: "xmark")
-                                            .font(AppFont.sans(9, weight: .bold))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Palette.card, in: Capsule())
-                                .overlay(Capsule().stroke(Palette.rule, lineWidth: 1))
-                            }
-                        }
-                    }
-                    .scrollIndicators(.hidden)
-                }
-
-                // Input text field
-                TextField("Send a message… (⏎ to send)", text: $model.draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(AppFont.message(13.5))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1...8)
-                    .padding(.horizontal, 2)
-                    .padding(.top, 2)
-                    .onSubmit { Task { await model.send() } }
-
-                // Bottom toolbar inside composer card
-                HStack(spacing: 8) {
-                    Button(action: model.chooseFiles) {
-                        Image(systemName: "paperclip")
-                            .font(AppFont.sans(13))
-                            .foregroundStyle(Palette.muted)
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Attach files")
-
-                    if !model.availableCommands.isEmpty {
-                        Menu {
-                            ForEach(Array(model.availableCommands.enumerated()), id: \.offset) { _, cmd in
-                                if let name = cmd["name"] as? String {
-                                    Button("/\(name)") { model.draft = "/\(name) " }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "slash.circle")
-                                .font(AppFont.sans(13))
-                                .foregroundStyle(Palette.muted)
-                                .frame(width: 26, height: 26)
-                        }
-                        .menuStyle(.borderlessButton)
-                        .help("Slash commands")
-                    }
-
-                    // Mode picker if available
-                    if !model.availableSessionModes.isEmpty {
-                        let currentModeName = model.availableSessionModes.first(where: {
-                            $0["id"] as? String == model.currentModeID
-                        })?["name"] as? String ?? model.currentModeID ?? "Mode"
-                        Menu {
-                            ForEach(Array(model.availableSessionModes.enumerated()), id: \.offset) { _, mode in
-                                if let id = mode["id"] as? String {
-                                    Button {
-                                        Task { await model.setSessionMode(id) }
-                                    } label: {
-                                        if id == model.currentModeID {
-                                            Label(mode["name"] as? String ?? id, systemImage: "checkmark")
-                                        } else {
-                                            Text(mode["name"] as? String ?? id)
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(currentModeName)
-                                    .font(AppFont.sans(11, weight: .medium))
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(AppFont.sans(8))
-                            }
-                            .foregroundStyle(Palette.muted)
-                            .padding(.horizontal, 8)
-                            .frame(height: 24)
-                            .background(Palette.card, in: Capsule())
-                        }
-                        .menuStyle(.borderlessButton)
-                        .disabled(model.isRunning)
-                    }
-
-                    // Config options dropdown if available
-                    ForEach(Array(model.configOptions.enumerated()), id: \.offset) { _, option in
-                        if let id = option["id"] as? String,
-                           let choices = option["options"] as? [[String: Any]],
-                           !choices.isEmpty {
-                            let name = option["name"] as? String ?? id
-                            let currentValue = option["currentValue"] as? String
-                            let currentName = choices.first(where: {
-                                $0["value"] as? String == currentValue
-                            })?["name"] as? String ?? currentValue ?? name
-                            Menu {
-                                ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
-                                    if let val = choice["value"] as? String {
-                                        Button {
-                                            Task { await model.setConfigOption(id, value: val) }
-                                        } label: {
-                                            if val == currentValue {
-                                                Label(choice["name"] as? String ?? val, systemImage: "checkmark")
-                                            } else {
-                                                Text(choice["name"] as? String ?? val)
-                                            }
-                                        }
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(name + ":")
-                                        .font(AppFont.sans(10))
-                                    Text(currentName)
-                                        .font(AppFont.sans(11, weight: .medium))
-                                        .lineLimit(1)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(AppFont.sans(8))
-                                }
-                                .foregroundStyle(Palette.muted)
-                                .padding(.horizontal, 8)
-                                .frame(height: 24)
-                                .background(Palette.card, in: Capsule())
-                            }
-                            .menuStyle(.borderlessButton)
-                            .help("Choose \(name.lowercased()) for the next request. Saved for this workspace.")
-                            .disabled(model.isRunning || model.isConfigUpdating || !model.isConnected)
-                        }
-                    }
-
-                    Spacer()
-
-                    Image(systemName: "lock.shield")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.subtle.opacity(0.8))
-                        .help("Workspace sandbox: Files can be read and edited within this workspace.")
-
-                    // Send or Stop button
-                    if model.isRunning {
-                        Button(action: model.cancel) {
-                            Image(systemName: "stop.fill")
-                                .font(AppFont.sans(11, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 28, height: 28)
-                                .background(Color.red.opacity(0.85), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Stop run")
-                    } else {
-                        let canSend = model.selectedSessionID != nil &&
-                                      model.isConnected &&
-                                      !model.isConfigUpdating &&
-                                      (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.attachedFiles.isEmpty)
-                        Button {
-                            Task { await model.send() }
-                        } label: {
-                            Image(systemName: "arrow.up")
-                                .font(AppFont.sans(12, weight: .semibold))
-                                .foregroundStyle(canSend ? Palette.canvas : Palette.subtle)
-                                .frame(width: 28, height: 28)
-                                .background(canSend ? Palette.ink : Palette.card, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!canSend)
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Palette.composerBg, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.rule, lineWidth: 1))
-            .shadow(color: themeManager.isDark ? Color.clear : Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
-        .frame(maxWidth: 820)
-        .frame(maxWidth: .infinity)
-    }
-}
-
 private struct PermissionView: View {
     let prompt: PermissionPrompt
     let resolve: (String?) -> Void
@@ -1527,6 +1558,20 @@ private struct PermissionView: View {
             Text("Permission required")
                 .font(AppFont.sans(23, weight: .semibold))
             Text(prompt.title).font(AppFont.sans(14, weight: .medium))
+            if let workspace = prompt.workspace {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Project: \(DesktopModel.projectName(for: workspace.path))", systemImage: "folder")
+                        .font(AppFont.sans(12, weight: .medium))
+                        .foregroundStyle(Palette.ink)
+                    Text(workspace.path)
+                        .font(AppFont.code(11))
+                        .foregroundStyle(Palette.muted)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .help(workspace.path)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if !prompt.detail.isEmpty {
                 ScrollView {
                     Text(prompt.detail)
@@ -1567,17 +1612,17 @@ private struct PermissionView: View {
     }
 }
 
-private struct SettingsView: View {
+struct SettingsView: View {
     @EnvironmentObject var model: DesktopModel
     @EnvironmentObject var updater: AppUpdater
     @StateObject private var config = ConfigEditor()
     @State private var selectedTab: SettingsTab = .config
 
     private enum SettingsTab: String, CaseIterable, Identifiable {
-        case config = "Config"
+        case config = "Models"
         case appearance = "Appearance"
-        case policy = "Policy"
-        case context = "Context"
+        case policy = "Routing"
+        case context = "Tools & Skills"
         case updates = "Updates"
 
         var id: String { rawValue }
@@ -1590,6 +1635,26 @@ private struct SettingsView: View {
             case .updates: return "arrow.down.circle"
             }
         }
+
+        var title: String {
+            switch self {
+            case .config: return "Models & Providers"
+            case .appearance: return "Appearance"
+            case .policy: return "Model Routing"
+            case .context: return "Tools & Skills"
+            case .updates: return "Software Updates"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .config: return "Manage provider connections and the models available to Arabica."
+            case .appearance: return "Theme and typography changes are saved automatically."
+            case .policy: return "Review routing policies and choose the default for future connections."
+            case .context: return "View configured capabilities. Edit config.toml to change tools and skill roots."
+            case .updates: return "Manage automatic checks and installation for packaged Arabica releases."
+            }
+        }
     }
 
     var body: some View {
@@ -1600,11 +1665,26 @@ private struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 20)
             .padding(.top, 16)
             .padding(.bottom, 12)
 
             Divider().background(Palette.rule)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(selectedTab.title)
+                    .font(AppFont.sans(18, weight: .semibold))
+                    .foregroundStyle(Palette.ink)
+                Text(selectedTab.detail)
+                    .font(AppFont.sans(12))
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
 
             Group {
                 switch selectedTab {
@@ -1618,22 +1698,28 @@ private struct SettingsView: View {
                     ContextPageView(config: config)
                 case .updates:
                     VStack(alignment: .leading, spacing: 18) {
-                        Text("Software Updates").font(AppFont.sans(20))
-                        Text("Arabica \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")")
-                            .foregroundStyle(Palette.muted)
-                        Toggle("Automatically check for updates", isOn: Binding(
-                            get: { updater.automaticallyChecksForUpdates },
-                            set: { updater.setAutomaticChecks($0) }
-                        ))
-                        Toggle("Download updates and install when quitting", isOn: Binding(
-                            get: { updater.automaticallyDownloadsUpdates },
-                            set: { updater.setAutomaticDownloads($0) }
-                        ))
+                        Text(
+                            "Arabica \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")"
+                        )
+                        .foregroundStyle(Palette.muted)
+                        Toggle(
+                            "Automatically check for updates",
+                            isOn: Binding(
+                                get: { updater.automaticallyChecksForUpdates },
+                                set: { updater.setAutomaticChecks($0) }
+                            ))
+                        Toggle(
+                            "Download updates and install when quitting",
+                            isOn: Binding(
+                                get: { updater.automaticallyDownloadsUpdates },
+                                set: { updater.setAutomaticDownloads($0) }
+                            )
+                        )
                         .disabled(!updater.automaticallyChecksForUpdates)
                         Button("Check for Updates…") { updater.checkForUpdates() }
                             .disabled(!updater.canCheckForUpdates)
                         if updater.waitingForRuns {
-                            Text("The update will restart Arabica after active runs finish.")
+                            Text("The update will restart Arabica after activity in all conversation windows finishes.")
                                 .foregroundStyle(Palette.muted)
                         }
                         if !updater.isAvailable {
@@ -1650,40 +1736,87 @@ private struct SettingsView: View {
 
             Divider().background(Palette.rule)
 
-            if selectedTab != .updates {
-                // Persistent bottom status and action toolbar
-                HStack(spacing: 12) {
-                    if !config.status.isEmpty {
-                        let isSaved = config.status.hasPrefix("Saved")
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(isSaved ? Color.green : Color.orange)
-                                .frame(width: 7, height: 7)
-                            Text(config.status)
-                                .font(AppFont.sans(11))
-                                .foregroundStyle(isSaved ? Palette.muted : Color.orange)
-                                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 10) {
+                if !config.status.isEmpty,
+                    config.statusKind != .success || !config.hasUnsavedChanges
+                {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(
+                            systemName: config.statusKind == .error
+                                ? "exclamationmark.triangle.fill"
+                                : config.statusKind == .success ? "checkmark.circle.fill" : "info.circle"
+                        )
+                        .foregroundStyle(config.statusKind == .error ? Color.orange : Palette.accent)
+                        Text(config.status)
+                            .foregroundStyle(config.statusKind == .error ? Color.orange : Palette.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                        if config.statusKind == .success, let workspace = model.workspace {
+                            Spacer(minLength: 4)
+                            Button("Reconnect") { Task { await model.reconnectWorkspace(workspace) } }
+                                .disabled(model.hasActivityPreventingRelaunch)
+                                .help(
+                                    model.hasActivityPreventingRelaunch
+                                        ? "Wait for current activity and approvals to finish before reconnecting"
+                                        : "Reconnect this workspace to apply the saved configuration")
                         }
                     }
-                    Spacer()
-                    Button("Open config.toml") { config.openConfigFile() }
-                        .font(AppFont.sans(12))
-                    Button("Reload") { config.reload() }
-                        .font(AppFont.sans(12))
-                    if selectedTab == .config {
-                        Button("Save") { config.save() }
+                    .font(AppFont.sans(11))
+                    .accessibilityElement(children: .combine)
+                }
+
+                HStack(spacing: 10) {
+                    if config.hasUnsavedChanges {
+                        Label("Unsaved configuration changes", systemImage: "circle.fill")
+                            .font(AppFont.sans(11))
+                            .foregroundStyle(Palette.muted)
+                    } else if selectedTab == .appearance {
+                        Label("Saved automatically", systemImage: "checkmark.circle")
+                            .font(AppFont.sans(11))
+                            .foregroundStyle(Palette.muted)
+                    }
+                    Spacer(minLength: 8)
+                    if selectedTab != .appearance && selectedTab != .updates {
+                        Button("Edit config.toml…") { config.openConfigFile() }
+                            .help(config.configURL.path)
+                        Button("Reload…") { config.requestReload() }
+                            .help("Read configuration from disk and refresh discovered skills")
+                    }
+                    if selectedTab == .config || selectedTab == .policy || config.hasUnsavedChanges {
+                        Button("Save Changes") { config.save() }
                             .buttonStyle(.borderedProminent)
-                            .font(AppFont.sans(12))
-                            .disabled(config.isSaving)
+                            .keyboardShortcut("s", modifiers: .command)
+                            .disabled(
+                                config.isSaving || config.isChatGPTAuthRunning || config.isSyncingModels
+                                    || !config.hasUnsavedChanges
+                            )
+                            .help(
+                                config.isChatGPTAuthRunning || config.isSyncingModels
+                                    ? "Wait for the account or model operation to finish before saving."
+                                    : "Save this configuration draft.")
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(Palette.raised.opacity(0.6))
+                .font(AppFont.sans(12))
             }
         }
-        .frame(width: 660, height: 700)
-        .onAppear { config.reload() }
+        .frame(minWidth: 660, idealWidth: 760, minHeight: 620, idealHeight: 700)
+        .background(Palette.canvas)
+        .background(SettingsWindowGuard(config: config))
+        .confirmationDialog(
+            "Save configuration changes?",
+            isPresented: Binding(
+                get: { config.pendingAction != nil },
+                set: { if !$0 { config.pendingAction = nil } }
+            ), titleVisibility: .visible, presenting: config.pendingAction
+        ) { action in
+            Button("Save Changes and Continue") { config.saveAndContinue(action) }
+            Button("Discard Changes", role: .destructive) { config.discardAndContinue(action) }
+            Button("Cancel", role: .cancel) { config.pendingAction = nil }
+        } message: { _ in
+            Text(
+                "Switching entries or reloading will replace the current draft. Save it or discard it before continuing."
+            )
+        }
     }
 }
 
@@ -1698,43 +1831,64 @@ private struct ConfigPageView: View {
             VStack(alignment: .leading, spacing: 20) {
                 // Provider Section
                 SettingSection(
-                    title: "Provider Settings",
-                    subtitle: "Configure upstream LLM endpoint credentials and execution mode"
+                    title: "Provider Connection",
+                    subtitle: "Changes stay in this draft until you choose Save Changes."
                 ) {
                     SettingRow(label: "Provider", description: "Configured provider instance name") {
                         HStack(spacing: 8) {
-                            Picker("", selection: Binding(
-                                get: { config.providerName },
-                                set: { config.selectProvider($0) }
-                            )) {
-                                ForEach(config.providerOptions, id: \.self) { Text($0).tag($0) }
+                            Picker(
+                                "Provider",
+                                selection: Binding(
+                                    get: { config.providerName },
+                                    set: { config.selectProvider($0) }
+                                )
+                            ) {
+                                ForEach(
+                                    config.providerOptions.isEmpty ? [config.providerName] : config.providerOptions,
+                                    id: \.self
+                                ) { Text($0).tag($0) }
                             }
+                            .labelsHidden()
                             .frame(width: 140)
-                            Button("Add", systemImage: "plus") { config.addProvider() }
+                            Button("Add Provider", systemImage: "plus") { config.addProvider() }
                                 .font(AppFont.sans(11))
                                 .disabled(!config.canAddEntries)
+                                .help(
+                                    config.canAddEntries
+                                        ? "Create a provider and its first model"
+                                        : "Save the first provider and model before adding another")
                         }
                     }
                     Divider().background(Palette.rule)
 
-                    SettingRow(label: "Authentication", description: "Use an API key or sign in with a ChatGPT account") {
-                        Picker("", selection: Binding(
-                            get: { config.authMode },
-                            set: { config.selectAuthMode($0) }
-                        )) {
+                    SettingRow(label: "Authentication", description: "Use an API key or sign in with a ChatGPT account")
+                    {
+                        Picker(
+                            "Authentication",
+                            selection: Binding(
+                                get: { config.authMode },
+                                set: { config.selectAuthMode($0) }
+                            )
+                        ) {
                             Text("API Key").tag("api_key")
                             Text("ChatGPT Login").tag("chatgpt")
                         }
+                        .labelsHidden()
                         .frame(width: 180)
                     }
                     Divider().background(Palette.rule)
 
                     SettingRow(label: "API Protocol", description: "Payload format used to talk to the provider") {
-                        Picker("", selection: $config.apiType) {
+                        Picker(
+                            "API Protocol", selection: Binding(get: { config.apiType }, set: { config.setAPIType($0) })
+                        ) {
                             let types = ["open_ai_responses", "open_ai_chat_completions", "anthropic_messages"]
                             if !types.contains(config.apiType) { Text(config.apiType).tag(config.apiType) }
-                            ForEach(types, id: \.self) { Text($0).tag($0) }
+                            Text("OpenAI Responses").tag("open_ai_responses")
+                            Text("OpenAI Chat Completions").tag("open_ai_chat_completions")
+                            Text("Anthropic Messages").tag("anthropic_messages")
                         }
+                        .labelsHidden()
                         .frame(width: 220)
                         .disabled(config.authMode == "chatgpt")
                     }
@@ -1742,6 +1896,7 @@ private struct ConfigPageView: View {
 
                     SettingRow(label: "Base URL", description: "Target endpoint root URL") {
                         TextField("https://api.openai.com/v1", text: $config.baseURL)
+                            .accessibilityLabel("Base URL")
                             .font(AppFont.code(12))
                             .frame(width: 240)
                             .disabled(config.authMode == "chatgpt")
@@ -1749,34 +1904,54 @@ private struct ConfigPageView: View {
                     Divider().background(Palette.rule)
 
                     if config.authMode == "chatgpt" {
-                        SettingRow(label: "ChatGPT Account", description: "OAuth credentials are stored in your local Arabica home") {
+                        SettingRow(
+                            label: "ChatGPT Account",
+                            description: "OAuth credentials are stored in your local Arabica home"
+                        ) {
                             HStack(spacing: 10) {
-                                Image(systemName: config.chatGPTConnected ? "checkmark.circle.fill" : "person.crop.circle")
-                                    .foregroundStyle(config.chatGPTConnected ? Color.green : Palette.muted)
+                                Image(
+                                    systemName: config.chatGPTConnected ? "checkmark.circle.fill" : "person.crop.circle"
+                                )
+                                .foregroundStyle(config.chatGPTConnected ? Color.green : Palette.muted)
                                 Text(config.chatGPTConnected ? "Connected" : "Not connected")
                                     .font(AppFont.sans(12))
-                                Button(config.isChatGPTAuthRunning ? "Waiting for browser…" : (config.chatGPTConnected ? "Disconnect" : "Sign in")) {
-                                    if config.chatGPTConnected { config.disconnectChatGPT() }
-                                    else { config.connectChatGPT() }
+                                Button(config.chatGPTAuthButtonTitle) {
+                                    if config.chatGPTConnected {
+                                        config.disconnectChatGPT()
+                                    } else {
+                                        config.connectChatGPT()
+                                    }
                                 }
-                                .disabled(config.isChatGPTAuthRunning)
+                                .disabled(!config.canChangeChatGPTConnection)
+                                .help(config.chatGPTAuthHelp)
                             }
                         }
                     } else {
-                        SettingRow(label: "API Key Env Var", description: "Preferred: environment variable holding secret") {
+                        SettingRow(
+                            label: "API Key Variable",
+                            description: "Recommended: name of the environment variable containing your key"
+                        ) {
                             TextField("ARABICA_PROVIDER_PRIMARY_API_KEY", text: $config.apiKeyEnv)
+                                .accessibilityLabel("API Key Variable")
                                 .font(AppFont.code(11))
                                 .frame(width: 240)
                         }
                         Divider().background(Palette.rule)
 
-                        SettingRow(label: "Direct API Key", description: "Encrypted file fallback (never displayed after save)") {
+                        SettingRow(
+                            label: "API Key",
+                            description: "Optional fallback stored in config.toml with owner-only file access"
+                        ) {
                             HStack(spacing: 8) {
-                                SecureField(config.hasSavedKey && !config.clearSavedKey ? "•••••••••••• (Saved)" : "sk-...", text: $config.apiKey)
-                                    .font(AppFont.code(12))
-                                    .frame(width: 170)
+                                SecureField(
+                                    config.hasSavedKey && !config.clearSavedKey ? "•••••••••••• (Saved)" : "sk-...",
+                                    text: $config.apiKey
+                                )
+                                .accessibilityLabel("API Key")
+                                .font(AppFont.code(12))
+                                .frame(width: 170)
                                 if config.hasSavedKey {
-                                    Toggle("Clear", isOn: $config.clearSavedKey)
+                                    Toggle("Remove saved key", isOn: $config.clearSavedKey)
                                         .font(AppFont.sans(11))
                                 }
                             }
@@ -1785,44 +1960,57 @@ private struct ConfigPageView: View {
                     Divider().background(Palette.rule)
 
                     SettingRow(label: "Reasoning Effort", description: "Thinking / reasoning token budget level") {
-                        Picker("", selection: $config.thinking) {
+                        Picker("Reasoning Effort", selection: $config.thinking) {
                             Text("Default").tag("")
                             let values = ConfigEditor.supportedThinkingValues(apiType: config.apiType)
+                            if !config.thinking.isEmpty, !values.contains(config.thinking) {
+                                Text("\(config.thinking) (unsupported)").tag(config.thinking)
+                            }
                             ForEach(values, id: \.self) { Text($0).tag($0) }
                         }
+                        .labelsHidden()
                         .frame(width: 140)
                     }
                 }
 
                 // Model Aliases Section
                 SettingSection(
-                    title: "Model Aliases",
-                    subtitle: "Map abstract logical aliases (e.g. default, fast) to upstream model IDs"
+                    title: "Models for \(config.providerName)",
+                    subtitle: "Choose a model alias, then set the provider's exact model ID."
                 ) {
-                    SettingRow(label: "Model ID", description: "Upstream vendor identifier (e.g. gpt-4o, claude-3-7-sonnet)") {
-                        TextField("model id", text: $config.modelID)
-                            .font(AppFont.code(12))
-                            .frame(width: 220)
-                    }
-                    Divider().background(Palette.rule)
-
                     SettingRow(label: "Alias", description: "Routing alias mapped to this model") {
                         HStack(spacing: 8) {
-                            Picker("", selection: Binding(
-                                get: { config.modelAlias },
-                                set: { config.selectModel($0) }
-                            )) {
+                            Picker(
+                                "Model Alias",
+                                selection: Binding(
+                                    get: { config.modelAlias },
+                                    set: { config.selectModel($0) }
+                                )
+                            ) {
+                                if config.modelAlias.isEmpty { Text("No models").tag("") }
                                 ForEach(config.modelsForSelectedProvider, id: \.self) { Text($0).tag($0) }
                             }
+                            .labelsHidden()
                             .frame(width: 140)
-                            Button("Add", systemImage: "plus") { config.addModel() }
+                            Button("Add Model", systemImage: "plus") { config.addModel() }
                                 .font(AppFont.sans(11))
                                 .disabled(!config.canAddEntries)
                         }
                     }
                     Divider().background(Palette.rule)
+                    SettingRow(label: "Model ID", description: "Exact model identifier accepted by this provider") {
+                        TextField("Enter a model ID", text: $config.modelID)
+                            .accessibilityLabel("Model ID")
+                            .font(AppFont.code(12))
+                            .frame(width: 240)
+                            .disabled(config.modelAlias.isEmpty)
+                    }
+                    Divider().background(Palette.rule)
 
-                    SettingRow(label: "Discover Models", description: "Fetch available models from this provider and register them") {
+                    SettingRow(
+                        label: "Discover Models",
+                        description: "Fetch available models from this provider and register them"
+                    ) {
                         Button {
                             config.syncModels()
                         } label: {
@@ -1837,7 +2025,14 @@ private struct ConfigPageView: View {
                             }
                         }
                         .font(AppFont.sans(11))
-                        .disabled(config.isSyncingModels || config.providerName.isEmpty)
+                        .disabled(
+                            config.isSyncingModels || config.isChatGPTAuthRunning || config.providerName.isEmpty
+                                || config.hasUnsavedChanges
+                        )
+                        .help(
+                            config.hasUnsavedChanges
+                                ? "Save Changes or discard your draft before syncing provider models."
+                                : "Discover and register models from the selected provider.")
                     }
                 }
 
@@ -1854,6 +2049,7 @@ private struct ConfigPageView: View {
             }
             .padding(20)
         }
+        .textFieldStyle(.roundedBorder)
     }
 }
 
@@ -1887,8 +2083,9 @@ private struct PolicyPageView: View {
                     Text("Select Policy:")
                         .font(AppFont.sans(12, weight: .medium))
                         .foregroundStyle(Palette.ink)
-                    Picker("", selection: $selectedPolicyID) {
+                    Picker("Policy", selection: $selectedPolicyID) {
                         if policyCategory == .configured {
+                            if config.configuredPolicies.isEmpty { Text("No configured policies").tag("") }
                             ForEach(config.configuredPolicies) { item in
                                 Text(item.id + (item.id == config.defaultPolicy ? " (Default)" : "")).tag(item.id)
                             }
@@ -1903,10 +2100,11 @@ private struct PolicyPageView: View {
                             }
                         }
                     }
+                    .labelsHidden()
                     .frame(maxWidth: .infinity)
 
                     if policyCategory == .configured, !selectedPolicyID.isEmpty {
-                        Button(selectedPolicyID == config.defaultPolicy ? "Active Default" : "Set as Default") {
+                        Button(selectedPolicyID == config.defaultPolicy ? "Default Policy" : "Use as Default") {
                             config.selectPolicy(selectedPolicyID)
                         }
                         .font(AppFont.sans(11))
@@ -1924,7 +2122,9 @@ private struct PolicyPageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if policyCategory == .configured {
-                        if let policy = config.configuredPolicies.first(where: { $0.id == selectedPolicyID }) ?? config.configuredPolicies.first {
+                        if let policy = config.configuredPolicies.first(where: { $0.id == selectedPolicyID })
+                            ?? config.configuredPolicies.first
+                        {
                             configuredPolicyDetailView(policy)
                         } else {
                             emptyPolicyPlaceholder("No configured policies found in config.toml.")
@@ -1934,18 +2134,29 @@ private struct PolicyPageView: View {
                         if let record = records.first(where: { $0.id == selectedPolicyID }) ?? records.first {
                             candidatePolicyDetailView(record)
                         } else {
-                            emptyPolicyPlaceholder("No evolved candidates have been produced by background evaluation yet.")
+                            emptyPolicyPlaceholder(
+                                "No evolved candidates have been produced by background evaluation yet.")
                         }
                     }
                 }
                 .padding(20)
             }
         }
-        .onAppear {
-            if selectedPolicyID.isEmpty {
-                selectedPolicyID = config.defaultPolicy.isEmpty ? (config.configuredPolicies.first?.id ?? "") : config.defaultPolicy
-            }
-        }
+        .onAppear { synchronizeSelection() }
+        .onChange(of: policyCategory) { _, _ in synchronizeSelection() }
+        .onChange(of: config.configuredPolicies.map(\.id)) { _, _ in synchronizeSelection() }
+        .onChange(of: evaluation.snapshot?.policies?.map(\.id)) { _, _ in synchronizeSelection() }
+    }
+
+    private func synchronizeSelection() {
+        let options =
+            policyCategory == .configured
+            ? config.configuredPolicies.map(\.id)
+            : evaluation.snapshot?.policies?.map(\.id) ?? []
+        guard !options.contains(selectedPolicyID) else { return }
+        selectedPolicyID =
+            policyCategory == .configured && options.contains(config.defaultPolicy)
+            ? config.defaultPolicy : options.first ?? ""
     }
 
     @ViewBuilder
@@ -2021,11 +2232,16 @@ private struct PolicyPageView: View {
             title: "Stability Safeguards",
             subtitle: "Hysteresis step controls to prevent model thrashing"
         ) {
-            SettingRow(label: "Minimum Model Dwell Steps", description: "Consecutive steps a model must retain before switching") {
+            SettingRow(
+                label: "Minimum Model Dwell Steps",
+                description: "Consecutive steps a model must retain before switching"
+            ) {
                 Text("\(policy.dwellSteps ?? 1) steps").font(AppFont.code(12)).foregroundStyle(Palette.ink)
             }
             Divider().background(Palette.rule)
-            SettingRow(label: "Stall Recovery Trigger", description: "Unproductive steps before recovery model takes over") {
+            SettingRow(
+                label: "Stall Recovery Trigger", description: "Unproductive steps before recovery model takes over"
+            ) {
                 Text("\(policy.stallThreshold ?? 2) steps").font(AppFont.code(12)).foregroundStyle(Palette.ink)
             }
         }
@@ -2043,7 +2259,8 @@ private struct PolicyPageView: View {
                     .foregroundStyle(record.status == "accepted" ? Color.green : Color.orange)
             }
             Divider().background(Palette.rule)
-            SettingRow(label: "Evolution Reason", description: "Trigger condition detected during trajectory analysis") {
+            SettingRow(label: "Evolution Reason", description: "Trigger condition detected during trajectory analysis")
+            {
                 Text(record.reason)
                     .font(AppFont.sans(11))
                     .foregroundStyle(Palette.muted)
@@ -2094,11 +2311,13 @@ private struct PolicyPageView: View {
 
         SettingSection(title: "Candidate Stability Settings") {
             SettingRow(label: "Minimum Model Dwell Steps", description: "Dwell steps threshold") {
-                Text("\(record.policy.minimum_model_dwell_steps ?? 1) steps").font(AppFont.code(12)).foregroundStyle(Palette.ink)
+                Text("\(record.policy.minimum_model_dwell_steps ?? 1) steps").font(AppFont.code(12)).foregroundStyle(
+                    Palette.ink)
             }
             Divider().background(Palette.rule)
             SettingRow(label: "Stall Recovery Trigger", description: "No-progress threshold") {
-                Text("\(record.policy.recovery_after_no_progress_steps ?? 2) steps").font(AppFont.code(12)).foregroundStyle(Palette.ink)
+                Text("\(record.policy.recovery_after_no_progress_steps ?? 2) steps").font(AppFont.code(12))
+                    .foregroundStyle(Palette.ink)
             }
         }
     }
@@ -2169,19 +2388,20 @@ private struct ContextPageView: View {
             subtitle: "System capabilities managed directly by the Structure runtime runner"
         ) {
             SettingRow(label: "Filesystem Execution", description: "read_file, write_file, edit_file, list_dir, grep") {
-                Text("Enabled").font(AppFont.code(11, weight: .bold)).foregroundStyle(Color.green)
+                Text("Built in").font(AppFont.code(11)).foregroundStyle(Palette.muted)
             }
             Divider().background(Palette.rule)
             SettingRow(label: "Terminal & Subprocess", description: "Persistent interactive bash sessions with PTY") {
-                Text("Protected").font(AppFont.code(11, weight: .bold)).foregroundStyle(Color.blue)
+                Text("Runtime managed").font(AppFont.code(11)).foregroundStyle(Palette.muted)
             }
             Divider().background(Palette.rule)
-            SettingRow(label: "Session Short Memory", description: "Prefix cache, bounded short-memory projection & GC") {
-                Text("Active").font(AppFont.code(11, weight: .bold)).foregroundStyle(Color.green)
+            SettingRow(label: "Session Short Memory", description: "Prefix cache, bounded short-memory projection & GC")
+            {
+                Text("Runtime managed").font(AppFont.code(11)).foregroundStyle(Palette.muted)
             }
             Divider().background(Palette.rule)
             SettingRow(label: "Context Unfold Engine", description: "Lazy discovery of folded tool directories") {
-                Text("Active").font(AppFont.code(11, weight: .bold)).foregroundStyle(Color.green)
+                Text("Runtime managed").font(AppFont.code(11)).foregroundStyle(Palette.muted)
             }
         }
     }
@@ -2194,7 +2414,9 @@ private struct ContextPageView: View {
             subtitle: "Configured directory paths scanned for SKILL.md bundles"
         ) {
             if config.skillRoots.isEmpty {
-                SettingRow(label: "No Roots Configured", description: "Add `[skills] roots = [\"skills\"]` to config.toml") {
+                SettingRow(
+                    label: "No Roots Configured", description: "Add `[skills] roots = [\"skills\"]` to config.toml"
+                ) {
                     Text("None").font(AppFont.sans(11)).foregroundStyle(Palette.muted)
                 }
             } else {
@@ -2287,7 +2509,10 @@ private struct ContextPageView: View {
                             }
                         }
                         if !server.envKeys.isEmpty {
-                            SettingRow(label: "Environment Keys", description: "Inherited secrets") {
+                            SettingRow(
+                                label: "Environment Variables",
+                                description: "Configured variable names; values are hidden"
+                            ) {
                                 Text(server.envKeys.joined(separator: ", "))
                                     .font(AppFont.code(10))
                                     .foregroundStyle(Palette.muted)

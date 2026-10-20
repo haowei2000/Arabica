@@ -210,13 +210,18 @@ Use `/model <alias>`, `/policy <name>`, and `/thinking <level>` to change the
 default model, Blend policy, and reasoning effort for the next prompt. Calling
 any of these commands without an argument lists the current selections and
 available choices. Both the fullscreen TUI and plain terminal support them.
-The choices are saved under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml`
-and shared with the desktop and other ACP clients. Active sessions keep their
-own selections; new or restored sessions read the latest workspace preferences.
-Reasoning effort is saved per model alias. Selecting another alias restores that
-alias's effort, while selecting a policy resets the default model to the one
-declared by that policy. Other policy routes, including planning and error
-recovery, continue to apply when the default model is changed.
+Explicit `/model` and `/thinking` commands select SOE for the active terminal
+session. `/thinking` keeps that session's current model. Choices are saved
+under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml` and shared with the
+desktop and other ACP clients. New or restored sessions read the latest policy
+selection. SOE also restores its saved model and per-model reasoning effort;
+named policies reload their model and thinking defaults from the configuration
+file. Selecting another alias restores that alias's saved SOE effort. Selecting
+a named policy restores its declared default model, file-defined thinking, and
+other routes, including planning and error recovery. `/policy soe` restores the
+saved SOE model and thinking. Interactive model and thinking changes require
+renaming an existing configured policy named `soe`; explicit CLI invocation
+flags remain available for that policy.
 
 Chat Completions supports `off` and `on`; Responses supports `default`, `low`,
 `medium`, `high`, `xhigh`, and `max`. `default` omits an explicit reasoning
@@ -258,9 +263,10 @@ Shell is available only with `--allow-shell` and also requires approval.
 Speaks [Agent Client Protocol](https://agentclientprotocol.com) v1 over
 stdio. `initialize` always answers protocol version 1 with no auth methods
 (`authMethods: []`): credentials come from provider key environment variables
-or the user config. Every `session/new` builds its own runtime and its own
-session manager, so concurrent sessions (multiple editor windows, multiple
-projects) do not share state or serialize behind one lock.
+or the user config, or an existing ChatGPT login in the configured Arabica
+home. Every `session/new` builds its own runtime and its own session manager,
+so concurrent sessions (multiple editor windows, multiple projects) do not
+share state or serialize behind one lock.
 
 ### Zed
 
@@ -289,13 +295,26 @@ secure launch environment if that is unacceptable. The aliases and endpoints
 come from `~/.arabica/config.toml`. Zed's own model-provider settings do not
 configure Structure's providers.
 
-New and restored sessions expose ACP default-model, Blend-policy, and thinking
-selectors. The model selector includes configured aliases and their upstream IDs;
-the policy selector includes configured policies and compatible stored policy
-versions. The desktop shows these selectors below the message composer.
+New and restored sessions expose an ACP policy selector with `soe` (SOE),
+configured policies, and compatible stored policy versions. SOE runs every step
+with one selected model and clears alternate, recovery, planning, and tool routes.
+Only SOE exposes model and thinking selectors; its model selector includes
+configured aliases and their upstream IDs. The desktop groups these controls in
+the Policy menu below the composer. Named policies use the per-model thinking in
+the configuration file, ignoring SOE workspace and ACP invocation thinking
+overrides. Terminal and one-shot invocation overrides retain their existing
+behavior. The `soe` policy key is reserved in ACP; rename a configured policy
+using that key before connecting.
+
 Changes apply to the next prompt and are saved as workspace preferences, with
-thinking saved separately for each alias. Changes are rejected while a prompt
-is running; the desktop also prevents overlapping setting changes.
+SOE thinking saved separately for each alias. Visiting a named policy preserves
+those SOE preferences for switching back. Existing configured policy routing is
+preserved until SOE is selected. Changes are rejected while a prompt is running;
+the desktop also prevents overlapping setting changes.
+Terminal and one-shot sessions recognize the same saved SOE selection. Saved
+SOE model and thinking overrides are ignored when a named policy is selected;
+explicit CLI flags still override that invocation's default model and thinking.
+Existing configured policies named `soe` retain their CLI routing behavior.
 The Chat Completions adapter sends a nonstandard `thinking` parameter when
 enabled, so the endpoint must support it. In ACP sessions it requests Chat
 Completions streaming and forwards text and `reasoning_content` deltas as
@@ -320,11 +339,14 @@ not just displayed.
 
 ### Sessions and MCP tools
 
-ACP sessions are saved under `$ARABICA_HOME` (or its default location) as
-append-only event logs. The agent supports `session/list`, `session/load`
+ACP sessions are saved in `sessions.sqlite3` under `$ARABICA_HOME` (or its
+default location), with ordered events and separate session metadata. The
+agent supports `session/list`, `session/load`
 (replays history), `session/resume` (continues without replay), and
-`session/close` (suspends the session so it can be opened again). A client
-may supply MCP servers in `session/new`, `session/load`, or `session/resume`;
+`session/close` (suspends the session so it can be opened again). The optional
+[session metadata extension](client-sessions.md) supports persistent title
+changes without loading or prompting a session. A client may supply MCP
+servers in `session/new`, `session/load`, or `session/resume`;
 each request reconnects to its supplied servers and discovers their tools.
 Server configuration, especially environment variables and HTTP headers, is
 not written to the session log.

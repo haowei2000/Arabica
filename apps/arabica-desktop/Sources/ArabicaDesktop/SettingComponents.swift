@@ -1,5 +1,99 @@
 import SwiftUI
 
+struct SettingsWindowGuard: NSViewRepresentable {
+    @ObservedObject var config: ConfigEditor
+
+    func makeCoordinator() -> Coordinator { Coordinator(config: config) }
+
+    func makeNSView(context: Context) -> SettingsWindowGuardView {
+        let view = SettingsWindowGuardView()
+        let coordinator = context.coordinator
+        view.windowChanged = { [weak coordinator] window in coordinator?.attach(to: window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: SettingsWindowGuardView, context: Context) {
+        context.coordinator.attach(to: nsView.window)
+    }
+
+    static func dismantleNSView(_ nsView: SettingsWindowGuardView, coordinator: Coordinator) {
+        coordinator.attach(to: nil)
+    }
+
+    final class Coordinator: NSObject, NSWindowDelegate {
+        private let config: ConfigEditor
+        private weak var window: NSWindow?
+        private weak var previousDelegate: NSWindowDelegate?
+        private var closePromptIsVisible = false
+
+        init(config: ConfigEditor) { self.config = config }
+
+        @MainActor
+        func attach(to newWindow: NSWindow?) {
+            if window !== newWindow {
+                if window?.delegate === self { window?.delegate = previousDelegate }
+                window = newWindow
+                previousDelegate = newWindow?.delegate
+            }
+            guard let window else { return }
+            if window.delegate !== self {
+                previousDelegate = window.delegate
+                window.delegate = self
+            }
+            window.isDocumentEdited = config.hasUnsavedChanges
+        }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            guard config.hasUnsavedChanges else {
+                return previousDelegate?.windowShouldClose?(sender) ?? true
+            }
+            guard !closePromptIsVisible else { return false }
+            closePromptIsVisible = true
+            let alert = NSAlert()
+            alert.messageText = "Save configuration changes?"
+            alert.informativeText = "Save your changes before closing Settings, or discard them to keep the configuration on disk."
+            alert.addButton(withTitle: "Save Changes")
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Discard Changes")
+            alert.beginSheetModal(for: sender) { [weak self, weak sender] response in
+                guard let self else { return }
+                self.closePromptIsVisible = false
+                switch response {
+                case .alertFirstButtonReturn:
+                    guard self.config.save() else { return }
+                case .alertThirdButtonReturn:
+                    self.config.reload()
+                default:
+                    return
+                }
+                sender?.isDocumentEdited = false
+                // Let the sheet detach before closing without reentering the close guard.
+                DispatchQueue.main.async { [weak sender] in
+                    sender?.close()
+                }
+            }
+            return false
+        }
+
+        override func responds(to selector: Selector!) -> Bool {
+            super.responds(to: selector) || previousDelegate?.responds(to: selector) == true
+        }
+
+        override func forwardingTarget(for selector: Selector!) -> Any? {
+            previousDelegate?.responds(to: selector) == true ? previousDelegate : super.forwardingTarget(for: selector)
+        }
+    }
+}
+
+final class SettingsWindowGuardView: NSView {
+    var windowChanged: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        windowChanged?(window)
+    }
+}
+
 // MARK: - Setting Section Container
 
 struct SettingSection<Content: View>: View {
@@ -17,6 +111,7 @@ struct SettingSection<Content: View>: View {
                     Text(subtitle)
                         .font(AppFont.sans(11))
                         .foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             VStack(spacing: 1) {
@@ -45,6 +140,7 @@ struct SettingRow<Trailing: View>: View {
                     Text(description)
                         .font(AppFont.sans(10))
                         .foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 16)
@@ -147,12 +243,9 @@ extension Palette {
 
 // MARK: - Appearance Page View
 
-// MARK: - Appearance Page View
-
 struct AppearancePageView: View {
     @ObservedObject private var theme = ThemeManager.shared
-    @State private var isCreatingTheme = false
-    @State private var newThemeName = ""
+    @State private var themeToDelete: ThemeDefinition?
 
     var body: some View {
         ScrollView {
@@ -207,6 +300,8 @@ struct AppearancePageView: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel(item.name)
+                                .accessibilityAddTraits(isSelected ? .isSelected : [])
                             }
                         }
 
@@ -410,6 +505,18 @@ struct AppearancePageView: View {
             }
             .padding(20)
         }
+        .confirmationDialog("Delete custom theme?", isPresented: Binding(
+            get: { themeToDelete != nil },
+            set: { if !$0 { themeToDelete = nil } }
+        ), titleVisibility: .visible, presenting: themeToDelete) { item in
+            Button("Delete \(item.name)", role: .destructive) {
+                theme.deleteCustomTheme(id: item.id)
+                themeToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { themeToDelete = nil }
+        } message: { item in
+            Text("The custom theme \(item.name) will be permanently removed.")
+        }
     }
 
     // MARK: - Custom Theme Editor Section
@@ -524,7 +631,7 @@ struct AppearancePageView: View {
                 // Delete Theme Row
                 SettingRow(label: "Delete Theme", description: "Permanently delete this custom theme") {
                     Button(role: .destructive) {
-                        theme.deleteCustomTheme(id: theme.activeTheme.id)
+                        themeToDelete = theme.activeTheme
                     } label: {
                         Label("Delete", systemImage: "trash")
                             .foregroundStyle(.red)

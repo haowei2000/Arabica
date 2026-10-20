@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0 — 2026-10-20
+
+- Rebuild the macOS sidebar as a native folder and conversation tree with compact rows, persistent expansion, keyboard navigation, and contextual actions.
+- Group sidebar, search, and workspace controls in the native title bar and add independent conversation windows with shared library state.
+- Simplify the composer to one Policy selector beside Send, with single-model SOE routing and nested model and thinking settings.
+- Keep named policies' model routing and thinking levels owned by configuration, while preserving per-model SOE preferences across switches and session resumes.
+- Make configuration drafts, save conflicts, model synchronization, and ChatGPT sign-in states explicit; allow Save & Sign in after choosing ChatGPT authentication.
+- Improve Markdown tables, nested lists, task lists, block quotes, and supported Mermaid diagrams in conversation messages.
+- Add durable conversation renaming and guard sidebar actions, updates, and reconnects while conversations are busy.
+- Improve startup configuration errors and preserve session option state during asynchronous switches.
+
 ## 0.7.0 — 2026-10-20
 
 - Add dynamic upstream model discovery for OpenAI, ChatGPT OAuth, Anthropic, and Google Gemini providers.
