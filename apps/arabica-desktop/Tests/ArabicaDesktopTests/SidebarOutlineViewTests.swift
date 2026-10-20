@@ -86,6 +86,8 @@ final class SidebarOutlineViewTests: XCTestCase {
     }
 
     func testContextMenuTargetsClickedConversationWithoutNavigatingAndUsesFreshActions() throws {
+        // Native menu actions dispatch through NSApp, which a headless SwiftPM test host may not initialize.
+        _ = NSApplication.shared
         let fixture = Fixture(conversationCount: 2)
         var opened: [String] = []
         fixture.view.selectedConversationID = "conversation-0"
