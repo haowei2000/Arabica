@@ -1820,6 +1820,25 @@ private struct ConfigPageView: View {
                                 .disabled(!config.canAddEntries)
                         }
                     }
+                    Divider().background(Palette.rule)
+
+                    SettingRow(label: "Discover Models", description: "Fetch available models from this provider and register them") {
+                        Button {
+                            config.syncModels()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if config.isSyncingModels {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                }
+                                Text(config.isSyncingModels ? "Syncing…" : "Sync Provider Models")
+                            }
+                        }
+                        .font(AppFont.sans(11))
+                        .disabled(config.isSyncingModels || config.providerName.isEmpty)
+                    }
                 }
 
                 // Desktop Context Section

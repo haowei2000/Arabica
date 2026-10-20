@@ -379,6 +379,73 @@ impl FromStr for ApiType {
     }
 }
 
+/// Metadata describing a model discovered from an upstream provider endpoint.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscoveredModel {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at_unix: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
+}
+
+impl DiscoveredModel {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            display_name: None,
+            created_at_unix: None,
+            owned_by: None,
+        }
+    }
+
+    /// Whether this model appears to be a conversational / coding / reasoning model,
+    /// filtering out non-completion utility models (embeddings, tts, whisper, dall-e, moderation).
+    pub fn is_chat_completion_candidate(&self) -> bool {
+        is_chat_completion_candidate(&self.id)
+    }
+}
+
+/// Filter heuristic for candidate conversational / completion models.
+pub fn is_chat_completion_candidate(model_id: &str) -> bool {
+    let lower = model_id.to_ascii_lowercase();
+    let excludes = [
+        "embedding",
+        "embed",
+        "whisper",
+        "tts-",
+        "dall-e",
+        "moderation",
+        "transcription",
+        "canary",
+        "babbage",
+        "davinci",
+        "audio",
+        "rerank",
+        "imagen",
+    ];
+    !excludes.iter().any(|ex| lower.contains(ex))
+}
+
+/// Sort discovered models prioritizing chat completion candidates, followed by
+/// newer creation timestamp and identifier order.
+pub fn sort_discovered_models(models: &mut [DiscoveredModel]) {
+    models.sort_by(|a, b| {
+        let a_chat = a.is_chat_completion_candidate();
+        let b_chat = b.is_chat_completion_candidate();
+        match (a_chat, b_chat) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => match (b.created_at_unix, a.created_at_unix) {
+                (Some(bt), Some(at)) if bt != at => bt.cmp(&at),
+                _ => a.id.cmp(&b.id),
+            },
+        }
+    });
+}
+
 /// Bidirectional codec for one provider API dialect.
 ///
 /// A codec owns the entire request/response mapping, including messages,
@@ -471,6 +538,12 @@ impl ApiProviderConfig {
     pub fn with_chatgpt_credentials(mut self, path: impl Into<PathBuf>) -> Self {
         self.chatgpt_credentials = Some(path.into());
         self
+    }
+
+    /// Discover available models from the configured upstream provider endpoint.
+    pub async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let provider = ApiModelProvider::new(self.clone())?;
+        provider.discover_models().await
     }
 }
 
@@ -647,6 +720,15 @@ impl ApiModelProvider {
             Self::OpenAiResponses(_) => ApiType::OpenAiResponses,
             Self::AnthropicMessages(_) => ApiType::AnthropicMessages,
             Self::GeminiGenerateContent(_) => ApiType::GeminiGenerateContent,
+        }
+    }
+
+    pub async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        match self {
+            Self::OpenAiChatCompletions(adapter) => adapter.discover_models().await,
+            Self::OpenAiResponses(adapter) => adapter.discover_models().await,
+            Self::AnthropicMessages(adapter) => adapter.discover_models().await,
+            Self::GeminiGenerateContent(adapter) => adapter.discover_models().await,
         }
     }
 }
@@ -935,6 +1017,31 @@ impl OpenAiModelProvider {
         format!("{}/chat/completions", self.config.base_url)
     }
 
+    pub async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let endpoint = format!("{}/models", self.config.base_url);
+        let response = self
+            .client
+            .get(&endpoint)
+            .bearer_auth(&self.config.api_key)
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderError::new(format!("OpenAI models request failed: {error}"))
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let detail = openai_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+            return Err(ProviderError::new(format!(
+                "OpenAI endpoint rejected models request: {detail}"
+            )));
+        }
+        let json: serde_json::Value = response.json().await.map_err(|error| {
+            ProviderError::new(format!("invalid JSON from models endpoint: {error}"))
+        })?;
+        parse_openai_models_response(&json)
+    }
+
     #[cfg(test)]
     fn map_request(&self, request: &ModelRunRequest) -> Result<OpenAiChatRequest, ProviderError> {
         let mut prepared = compile_runtime_request(request, &self.config.model);
@@ -1195,6 +1302,53 @@ impl OpenAiResponsesModelProvider {
 
     fn endpoint(&self) -> String {
         format!("{}/responses", self.config.base_url)
+    }
+
+    pub async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let endpoint = format!("{}/models", self.config.base_url);
+        let chatgpt_token = self.chatgpt_access_token().await?;
+        let is_chatgpt_auth = self.config.chatgpt_credentials.is_some();
+        let mut builder = self.client.get(&endpoint);
+        builder = builder.bearer_auth(chatgpt_token.as_deref().unwrap_or(&self.config.api_key));
+        let response = match builder.send().await {
+            Ok(resp) => resp,
+            Err(error) => {
+                if is_chatgpt_auth {
+                    return Ok(default_chatgpt_models());
+                }
+                return Err(ProviderError::new(format!(
+                    "OpenAI Responses models request failed: {error}"
+                )));
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            if is_chatgpt_auth {
+                return Ok(default_chatgpt_models());
+            }
+            let body = response.text().await.unwrap_or_default();
+            let detail = openai_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+            return Err(ProviderError::new(format!(
+                "OpenAI Responses endpoint rejected models request: {detail}"
+            )));
+        }
+        let json: serde_json::Value = match response.json().await {
+            Ok(j) => j,
+            Err(error) => {
+                if is_chatgpt_auth {
+                    return Ok(default_chatgpt_models());
+                }
+                return Err(ProviderError::new(format!(
+                    "invalid JSON from models endpoint: {error}"
+                )));
+            }
+        };
+        match parse_openai_models_response(&json) {
+            Ok(models) if !models.is_empty() => Ok(models),
+            Ok(_) | Err(_) if is_chatgpt_auth => Ok(default_chatgpt_models()),
+            Ok(models) => Ok(models),
+            Err(e) => Err(e),
+        }
     }
 
     async fn chatgpt_access_token(&self) -> Result<Option<String>, ProviderError> {
@@ -1656,6 +1810,37 @@ impl AnthropicModelProvider {
         } else {
             format!("{}/v1/messages", self.config.base_url)
         }
+    }
+
+    pub async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let endpoint = if self.config.base_url.ends_with("/v1") {
+            format!("{}/models", self.config.base_url)
+        } else {
+            format!("{}/v1/models", self.config.base_url)
+        };
+        let response = self
+            .client
+            .get(&endpoint)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderError::new(format!("Anthropic models request failed: {error}"))
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::new(format!(
+                "Anthropic endpoint rejected models request: HTTP {status} {body}"
+            )));
+        }
+        let json: serde_json::Value = response.json().await.map_err(|error| {
+            ProviderError::new(format!(
+                "invalid JSON from Anthropic models endpoint: {error}"
+            ))
+        })?;
+        parse_anthropic_models_response(&json)
     }
     fn capture(
         &mut self,
@@ -2269,6 +2454,28 @@ impl GeminiGenerateContentModelProvider {
             "{}/models/{}:{action}",
             self.config.base_url, self.config.model
         )
+    }
+
+    pub async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let endpoint = format!(
+            "{}/models?key={}",
+            self.config.base_url.trim_end_matches('/'),
+            self.config.api_key
+        );
+        let response = self.client.get(&endpoint).send().await.map_err(|error| {
+            ProviderError::new(format!("Gemini models request failed: {error}"))
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::new(format!(
+                "Gemini endpoint rejected models request: HTTP {status} {body}"
+            )));
+        }
+        let json: serde_json::Value = response.json().await.map_err(|error| {
+            ProviderError::new(format!("invalid JSON from Gemini models endpoint: {error}"))
+        })?;
+        parse_gemini_models_response(&json)
     }
     fn capture(
         &mut self,
@@ -3948,6 +4155,132 @@ fn openai_error_message(body: &str) -> Option<String> {
         .map(|envelope| envelope.error.message)
 }
 
+pub fn default_chatgpt_models() -> Vec<DiscoveredModel> {
+    vec![
+        DiscoveredModel {
+            id: "gpt-6.1-sol".to_owned(),
+            display_name: Some("GPT-6.1 Sol (ChatGPT)".to_owned()),
+            created_at_unix: None,
+            owned_by: Some("openai".to_owned()),
+        },
+        DiscoveredModel {
+            id: "gpt-4o".to_owned(),
+            display_name: Some("GPT-4o".to_owned()),
+            created_at_unix: None,
+            owned_by: Some("openai".to_owned()),
+        },
+        DiscoveredModel {
+            id: "gpt-4o-mini".to_owned(),
+            display_name: Some("GPT-4o mini".to_owned()),
+            created_at_unix: None,
+            owned_by: Some("openai".to_owned()),
+        },
+        DiscoveredModel {
+            id: "o1".to_owned(),
+            display_name: Some("o1".to_owned()),
+            created_at_unix: None,
+            owned_by: Some("openai".to_owned()),
+        },
+        DiscoveredModel {
+            id: "o3-mini".to_owned(),
+            display_name: Some("o3-mini".to_owned()),
+            created_at_unix: None,
+            owned_by: Some("openai".to_owned()),
+        },
+    ]
+}
+
+fn parse_openai_models_response(
+    json: &serde_json::Value,
+) -> Result<Vec<DiscoveredModel>, ProviderError> {
+    let items = json
+        .get("data")
+        .or_else(|| json.get("models"))
+        .or_else(|| json.get("categories"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            ProviderError::new("OpenAI models response missing 'data' or 'models' array")
+        })?;
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        let id = item
+            .get("id")
+            .or_else(|| item.get("slug"))
+            .or_else(|| item.get("model"))
+            .and_then(serde_json::Value::as_str);
+        if let Some(id) = id {
+            let display_name = item
+                .get("display_name")
+                .or_else(|| item.get("title"))
+                .or_else(|| item.get("name"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            result.push(DiscoveredModel {
+                id: id.to_owned(),
+                display_name,
+                created_at_unix: item.get("created").and_then(serde_json::Value::as_i64),
+                owned_by: item
+                    .get("owned_by")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+            });
+        }
+    }
+    sort_discovered_models(&mut result);
+    Ok(result)
+}
+
+fn parse_anthropic_models_response(
+    json: &serde_json::Value,
+) -> Result<Vec<DiscoveredModel>, ProviderError> {
+    let items = json
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| ProviderError::new("Anthropic models response missing 'data' array"))?;
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        if let Some(id) = item.get("id").and_then(serde_json::Value::as_str) {
+            result.push(DiscoveredModel {
+                id: id.to_owned(),
+                display_name: item
+                    .get("display_name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                created_at_unix: None,
+                owned_by: Some("anthropic".to_owned()),
+            });
+        }
+    }
+    sort_discovered_models(&mut result);
+    Ok(result)
+}
+
+fn parse_gemini_models_response(
+    json: &serde_json::Value,
+) -> Result<Vec<DiscoveredModel>, ProviderError> {
+    let items = json
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| ProviderError::new("Gemini models response missing 'models' array"))?;
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        if let Some(name) = item.get("name").and_then(serde_json::Value::as_str) {
+            let id = name.strip_prefix("models/").unwrap_or(name);
+            result.push(DiscoveredModel {
+                id: id.to_owned(),
+                display_name: item
+                    .get("displayName")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                created_at_unix: None,
+                owned_by: Some("google".to_owned()),
+            });
+        }
+    }
+    sort_discovered_models(&mut result);
+    Ok(result)
+}
+
 /// Deterministic model provider used by smoke tests and protocol demonstrations.
 #[derive(Debug, Default)]
 pub struct EchoModel {
@@ -5587,5 +5920,123 @@ mod tests {
         assert_eq!(response.usage.input_tokens, 6);
         assert_eq!(response.usage.output_tokens, 2);
         assert_eq!(response.provider_state, None);
+    }
+
+    #[tokio::test]
+    async fn openai_provider_discovers_and_ranks_models() {
+        use axum::routing::get;
+
+        async fn list_models() -> Json<Value> {
+            Json(json!({
+                "data": [
+                    {"id": "gpt-4o", "created": 100, "owned_by": "system"},
+                    {"id": "text-embedding-3-small", "created": 200, "owned_by": "system"},
+                    {"id": "gpt-4o-mini", "created": 150, "owned_by": "system"}
+                ]
+            }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock endpoint binds");
+        let address = listener.local_addr().expect("mock address exists");
+        let app = Router::new().route("/models", get(list_models));
+        tokio::spawn(async move {
+            serve(listener, app).await.expect("mock endpoint serves");
+        });
+
+        let config = ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "test-key",
+            format!("http://{address}"),
+            "gpt-4o",
+        );
+        let discovered = config.discover_models().await.expect("discovery succeeds");
+        assert_eq!(discovered.len(), 3);
+        // Chat models sorted first, and newer creation timestamp first
+        assert_eq!(discovered[0].id, "gpt-4o-mini");
+        assert!(discovered[0].is_chat_completion_candidate());
+        assert_eq!(discovered[1].id, "gpt-4o");
+        assert!(discovered[1].is_chat_completion_candidate());
+        assert_eq!(discovered[2].id, "text-embedding-3-small");
+        assert!(!discovered[2].is_chat_completion_candidate());
+    }
+
+    #[tokio::test]
+    async fn anthropic_provider_discovers_models() {
+        use axum::routing::get;
+
+        async fn list_models() -> Json<Value> {
+            Json(json!({
+                "data": [
+                    {
+                        "id": "claude-3-7-sonnet-20250219",
+                        "display_name": "Claude 3.7 Sonnet"
+                    }
+                ]
+            }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock endpoint binds");
+        let address = listener.local_addr().expect("mock address exists");
+        let app = Router::new().route("/v1/models", get(list_models));
+        tokio::spawn(async move {
+            serve(listener, app).await.expect("mock endpoint serves");
+        });
+
+        let config = ApiProviderConfig::new(
+            ApiType::AnthropicMessages,
+            "test-key",
+            format!("http://{address}"),
+            "claude-3-7-sonnet-20250219",
+        );
+        let discovered = config.discover_models().await.expect("discovery succeeds");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].id, "claude-3-7-sonnet-20250219");
+        assert_eq!(
+            discovered[0].display_name.as_deref(),
+            Some("Claude 3.7 Sonnet")
+        );
+    }
+
+    #[tokio::test]
+    async fn gemini_provider_discovers_models() {
+        use axum::routing::get;
+
+        async fn list_models() -> Json<Value> {
+            Json(json!({
+                "models": [
+                    {
+                        "name": "models/gemini-2.0-flash",
+                        "displayName": "Gemini 2.0 Flash"
+                    }
+                ]
+            }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock endpoint binds");
+        let address = listener.local_addr().expect("mock address exists");
+        let app = Router::new().route("/models", get(list_models));
+        tokio::spawn(async move {
+            serve(listener, app).await.expect("mock endpoint serves");
+        });
+
+        let config = ApiProviderConfig::new(
+            ApiType::GeminiGenerateContent,
+            "test-key",
+            format!("http://{address}"),
+            "gemini-2.0-flash",
+        );
+        let discovered = config.discover_models().await.expect("discovery succeeds");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].id, "gemini-2.0-flash");
+        assert_eq!(
+            discovered[0].display_name.as_deref(),
+            Some("Gemini 2.0 Flash")
+        );
     }
 }

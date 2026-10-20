@@ -32,6 +32,7 @@ final class ConfigEditor: ObservableObject {
     @Published var mcpServers: [MCPServerItem] = []
     @Published var skillRoots: [SkillRootItem] = []
     @Published var discoveredSkills: [DiscoveredSkillItem] = []
+    @Published var isSyncingModels = false
 
     var modelsForSelectedProvider: [String] {
         modelOptions.filter { modelProviders[$0] == providerName }
@@ -192,6 +193,37 @@ final class ConfigEditor: ObservableObject {
         runChatGPTAuth(arguments: ["chatgpt-logout"], successMessage: "ChatGPT disconnected.")
     }
 
+    func syncModels(provider: String? = nil) {
+        guard !isSyncingModels else { return }
+        guard let executable = Self.arabicaExecutableURL() else {
+            status = "Arabica executable was not found. Set ARABICA_EXECUTABLE or rebuild the desktop app."
+            return
+        }
+        isSyncingModels = true
+        var args = ["models", "sync"]
+        let targetProvider = provider ?? (providerName.isEmpty ? nil : providerName)
+        if let target = targetProvider {
+            args.append(contentsOf: ["--provider", target])
+        }
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Self.runCliCommand(executable: executable, arguments: args)
+            }.value
+            guard let self else { return }
+            self.isSyncingModels = false
+            if result.status == 0 {
+                self.reload()
+                if self.modelOptions.contains(self.policyDefaultModel) {
+                    self.selectModel(self.policyDefaultModel)
+                }
+                self.status = "Models synchronized with provider successfully."
+            } else {
+                let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.status = detail.isEmpty ? "Model sync failed (exit \(result.status))." : detail
+            }
+        }
+    }
+
     private func runChatGPTAuth(arguments: [String], successMessage: String) {
         guard !isChatGPTAuthRunning else { return }
         guard let executable = Self.arabicaExecutableURL() else {
@@ -201,7 +233,7 @@ final class ConfigEditor: ObservableObject {
         isChatGPTAuthRunning = true
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                Self.runAuthCommand(executable: executable, arguments: arguments)
+                Self.runCliCommand(executable: executable, arguments: ["auth"] + arguments)
             }.value
             guard let self else { return }
             self.isChatGPTAuthRunning = false
@@ -230,10 +262,10 @@ final class ConfigEditor: ObservableObject {
         return nil
     }
 
-    nonisolated private static func runAuthCommand(executable: URL, arguments: [String]) -> (status: Int32, output: String) {
+    nonisolated private static func runCliCommand(executable: URL, arguments: [String]) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["auth"] + arguments
+        process.arguments = arguments
         var environment = ProcessInfo.processInfo.environment
         if environment["ARABICA_HOME"] == nil {
             environment["ARABICA_HOME"] = FileManager.default.homeDirectoryForCurrentUser
@@ -251,6 +283,10 @@ final class ConfigEditor: ObservableObject {
         } catch {
             return (1, error.localizedDescription)
         }
+    }
+
+    nonisolated private static func runAuthCommand(executable: URL, arguments: [String]) -> (status: Int32, output: String) {
+        runCliCommand(executable: executable, arguments: ["auth"] + arguments)
     }
 
     private static func hasChatGPTCredentials(at home: URL) -> Bool {
