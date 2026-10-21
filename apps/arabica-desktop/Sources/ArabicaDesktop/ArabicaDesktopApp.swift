@@ -456,9 +456,15 @@ struct DesktopView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: model.workspace == nil ? "folder.badge.gearshape" : "sparkles")
-                .font(.system(size: 36))
-                .foregroundStyle(Palette.accent.opacity(0.85))
+            if let image = ArabicaBrandAsset.image {
+                Image(nsImage: image)
+                    .resizable()
+                    .renderingMode(.original)
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 48, height: 48)
+                    .accessibilityLabel("Arabica")
+            }
 
             Text(
                 model.isConnecting

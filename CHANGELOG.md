@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Use the official Arabica app icon on the desktop welcome screen.
 - Adopt native split navigation and system toolbars in Settings, and build desktop artifacts with Xcode 27.1 / macOS 27.0 SDK to enable the current system appearance while supporting macOS 14 and Intel Macs.
 - Replace desktop settings overview cards with category navigation, item lists, and editable native forms, backed by validated automatic configuration saving.
 - Preserve existing credentials, comments, and advanced settings while detecting conflicting external edits and retaining invalid form drafts.
