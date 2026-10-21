@@ -33,6 +33,7 @@ enum FixtureMode {
     Modern { sse: bool },
     Legacy { probe_status: StatusCode },
     UnsupportedVersion,
+    NoTools,
 }
 
 #[derive(Clone)]
@@ -199,7 +200,7 @@ async fn http_request(
                 )
                     .into_response();
             }
-            FixtureMode::Modern { .. } => {}
+            FixtureMode::Modern { .. } | FixtureMode::NoTools => {}
         }
     }
     if rpc_method == "notifications/initialized" {
@@ -233,6 +234,11 @@ async fn http_request(
         FixtureMode::Modern { .. } => stateless_result(&request, backend),
         FixtureMode::Legacy { .. } => legacy_result(&request),
         FixtureMode::UnsupportedVersion => None,
+        FixtureMode::NoTools if rpc_method == "server/discover" => Some(json!({
+            "resultType": "complete", "supportedVersions": [MODERN_VERSION],
+            "capabilities": {"resources": {}}, "ttlMs": 0, "cacheScope": "private"
+        })),
+        FixtureMode::NoTools => None,
     };
     let Some(result) = result else {
         return StatusCode::NOT_FOUND.into_response();
@@ -351,6 +357,16 @@ fn output_json(response: &ToolExecutionResult) -> Value {
         })
         .expect("serialized MCP result");
     serde_json::from_str(text).expect("result JSON")
+}
+
+#[tokio::test]
+async fn servers_without_tools_do_not_receive_undeclared_discovery_requests() {
+    let fixture = HttpFixture::start(FixtureMode::NoTools).await;
+    let tools = connect(&fixture).await;
+    assert!(tools.definitions().is_empty());
+    let requests = fixture.observed();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body["method"], "server/discover");
 }
 
 #[tokio::test]

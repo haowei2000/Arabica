@@ -168,10 +168,19 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
     if name.is_empty() {
         return Err("MCP server name must not be empty".to_owned());
     }
-    let tools = tokio::time::timeout(std::time::Duration::from_secs(15), client.list_all_tools())
-        .await
-        .map_err(|_| format!("MCP server '{name}' tool discovery timed out"))?
-        .map_err(|error| format!("MCP server '{name}' tool discovery failed: {error}"))?;
+    let tools = if client
+        .peer_info()
+        .is_some_and(|info| info.capabilities.tools.is_some())
+    {
+        tokio::time::timeout(std::time::Duration::from_secs(15), client.list_all_tools())
+            .await
+            .map_err(|_| format!("MCP server '{name}' tool discovery timed out"))?
+            .map_err(|error| format!("MCP server '{name}' tool discovery failed: {error}"))?
+    } else {
+        // A valid server may expose only resources or prompts. Do not send an
+        // undeclared tools/list request or fail the entire ACP session.
+        Vec::new()
+    };
     Ok(Connected {
         name,
         client,
