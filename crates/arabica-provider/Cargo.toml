@@ -15,8 +15,8 @@ reqwest.workspace = true
 fs2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-arabica-model = { version = "0.8.0", path = "../arabica-model" }
-arabica-protocol = { version = "0.8.0", path = "../arabica-protocol" }
+arabica-model = { version = "0.8.1", path = "../arabica-model" }
+arabica-protocol = { version = "0.8.1", path = "../arabica-protocol" }
 tokio.workspace = true
 uuid.workspace = true
 url.workspace = true

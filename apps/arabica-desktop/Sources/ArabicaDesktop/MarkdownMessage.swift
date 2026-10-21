@@ -466,17 +466,31 @@ private struct MarkdownTableWidthKey: PreferenceKey {
 enum MarkdownTableSizing {
     static func columnWidths(headers: [String], rows: [[String]], availableWidth: CGFloat, fontSize: CGFloat) -> [CGFloat] {
         let font = NSFont.systemFont(ofSize: fontSize)
-        let widths = headers.indices.map { index in
-            ([headers[index]] + rows.compactMap { $0.indices.contains(index) ? $0[index] : nil })
-                .flatMap { $0.components(separatedBy: "\n") }
-                .map { ($0 as NSString).size(withAttributes: [.font: font]).width + 20 }
-                .max().map { min(340, max(76, ceil($0))) } ?? 76
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let minimumColumnWidth: CGFloat = 76
+        let maximumColumnWidth: CGFloat = 340
+        let horizontalPadding: CGFloat = 20
+        var widths: [CGFloat] = []
+        for index in headers.indices {
+            let bodyCells: [String] = rows.compactMap { row -> String? in
+                row.indices.contains(index) ? row[index] : nil
+            }
+            let cells: [String] = [headers[index]] + bodyCells
+            var maximumLineWidth: CGFloat = 0
+            for cell in cells {
+                for line in cell.components(separatedBy: "\n") {
+                    let measuredWidth: CGFloat = (line as NSString).size(withAttributes: attributes).width
+                    maximumLineWidth = max(maximumLineWidth, measuredWidth + horizontalPadding)
+                }
+            }
+            let preferredWidth: CGFloat = ceil(maximumLineWidth)
+            widths.append(min(maximumColumnWidth, max(minimumColumnWidth, preferredWidth)))
         }
         let preferred = widths.reduce(0, +)
-        let minimum = CGFloat(widths.count) * 76
+        let minimum = CGFloat(widths.count) * minimumColumnWidth
         guard availableWidth >= minimum, preferred > availableWidth, preferred > minimum else { return widths }
         let ratio = (availableWidth - minimum) / (preferred - minimum)
-        return widths.map { 76 + ($0 - 76) * ratio }
+        return widths.map { minimumColumnWidth + ($0 - minimumColumnWidth) * ratio }
     }
 }
 
