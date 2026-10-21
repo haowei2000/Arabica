@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 — 2026-10-21
+
+- Fix SOE model and thinking selection with one native macOS Policy menu, preserving confirmed values and conversation scope while menus are open.
+- Remove repeated main-thread session sorting and ISO 8601 formatter construction by caching the project index and parsing each timestamp once per index update.
+- Reuse Markdown block and inline parsing with bounded in-memory caches, reducing repeated work when reading long conversations.
+
 ## 0.8.1 — 2026-10-21
 
 - Fix Markdown table sizing compilation with the release Swift toolchain and validate optimized desktop builds in CI.
