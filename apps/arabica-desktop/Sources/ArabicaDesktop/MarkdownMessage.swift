@@ -316,13 +316,14 @@ struct MarkdownBlock: Equatable {
     }
 }
 
+@MainActor
 struct MarkdownMessage: View {
     let text: String
     var nestingDepth = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(MarkdownRenderCache.shared.blocks(for: text).enumerated()), id: \.offset) { _, block in
                 switch block.kind {
                 case .paragraph:
                     inline(block.text)
@@ -374,8 +375,7 @@ struct MarkdownMessage: View {
     }
 
     private func inline(_ source: String) -> some View {
-        let content = (try? AttributedString(markdown: source, options: .init(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source)
+        let content: AttributedString = MarkdownRenderCache.shared.inline(for: source)
         return Text(content)
             .foregroundStyle(Palette.ink)
             .textSelection(.enabled)
@@ -389,6 +389,7 @@ struct MarkdownMessage: View {
     }
 }
 
+@MainActor
 private struct MarkdownTableView: View {
     let headers: [String]
     let rows: [[String]]
@@ -452,8 +453,7 @@ private struct MarkdownTableView: View {
     }
 
     private func inline(_ source: String) -> some View {
-        let content = (try? AttributedString(markdown: source, options: .init(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source)
+        let content: AttributedString = MarkdownRenderCache.shared.inline(for: source)
         return Text(content).foregroundStyle(Palette.ink).textSelection(.enabled)
     }
 }

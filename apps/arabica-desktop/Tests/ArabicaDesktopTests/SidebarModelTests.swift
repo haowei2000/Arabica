@@ -191,6 +191,72 @@ final class SidebarModelTests: XCTestCase {
         XCTAssertEqual(model.projectGroups.first?.sessions.first?.id, "older")
     }
 
+    func testCachedProjectGroupsReflectSessionTitlePathDateAndRemovalChanges() throws {
+        let model = model()
+        model.sessions = [
+            DesktopSession(id: "a", cwd: "/tmp/project-a", title: "A", updatedAt: "2026-10-20T00:00:00Z"),
+            DesktopSession(id: "b", cwd: "/tmp/project-a", title: "B", updatedAt: "2026-10-19T00:00:00Z"),
+        ]
+        XCTAssertEqual(model.projectGroups.first?.sessions.map(\.id), ["a", "b"])
+
+        model.sessions[1].title = "Renamed B"
+        XCTAssertEqual(model.projectGroups.first?.sessions.last?.title, "Renamed B")
+        model.sessions[1].updatedAt = "2026-10-21T00:00:00.250Z"
+        XCTAssertEqual(model.projectGroups.first?.sessions.map(\.id), ["b", "a"])
+
+        model.sessions[1] = DesktopSession(id: "b", cwd: "/tmp/project-b", title: "Moved B")
+        XCTAssertEqual(model.projectGroups.first?.sessions.map(\.id), ["a"])
+        let moved = try XCTUnwrap(model.projectGroups.first { $0.path == "/tmp/project-b" })
+        XCTAssertEqual(moved.sessions.map(\.title), ["Moved B"])
+        model.sessions.removeAll { $0.id == "b" }
+        XCTAssertFalse(model.projectGroups.contains { $0.path == "/tmp/project-b" })
+    }
+
+    func testCachedProjectGroupsReflectActiveWorkspaceAndEmptyWorkspaceChanges() {
+        let model = model()
+        XCTAssertEqual(model.projectGroups.first?.path, "/tmp/project-a")
+        model.workspace = URL(fileURLWithPath: "/tmp/project-b")
+        XCTAssertEqual(model.projectGroups.first?.path, "/tmp/project-b")
+        model.workspace = URL(fileURLWithPath: "/tmp/empty")
+        XCTAssertEqual(model.projectGroups.first?.path, "/tmp/empty")
+        XCTAssertEqual(model.projectGroups.first?.sessions.count, 0)
+        model.workspace = nil
+        XCTAssertEqual(model.projectGroups.map(\.path), ["/tmp/project-a", "/tmp/project-b"])
+    }
+
+    func testCachedProjectGroupsReflectAddedHiddenAndRestoredLibraryProjects() {
+        let model = model()
+        XCTAssertEqual(model.projectGroups.count, 2)
+        model.sidebarLibrary.addProject("/tmp/empty")
+        XCTAssertTrue(model.projectGroups.contains { $0.path == "/tmp/empty" })
+        model.sidebarLibrary.removeProject("/tmp/project-b")
+        XCTAssertFalse(model.projectGroups.contains { $0.path == "/tmp/project-b" })
+        XCTAssertTrue(model.sessions.contains { $0.id == "b" })
+        model.sidebarLibrary.addProject("/tmp/project-b")
+        XCTAssertEqual(model.projectGroups.first { $0.path == "/tmp/project-b" }?.sessions.map(\.id), ["b"])
+        model.sidebarLibrary.removeProject("/tmp/empty")
+        XCTAssertFalse(model.projectGroups.contains { $0.path == "/tmp/empty" })
+    }
+
+    func testProjectGroupsPreserveEqualDateOrderAndHandleBothISO8601Formats() {
+        let model = model()
+        model.sessions = [
+            DesktopSession(
+                id: "equal-first", cwd: "/tmp/project-a", title: "First", updatedAt: "2026-10-21T12:00:00+02:00"),
+            DesktopSession(
+                id: "fractional", cwd: "/tmp/project-a", title: "Recent", updatedAt: "2026-10-21T10:00:00.125Z"),
+            DesktopSession(
+                id: "equal-second", cwd: "/tmp/project-a", title: "Second", updatedAt: "2026-10-21T10:00:00.000Z"),
+            DesktopSession(id: "invalid", cwd: "/tmp/project-a", title: "Invalid", updatedAt: "not-a-date"),
+            DesktopSession(id: "missing", cwd: "/tmp/project-a", title: "Missing"),
+        ]
+        let expected = ["fractional", "equal-first", "equal-second", "invalid", "missing"]
+        XCTAssertEqual(model.projectGroups.first?.sessions.map(\.id), expected)
+        model.draft = "Typing must not reorder the sidebar"
+        model.items = [ChatItem(kind: .assistant, text: "Streaming output")]
+        XCTAssertEqual(model.projectGroups.first?.sessions.map(\.id), expected)
+    }
+
     func testEmptyProjectsSurviveSwitchingAndRemovingOnlyHidesTheirGroup() {
         let model = model()
         model.activateProject("/tmp/empty")

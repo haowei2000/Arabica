@@ -158,97 +158,41 @@ struct ComposerView: View {
     }
 
     private var policyControl: some View {
-        ViewThatFits(in: .horizontal) {
-            policyMenu.fixedSize(horizontal: true, vertical: true)
-            policyMenu.frame(maxWidth: 280, alignment: .leading)
-        }
-    }
-
-    private var policyMenu: some View {
+        let contextID = model.selectedSessionID
         let selection = policySelection
         let feedback = model.composerConfigurationFeedback
         let failureDetail = feedback.flatMap { $0.kind == .failed ? $0.detail : nil }
-        return Menu {
-            if let policy = selection.policy {
-                configurationChoices(policy)
-            } else if selection.hasOptions {
-                Label("SOE", systemImage: "checkmark")
-            }
-
-            if selection.isSOE, let option = selection.model {
-                Divider()
-                Menu {
-                    configurationChoices(option)
-                    if let thinking = selection.thinking {
-                        Divider()
-                        Menu("Thinking Level: \(thinking.currentName)") {
-                            configurationChoices(thinking)
-                        }
-                    }
-                } label: {
-                    Text("SOE Model: \(option.currentName)")
-                }
-            }
-
-            if !model.availableSessionModes.isEmpty {
-                Divider()
-                Menu("Session Mode") {
-                    ForEach(Array(model.availableSessionModes.enumerated()), id: \.offset) { _, mode in
-                        if let id = mode["id"] as? String {
-                            Button {
-                                Task { await model.setSessionMode(id) }
-                            } label: {
-                                if id == model.currentModeID {
-                                    Label(mode["name"] as? String ?? id, systemImage: "checkmark")
-                                } else {
-                                    Text(mode["name"] as? String ?? id)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                if model.isUpdatingSessionConfiguration {
-                    ProgressView().controlSize(.mini)
-                } else if feedback?.kind == .failed {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
-                }
-                Text(selection.hasOptions ? "Policy: \(selection.currentName)" : "Policy")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .foregroundStyle(Palette.ink)
-            .font(AppFont.sans(11, weight: .medium))
-            .padding(.horizontal, 4)
-            .frame(height: 28)
-            .frame(maxWidth: 280, alignment: .leading)
+        let modes = model.availableSessionModes.compactMap { raw -> ComposerPolicyMenuMode? in
+            guard let id = raw["id"] as? String else { return nil }
+            return ComposerPolicyMenuMode(id: id, name: raw["name"] as? String ?? id)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
-        .fixedSize(horizontal: false, vertical: true)
-        .disabled(!selection.hasOptions || !model.canChangeSessionConfiguration)
+        return HStack(spacing: 5) {
+            if model.isUpdatingSessionConfiguration {
+                ProgressView().controlSize(.mini)
+            } else if feedback?.kind == .failed {
+                Image(systemName: "exclamationmark.circle")
+                    .foregroundStyle(.orange)
+            }
+            ComposerPolicyMenu(
+                state: ComposerPolicyMenuState(
+                    contextID: contextID, selection: selection, modes: modes,
+                    currentModeID: model.currentModeID, isEnabled: model.canChangeSessionConfiguration,
+                    help: failureDetail ?? selection.help),
+                onSelectConfiguration: { id, value in
+                    Task {
+                        guard model.selectedSessionID == contextID else { return }
+                        await model.setConfigOption(id, value: value)
+                    }
+                },
+                onSelectMode: { id in
+                    Task {
+                        guard model.selectedSessionID == contextID else { return }
+                        await model.setSessionMode(id)
+                    }
+                })
+        }
+        .frame(maxWidth: 280, alignment: .leading)
         .help(failureDetail ?? selection.help)
-        .accessibilityLabel(selection.hasOptions ? "Policy: \(selection.currentName)" : "Policy")
-        .accessibilityHint(selection.help)
-    }
-
-    @ViewBuilder
-    private func configurationChoices(_ option: ComposerConfigurationOption) -> some View {
-        ForEach(option.choices) { choice in
-            Button {
-                Task { await model.setConfigOption(option.id, value: choice.value) }
-            } label: {
-                let title = choice.group.map { "\($0) · \(choice.name)" } ?? choice.name
-                if choice.value == option.currentValue {
-                    Label(title, systemImage: "checkmark")
-                } else {
-                    Text(title)
-                }
-            }
-        }
     }
 
     private var canPerformPrimaryAction: Bool {

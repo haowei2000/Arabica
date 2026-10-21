@@ -153,6 +153,22 @@ final class DesktopModel: ObservableObject {
     private let activityOwner = UUID()
     private var isClosed = false
     private var sessionMutationGeneration = UUID()
+    private var cachedProjectGroups: ProjectGroupsCache?
+
+    private struct ProjectGroupsCache {
+        let sessionGeneration: UUID
+        let projectPaths: [String]
+        let hiddenProjectPaths: Set<String>
+        let workspacePath: String?
+        let groups: [ProjectGroup]
+    }
+
+    private static let activityFormatter = ISO8601DateFormatter()
+    private static let fractionalActivityFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     init(
         restoreWorkspace: Bool = true, sessionRequest: SessionRequest? = nil,
@@ -420,13 +436,11 @@ final class DesktopModel: ObservableObject {
         }
     }
 
-    private static func activityTimestamp() -> String { ISO8601DateFormatter().string(from: Date()) }
+    private static func activityTimestamp() -> String { activityFormatter.string(from: Date()) }
 
     private static func activityDate(_ timestamp: String?) -> Date? {
         guard let timestamp else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: timestamp) ?? ISO8601DateFormatter().date(from: timestamp)
+        return fractionalActivityFormatter.date(from: timestamp) ?? activityFormatter.date(from: timestamp)
     }
 
     private func touchSession(_ id: String) {
@@ -544,38 +558,46 @@ final class DesktopModel: ObservableObject {
     }
 
     var projectGroups: [ProjectGroup] {
-        var map: [String: (path: String, sessions: [DesktopSession])] = [:]
+        let projectPaths = sidebarLibrary.projectPaths
+        let hiddenProjectPaths = sidebarLibrary.hiddenProjectPaths
+        let activePath = workspace?.standardizedFileURL.path
+        if let cachedProjectGroups,
+            cachedProjectGroups.sessionGeneration == sessionMutationGeneration,
+            cachedProjectGroups.projectPaths == projectPaths,
+            cachedProjectGroups.hiddenProjectPaths == hiddenProjectPaths,
+            cachedProjectGroups.workspacePath == activePath
+        {
+            return cachedProjectGroups.groups
+        }
+
+        // Model updates include every draft edit and streamed chunk. Reuse the sidebar
+        // index until its own inputs change, and parse dates outside the sort comparator.
+        var map: [String: [(session: DesktopSession, activity: Date)]] = [:]
         for session in sessions {
             let path = URL(fileURLWithPath: session.cwd).standardizedFileURL.path
-            guard !sidebarLibrary.hiddenProjectPaths.contains(path) else { continue }
-            if map[path] == nil {
-                map[path] = (path: path, sessions: [])
-            }
-            map[path]?.sessions.append(session)
+            guard !hiddenProjectPaths.contains(path) else { continue }
+            map[path, default: []].append((session, Self.activityDate(session.updatedAt) ?? .distantPast))
         }
-        for path in sidebarLibrary.projectPaths where !sidebarLibrary.hiddenProjectPaths.contains(path) {
-            if map[path] == nil { map[path] = (path: path, sessions: []) }
+        for path in projectPaths where !hiddenProjectPaths.contains(path) {
+            if map[path] == nil { map[path] = [] }
         }
-        if let currentWorkspace = workspace {
-            let path = currentWorkspace.standardizedFileURL.path
-            if map[path] == nil {
-                map[path] = (path: path, sessions: [])
-            }
-        }
-        var groups = map.map { (_, value) in
+        if let activePath, map[activePath] == nil { map[activePath] = [] }
+        var groups = map.map { path, entries in
             ProjectGroup(
-                name: Self.projectName(for: value.path), path: value.path,
-                sessions: value.sessions.sorted {
-                    (Self.activityDate($0.updatedAt) ?? .distantPast)
-                        > (Self.activityDate($1.updatedAt) ?? .distantPast)
-                })
+                name: Self.projectName(for: path), path: path,
+                sessions: entries.sorted { $0.activity > $1.activity }.map(\.session))
         }
-        let activePath = workspace?.standardizedFileURL.path
         groups.sort { a, b in
             if (a.path == activePath) != (b.path == activePath) { return a.path == activePath }
             let order = a.name.localizedStandardCompare(b.name)
             return order == .orderedSame ? a.path < b.path : order == .orderedAscending
         }
+        cachedProjectGroups = ProjectGroupsCache(
+            sessionGeneration: sessionMutationGeneration,
+            projectPaths: projectPaths,
+            hiddenProjectPaths: hiddenProjectPaths,
+            workspacePath: activePath,
+            groups: groups)
         return groups
     }
 
