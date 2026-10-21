@@ -26,6 +26,52 @@ pub struct FrozenTask {
     pub reference_time_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSuiteSplit {
+    Development,
+    HeldOut,
+    All,
+}
+
+/// The development partition of the frozen task suite (2 tasks per category = 8 tasks total).
+pub fn development_task_suite() -> Vec<FrozenTask> {
+    let all = frozen_task_suite();
+    let mut by_cat = BTreeMap::<FrozenTaskCategory, Vec<FrozenTask>>::new();
+    for t in all {
+        by_cat.entry(t.category).or_default().push(t);
+    }
+    let mut dev = Vec::new();
+    for (_cat, tasks) in by_cat {
+        dev.extend(tasks.into_iter().take(2));
+    }
+    dev
+}
+
+/// The held-out validation partition of the frozen task suite (1 task per category = 4 tasks total).
+pub fn held_out_task_suite() -> Vec<FrozenTask> {
+    let all = frozen_task_suite();
+    let mut by_cat = BTreeMap::<FrozenTaskCategory, Vec<FrozenTask>>::new();
+    for t in all {
+        by_cat.entry(t.category).or_default().push(t);
+    }
+    let mut held_out = Vec::new();
+    for (_cat, tasks) in by_cat {
+        if let Some(last) = tasks.into_iter().nth(2) {
+            held_out.push(last);
+        }
+    }
+    held_out
+}
+
+pub fn task_suite_for_split(split: TaskSuiteSplit) -> Vec<FrozenTask> {
+    match split {
+        TaskSuiteSplit::Development => development_task_suite(),
+        TaskSuiteSplit::HeldOut => held_out_task_suite(),
+        TaskSuiteSplit::All => frozen_task_suite(),
+    }
+}
+
 /// The 12 frozen evaluation tasks, exactly 3 in each category.
 pub fn frozen_task_suite() -> Vec<FrozenTask> {
     vec![
@@ -652,6 +698,44 @@ mod tests {
         assert_eq!(cat_counts[&FrozenTaskCategory::StructuredExtraction], 3);
         assert_eq!(cat_counts[&FrozenTaskCategory::SmallCodeFixes], 3);
         assert_eq!(cat_counts[&FrozenTaskCategory::MultistepWorkAndRecovery], 3);
+    }
+
+    #[test]
+    fn suite_splits_are_balanced_and_partition_accurately() {
+        let dev = development_task_suite();
+        let held_out = held_out_task_suite();
+        let full = frozen_task_suite();
+
+        assert_eq!(dev.len(), 8);
+        assert_eq!(held_out.len(), 4);
+        assert_eq!(full.len(), 12);
+
+        let dev_ids: BTreeSet<_> = dev.iter().map(|t| &t.task_id).collect();
+        let held_out_ids: BTreeSet<_> = held_out.iter().map(|t| &t.task_id).collect();
+        let full_ids: BTreeSet<_> = full.iter().map(|t| &t.task_id).collect();
+
+        // Disjoint sets
+        assert!(dev_ids.is_disjoint(&held_out_ids));
+        // Union equals full
+        let union: BTreeSet<_> = dev_ids.union(&held_out_ids).copied().collect();
+        assert_eq!(union, full_ids);
+
+        // Check category balance
+        let mut dev_cats = BTreeMap::new();
+        for t in &dev {
+            *dev_cats.entry(t.category).or_insert(0) += 1;
+        }
+        for count in dev_cats.values() {
+            assert_eq!(*count, 2);
+        }
+
+        let mut held_out_cats = BTreeMap::new();
+        for t in &held_out {
+            *held_out_cats.entry(t.category).or_insert(0) += 1;
+        }
+        for count in held_out_cats.values() {
+            assert_eq!(*count, 1);
+        }
     }
 
     #[test]

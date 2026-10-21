@@ -13,13 +13,14 @@ use arabica_cli::host::{
 };
 use arabica_protocol::{Command, CommandEnvelope, CommandId};
 use arabica_runtime::{
-    AcceptanceCheck, AcceptanceSpec, ArtifactEvidence, BlendRoutingPolicy,
-    CandidateAggregateReport, CategoryWeights, EvidenceAcceptanceScorer, PolicyComparisonSummary,
-    PolicyComparisonTrial, PriceCard, RecommendationGatesConfig, RecommendationReport,
-    RunAcceptanceScorer, RunCancellation, RunControl, RunCostAccounting, RunEvaluation,
-    ScoringProfile, TaskResourceBudget, TaskScore, TaskSpec, TaskTrialScore,
+    AcceptanceCheck, AcceptanceSpec, ArtifactEvidence, AvailableModelCatalog, BlendRoutingPolicy,
+    CandidateAggregateReport, CategoryWeights, EvidenceAcceptanceScorer, GeneratedPolicyRecord,
+    PolicyComparisonSummary, PolicyComparisonTrial, PriceCard, RecommendationGatesConfig,
+    RecommendationReport, RunAcceptanceScorer, RunCancellation, RunControl, RunCostAccounting,
+    RunEvaluation, ScoringProfile, TaskResourceBudget, TaskScore, TaskSpec, TaskTrialScore,
     account_run_cost_and_time, aggregate_candidate_scores, compute_paired_comparison,
-    evaluate_recommendation, run_evidence_snapshots, score_run_evaluation,
+    evaluate_recommendation, generate_bounded_proposals, run_evidence_snapshots,
+    score_run_evaluation,
 };
 use arabica_session::{
     DispatchControl, EventVisibility, SessionEventObserver, SessionManager, SessionStore,
@@ -27,8 +28,9 @@ use arabica_session::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use structure_short_memory_benchmark::{
-    FrozenTask, canonical_price_card, frozen_task_suite, policy_fixed_inexpensive,
-    policy_fixed_stage_blend, policy_fixed_strong, policy_state_aware_blend, smoke_task_subset,
+    FrozenTask, canonical_price_card, development_task_suite, frozen_task_suite,
+    held_out_task_suite, policy_fixed_inexpensive, policy_fixed_stage_blend, policy_fixed_strong,
+    policy_state_aware_blend, smoke_task_subset,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -579,6 +581,8 @@ pub struct CampaignSummaryReport {
     pub candidate_reports: BTreeMap<String, CandidateAggregateReport>,
     pub comparisons: Vec<PolicyComparisonSummary>,
     pub recommendations: Vec<RecommendationReport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<GeneratedPolicyRecord>,
 }
 
 async fn run() -> Result<()> {
@@ -647,6 +651,29 @@ async fn run() -> Result<()> {
                 max_budget,
                 price_card: None,
             },
+            Some("dev") => Campaign {
+                candidates: Vec::new(),
+                tasks: development_task_suite()
+                    .into_iter()
+                    .map(Task::from)
+                    .collect(),
+                repetitions: 3,
+                max_model_steps: 15,
+                timeout_seconds: 120,
+                seed: seed.unwrap_or(42),
+                max_budget,
+                price_card: None,
+            },
+            Some("held-out") => Campaign {
+                candidates: Vec::new(),
+                tasks: held_out_task_suite().into_iter().map(Task::from).collect(),
+                repetitions: 3,
+                max_model_steps: 15,
+                timeout_seconds: 120,
+                seed: seed.unwrap_or(42),
+                max_budget,
+                price_card: None,
+            },
             Some("full") | None => Campaign {
                 candidates: Vec::new(),
                 tasks: frozen_task_suite().into_iter().map(Task::from).collect(),
@@ -658,7 +685,10 @@ async fn run() -> Result<()> {
                 price_card: None,
             },
             Some(other) => {
-                return Err(format!("unknown suite: '{other}'; use 'smoke' or 'full'").into());
+                return Err(format!(
+                    "unknown suite: '{other}'; use 'smoke', 'dev', 'held-out', or 'full'"
+                )
+                .into());
             }
         },
     };
@@ -885,6 +915,50 @@ async fn run() -> Result<()> {
         }
     }
 
+    // Generate bounded proposals based on trial outcomes and evidence
+    let mut proposals = Vec::new();
+    let model_catalog = AvailableModelCatalog::new(
+        vec!["haiku".into(), "gpt-4o-mini".into(), "fast".into()],
+        vec!["opus".into(), "gpt-4o".into(), "strong".into()],
+        vec!["opus".into(), "gpt-4o".into(), "recovery".into()],
+    );
+
+    let mut tool_errors = Vec::new();
+    for t in &trials {
+        if let Some(acc) = &t.evaluation.acceptance {
+            for res in &acc.results {
+                if res.status != arabica_runtime::AcceptanceStatus::Pass {
+                    tool_errors.push((res.criterion_id.clone(), 1_u64));
+                }
+            }
+        }
+    }
+
+    for (index, _candidate) in campaign.candidates.iter().enumerate() {
+        let base_policy = &policies[index];
+        let cand_proposals = generate_bounded_proposals(
+            base_policy,
+            &model_catalog,
+            &trial_scores,
+            None,
+            &tool_errors,
+            Some(manifest_fingerprint.clone()),
+        );
+        for prop in cand_proposals {
+            let rec = GeneratedPolicyRecord::new(
+                prop.base_policy_id.clone(),
+                prop.candidate_version,
+                "candidate",
+                prop.proposed_policy.clone(),
+                prop.evidence.source_fingerprint.clone(),
+                prop.rationale.clone(),
+            )
+            .with_proposal(prop);
+            let _ = db.save_policy_version(&rec);
+            proposals.push(rec);
+        }
+    }
+
     let summary = CampaignSummaryReport {
         manifest_fingerprint,
         price_card_fingerprint: pricing_fingerprint,
@@ -898,6 +972,7 @@ async fn run() -> Result<()> {
         candidate_reports,
         comparisons,
         recommendations,
+        proposals,
     };
 
     std::fs::write(

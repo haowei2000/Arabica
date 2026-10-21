@@ -79,6 +79,46 @@ pub enum EvaluationAction {
         #[arg(long)]
         json: bool,
     },
+    /// Generate bounded policy candidate proposals informed by evaluated evidence.
+    Propose {
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        policy_id: Option<String>,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Approve an evaluated candidate policy version for promotion.
+    Approve {
+        policy_id: String,
+        version: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reject a candidate or evaluated policy version.
+    Reject {
+        policy_id: String,
+        version: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Activate an approved policy version for new sessions/runs.
+    Activate {
+        policy_id: String,
+        version: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rollback the active policy version to a previous version.
+    Rollback {
+        policy_id: String,
+        #[arg(long)]
+        target_version: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Evaluate a session offline and generate an evolved candidate policy version if warranted.
     Evolve {
         session_id: String,
@@ -121,6 +161,32 @@ pub async fn run(action: EvaluationAction) -> i32 {
             json,
         } => run_show(session_id, workspace_id, json),
         EvaluationAction::Policies { policy_id, json } => run_policies(policy_id, json),
+        EvaluationAction::Propose {
+            session_id,
+            policy_id,
+            workspace_id,
+            json,
+        } => run_propose(session_id, policy_id, workspace_id, json),
+        EvaluationAction::Approve {
+            policy_id,
+            version,
+            json,
+        } => run_approve(policy_id, version, json),
+        EvaluationAction::Reject {
+            policy_id,
+            version,
+            json,
+        } => run_reject(policy_id, version, json),
+        EvaluationAction::Activate {
+            policy_id,
+            version,
+            json,
+        } => run_activate(policy_id, version, json),
+        EvaluationAction::Rollback {
+            policy_id,
+            target_version,
+            json,
+        } => run_rollback(policy_id, target_version, json),
         EvaluationAction::Evolve {
             session_id,
             workspace_id,
@@ -331,15 +397,272 @@ fn run_policies(policy_id: Option<String>, json: bool) -> i32 {
             } else {
                 for p in policies {
                     println!(
-                        "Policy: {} v{} [{}] (default model: {})\n  Reason: {}\n",
-                        p.policy_id, p.version, p.status, p.policy.default_model, p.reason
+                        "Policy: {} v{} [{}] (default model: {})",
+                        p.policy_id, p.version, p.status, p.policy.default_model
                     );
+                    if let Some(prop) = &p.proposal {
+                        println!("  Proposal: {}", prop.rationale);
+                        println!(
+                            "  Evidence: metric={} (observed={}, threshold={})",
+                            prop.evidence.metric,
+                            prop.evidence.observed_value,
+                            prop.evidence.threshold
+                        );
+                    }
+                    if let Some(act) = &p.activated_at {
+                        println!("  Activated at: {act}");
+                    }
+                    println!("  Reason: {}\n", p.reason);
                 }
             }
             0
         }
         Err(_) => {
             eprintln!("error: evaluation database unavailable or incompatible");
+            1
+        }
+    }
+}
+
+fn run_propose(
+    session_id: Option<String>,
+    policy_id: Option<String>,
+    workspace_id: Option<String>,
+    json: bool,
+) -> i32 {
+    let result = (|| -> Result<Vec<arabica_runtime::GeneratedPolicyRecord>, Box<dyn std::error::Error + Send + Sync>> {
+        let home = arabica_adapters::default_arabica_home()?;
+        let mut db = arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+
+        let base_records = if let Some(pid) = policy_id.as_deref() {
+            let active = db.get_active_policy(pid)?;
+            if let Some(act) = active {
+                vec![act]
+            } else {
+                db.list_policy_versions(Some(pid))?
+            }
+        } else {
+            let active_list = db.list_policy_versions(None)?;
+            if !active_list.is_empty() {
+                active_list
+            } else if let Ok(configured) = crate::config::user_config_blend_policies(&home, &std::env::current_dir()?) {
+                let mut seeded = Vec::new();
+                for (_id, policy) in configured {
+                    let seed = arabica_runtime::GeneratedPolicyRecord::new(
+                        policy.policy_id.clone(),
+                        policy.version,
+                        "active",
+                        policy,
+                        None,
+                        "configured base policy",
+                    );
+                    let _ = db.save_policy_version(&seed);
+                    seeded.push(seed);
+                }
+                seeded
+            } else {
+                Vec::new()
+            }
+        };
+
+        if base_records.is_empty() {
+            return Err("no base policies found to propose candidates from".into());
+        }
+
+        let fast_models = vec!["fast".into(), "cheap".into(), "haiku".into(), "flash".into()];
+        let strong_models = vec!["strong".into(), "opus".into(), "sonnet".into(), "pro".into()];
+        let recovery_models = vec!["strong".into(), "recovery".into(), "opus".into()];
+        let catalog = arabica_runtime::AvailableModelCatalog::new(fast_models, strong_models, recovery_models);
+
+        let mut tool_errors = Vec::new();
+        let mut report = None;
+        let mut evidence_fp = None;
+
+        if let Some(sid) = session_id {
+            let workspace = match workspace_id {
+                Some(id) => arabica_protocol::WorkspaceId::new(id),
+                None => crate::host::workspace_id_for(&std::env::current_dir()?),
+            };
+            let session = arabica_protocol::SessionId::new(sid);
+            let sessions = arabica_adapters::SqliteSessionRepository::new(&home);
+            use arabica_session::SessionStore;
+            let stored = sessions.read(&workspace, &session)?;
+            let config = crate::config::user_config_evaluation(&home).unwrap_or_default();
+            let evidence = arabica_runtime::EvaluationEvidence::from_history(&stored.events);
+            let registry = arabica_runtime::EvaluationRegistry::builtins(&config)?;
+            let model_eval = registry.model(&config.model_strategy, &evidence)?;
+            evidence_fp = Some(evidence.fingerprint.clone());
+
+            for env in &stored.events {
+                if let arabica_protocol::Event::ToolCallCompleted { name, is_error: true, .. } = &env.event {
+                    tool_errors.push((name.clone(), 1_u64));
+                }
+            }
+            if let Some(group) = model_eval.data.groups.first() {
+                report = Some(group.report.clone());
+            }
+        }
+
+        let mut proposed_records = Vec::new();
+        for base in &base_records {
+            let proposals = arabica_runtime::generate_bounded_proposals(
+                &base.policy,
+                &catalog,
+                &[],
+                report.as_ref(),
+                &tool_errors,
+                evidence_fp.clone(),
+            );
+            for prop in proposals {
+                let rec = arabica_runtime::GeneratedPolicyRecord::new(
+                    prop.base_policy_id.clone(),
+                    prop.candidate_version,
+                    "candidate",
+                    prop.proposed_policy.clone(),
+                    prop.evidence.source_fingerprint.clone(),
+                    prop.rationale.clone(),
+                ).with_proposal(prop);
+                db.save_policy_version(&rec)?;
+                proposed_records.push(rec);
+            }
+        }
+
+        Ok(proposed_records)
+    })();
+
+    match result {
+        Ok(proposed) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&proposed).expect("proposals json")
+                );
+            } else if proposed.is_empty() {
+                println!("Evidence evaluation complete. No candidate proposals generated.");
+            } else {
+                for rec in proposed {
+                    println!(
+                        "Generated proposal: {} v{} [{}]",
+                        rec.policy_id, rec.version, rec.status
+                    );
+                    if let Some(prop) = &rec.proposal {
+                        println!("  Rationale: {}", prop.rationale);
+                        println!(
+                            "  Evidence: metric={} (observed={}, threshold={})",
+                            prop.evidence.metric,
+                            prop.evidence.observed_value,
+                            prop.evidence.threshold
+                        );
+                    }
+                }
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: policy proposal generation failed: {e}");
+            1
+        }
+    }
+}
+
+fn run_approve(policy_id: String, version: u64, json: bool) -> i32 {
+    let result = (|| -> Result<arabica_runtime::GeneratedPolicyRecord, Box<dyn std::error::Error + Send + Sync>> {
+        let home = arabica_adapters::default_arabica_home()?;
+        let mut db = arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+        db.approve_policy(&policy_id, version)
+    })();
+    match result {
+        Ok(record) => {
+            if json {
+                println!("{}", serde_json::to_string(&record).expect("approved json"));
+            } else {
+                println!(
+                    "Approved policy: {} v{} [{}]",
+                    record.policy_id, record.version, record.status
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to approve policy: {e}");
+            1
+        }
+    }
+}
+
+fn run_reject(policy_id: String, version: u64, json: bool) -> i32 {
+    let result = (|| -> Result<arabica_runtime::GeneratedPolicyRecord, Box<dyn std::error::Error + Send + Sync>> {
+        let home = arabica_adapters::default_arabica_home()?;
+        let mut db = arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+        db.reject_policy(&policy_id, version)
+    })();
+    match result {
+        Ok(record) => {
+            if json {
+                println!("{}", serde_json::to_string(&record).expect("rejected json"));
+            } else {
+                println!(
+                    "Rejected policy: {} v{} [{}]",
+                    record.policy_id, record.version, record.status
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to reject policy: {e}");
+            1
+        }
+    }
+}
+
+fn run_activate(policy_id: String, version: u64, json: bool) -> i32 {
+    let result = (|| -> Result<arabica_runtime::GeneratedPolicyRecord, Box<dyn std::error::Error + Send + Sync>> {
+        let home = arabica_adapters::default_arabica_home()?;
+        let mut db = arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+        db.activate_policy_version(&policy_id, version)
+    })();
+    match result {
+        Ok(record) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&record).expect("activated json")
+                );
+            } else {
+                println!(
+                    "Activated policy: {} v{} [{}] (default model: {})",
+                    record.policy_id, record.version, record.status, record.policy.default_model
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to activate policy: {e}");
+            1
+        }
+    }
+}
+
+fn run_rollback(policy_id: String, target_version: Option<u64>, json: bool) -> i32 {
+    let result = (|| -> Result<arabica_runtime::GeneratedPolicyRecord, Box<dyn std::error::Error + Send + Sync>> {
+        let home = arabica_adapters::default_arabica_home()?;
+        let mut db = arabica_adapters::SqliteEvaluationStore::open(&home.join("evaluation.sqlite3"))?;
+        db.rollback_policy(&policy_id, target_version)
+    })();
+    match result {
+        Ok(record) => {
+            if json {
+                println!("{}", serde_json::to_string(&record).expect("rollback json"));
+            } else {
+                println!(
+                    "Rolled back policy: {} to v{} [{}] (default model: {})",
+                    record.policy_id, record.version, record.status, record.policy.default_model
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to rollback policy: {e}");
             1
         }
     }
@@ -368,14 +691,14 @@ fn run_evolve(session_id: String, workspace_id: Option<String>, json: bool) -> i
                 crate::config::user_config_blend_policies(&home, &std::env::current_dir()?)
         {
             for (_id, policy) in policies {
-                let seed = arabica_runtime::GeneratedPolicyRecord {
-                    policy_id: policy.policy_id.clone(),
-                    version: policy.version,
-                    status: "active".into(),
-                    policy: policy.clone(),
-                    basis_fingerprint: None,
-                    reason: "configured base policy".into(),
-                };
+                let seed = arabica_runtime::GeneratedPolicyRecord::new(
+                    policy.policy_id.clone(),
+                    policy.version,
+                    "active",
+                    policy.clone(),
+                    None,
+                    "configured base policy",
+                );
                 let _ = db.save_policy_version(&seed);
                 candidate_bases.push(seed);
             }

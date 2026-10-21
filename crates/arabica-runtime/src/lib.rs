@@ -16,6 +16,8 @@ mod accounting;
 pub use accounting::*;
 mod policy_comparison;
 pub use policy_comparison::*;
+mod policy_lifecycle;
+pub use policy_lifecycle::*;
 mod evaluation;
 pub use evaluation::*;
 mod context_state;

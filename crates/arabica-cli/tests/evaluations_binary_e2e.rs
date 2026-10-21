@@ -75,14 +75,14 @@ fn evaluations_policies_command_reads_empty_database_and_persisted_candidates() 
         tool_call_capable_models: std::collections::BTreeSet::new(),
         typed_completion_capable_models: std::collections::BTreeSet::new(),
     };
-    db.save_policy_version(&arabica_runtime::GeneratedPolicyRecord {
-        policy_id: "test-policy".to_string(),
-        version: 2,
-        status: "candidate".to_string(),
+    db.save_policy_version(&arabica_runtime::GeneratedPolicyRecord::new(
+        "test-policy",
+        2,
+        "candidate",
         policy,
-        basis_fingerprint: Some("fp-test".to_string()),
-        reason: "evolved candidate for testing".to_string(),
-    })
+        Some("fp-test".to_string()),
+        "evolved candidate for testing",
+    ))
     .unwrap();
     drop(db);
 
@@ -109,6 +109,52 @@ fn evaluations_policies_command_reads_empty_database_and_persisted_candidates() 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Policy: test-policy v2 [candidate]"));
+
+    // Approve policy via CLI
+    let output = Command::new(env!("CARGO_BIN_EXE_arabica"))
+        .args(["evaluations", "approve", "test-policy", "2", "--json"])
+        .env("ARABICA_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let approved: arabica_runtime::GeneratedPolicyRecord =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(approved.status, "approved");
+
+    // Activate policy via CLI
+    let output = Command::new(env!("CARGO_BIN_EXE_arabica"))
+        .args(["evaluations", "activate", "test-policy", "2", "--json"])
+        .env("ARABICA_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let activated: arabica_runtime::GeneratedPolicyRecord =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(activated.status, "active");
+    assert!(activated.activated_at.is_some());
+
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn evaluator_database_failure_does_not_block_agent_execution() {
+    let home = std::env::temp_dir().join(format!("arabica-eval-failure-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&home).unwrap();
+
+    // Write corrupted evaluation database file
+    std::fs::write(
+        home.join("evaluation.sqlite3"),
+        b"corrupted non-sqlite data",
+    )
+    .unwrap();
+
+    // Core agent commands (such as session management) proceed unimpeded
+    let output = Command::new(env!("CARGO_BIN_EXE_arabica"))
+        .args(["sessions", "list", "--all"])
+        .env("ARABICA_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
 
     std::fs::remove_dir_all(home).unwrap();
 }
