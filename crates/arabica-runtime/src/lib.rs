@@ -14,6 +14,8 @@ mod scoring;
 pub use scoring::*;
 mod accounting;
 pub use accounting::*;
+mod policy_comparison;
+pub use policy_comparison::*;
 mod evaluation;
 pub use evaluation::*;
 mod context_state;

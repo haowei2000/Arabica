@@ -14,10 +14,12 @@ use arabica_cli::host::{
 use arabica_protocol::{Command, CommandEnvelope, CommandId};
 use arabica_runtime::{
     AcceptanceCheck, AcceptanceSpec, ArtifactEvidence, BlendRoutingPolicy,
-    EvidenceAcceptanceScorer, PolicyComparisonSummary, PolicyComparisonTrial, PriceCard,
+    CandidateAggregateReport, CategoryWeights, EvidenceAcceptanceScorer, PolicyComparisonSummary,
+    PolicyComparisonTrial, PriceCard, RecommendationGatesConfig, RecommendationReport,
     RunAcceptanceScorer, RunCancellation, RunControl, RunCostAccounting, RunEvaluation,
-    ScoringProfile, TaskResourceBudget, TaskScore, TaskSpec, account_run_cost_and_time,
-    run_evidence_snapshots, score_run_evaluation,
+    ScoringProfile, TaskResourceBudget, TaskScore, TaskSpec, TaskTrialScore,
+    account_run_cost_and_time, aggregate_candidate_scores, compute_paired_comparison,
+    evaluate_recommendation, run_evidence_snapshots, score_run_evaluation,
 };
 use arabica_session::{
     DispatchControl, EventVisibility, SessionEventObserver, SessionManager, SessionStore,
@@ -85,6 +87,8 @@ struct Candidate {
 struct Task {
     prompt: String,
     acceptance: AcceptanceSpec,
+    #[serde(default = "default_category")]
+    category: String,
     #[serde(default)]
     initial_files: BTreeMap<String, String>,
     #[serde(default = "default_ref_cost")]
@@ -93,11 +97,30 @@ struct Task {
     reference_time_ms: u64,
 }
 
+fn default_category() -> String {
+    "general".into()
+}
+
 impl From<FrozenTask> for Task {
     fn from(f: FrozenTask) -> Self {
+        let cat = match f.category {
+            structure_short_memory_benchmark::FrozenTaskCategory::ExactFileOperations => {
+                "exact_file_operations"
+            }
+            structure_short_memory_benchmark::FrozenTaskCategory::StructuredExtraction => {
+                "structured_extraction"
+            }
+            structure_short_memory_benchmark::FrozenTaskCategory::SmallCodeFixes => {
+                "small_code_fixes"
+            }
+            structure_short_memory_benchmark::FrozenTaskCategory::MultistepWorkAndRecovery => {
+                "multistep_work_and_recovery"
+            }
+        };
         Self {
             prompt: f.prompt,
             acceptance: f.acceptance,
+            category: cat.to_string(),
             initial_files: f.initial_files,
             reference_cost: f.reference_cost,
             reference_time_ms: f.reference_time_ms,
@@ -365,6 +388,7 @@ fn capture_artifacts(
 pub struct CampaignTrialRecord {
     pub candidate: String,
     pub task_id: String,
+    pub category: String,
     pub repetition: u32,
     pub evaluation: RunEvaluation,
     pub score: TaskScore,
@@ -527,6 +551,7 @@ async fn execute_trial(params: TrialExecutionParams<'_>) -> Result<CampaignTrial
     let record = CampaignTrialRecord {
         candidate: params.candidate_label.to_string(),
         task_id: params.task.acceptance.task_id.clone(),
+        category: params.task.category.clone(),
         repetition: params.repetition,
         evaluation: RunEvaluation {
             snapshot,
@@ -543,18 +568,6 @@ async fn execute_trial(params: TrialExecutionParams<'_>) -> Result<CampaignTrial
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct CandidateScoreSummary {
-    pub candidate: String,
-    pub runs: usize,
-    pub mean_quality: f64,
-    pub mean_cost_efficiency: f64,
-    pub mean_time_efficiency: f64,
-    pub mean_total_score: f64,
-    pub required_pass_rate: f64,
-    pub total_cost: f64,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CampaignSummaryReport {
     pub manifest_fingerprint: String,
     pub price_card_fingerprint: String,
@@ -563,8 +576,9 @@ pub struct CampaignSummaryReport {
     pub total_trials_completed: usize,
     pub cumulative_cost: f64,
     pub budget_exhausted: bool,
-    pub candidate_scores: BTreeMap<String, CandidateScoreSummary>,
+    pub candidate_reports: BTreeMap<String, CandidateAggregateReport>,
     pub comparisons: Vec<PolicyComparisonSummary>,
+    pub recommendations: Vec<RecommendationReport>,
 }
 
 async fn run() -> Result<()> {
@@ -819,61 +833,56 @@ async fn run() -> Result<()> {
     let mut db = SqliteEvaluationStore::open(&storage_home.join("evaluation.sqlite3"))?;
     let comparisons = db.save_policy_comparison(&comparison_trials)?;
 
-    // Aggregate candidate scores
-    let mut candidate_scores = BTreeMap::new();
+    // Aggregate candidate scores across task categories
+    let trial_scores: Vec<TaskTrialScore> = trials
+        .iter()
+        .map(|t| TaskTrialScore {
+            candidate: t.candidate.clone(),
+            task_id: t.task_id.clone(),
+            category: t.category.clone(),
+            repetition: t.repetition,
+            score: Some(t.score.clone()),
+            cost: t.accounting.as_ref().and_then(|a| a.total_cost),
+            wall_ms: t.evaluation.snapshot.timing.wall_ms,
+            active_ms: t.evaluation.snapshot.timing.active_ms,
+            has_usage: t.evaluation.snapshot.timing.usage_reported_calls > 0,
+        })
+        .collect();
+
+    let categories: BTreeSet<&str> = trials.iter().map(|t| t.category.as_str()).collect();
+    let weights = CategoryWeights::equal_split(categories).unwrap_or_else(|_| {
+        CategoryWeights::new(BTreeMap::from([("general".into(), 1.0)])).unwrap()
+    });
+
+    let candidate_reports = aggregate_candidate_scores(&trial_scores, &weights)?;
+
+    // Evaluate recommendation gates against baseline
+    let baseline_label = campaign
+        .candidates
+        .iter()
+        .find(|c| c.label == "baseline" || c.label == "fixed_strong")
+        .map(|c| c.label.as_str())
+        .unwrap_or(&campaign.candidates[0].label);
+
+    let mut recommendations = Vec::new();
+    let gates_config = RecommendationGatesConfig {
+        overall_success_floor: 0.70,
+        min_score_improvement: 1.0,
+        ..Default::default()
+    };
+
     for candidate in &campaign.candidates {
-        let matching: Vec<&CampaignTrialRecord> = trials
-            .iter()
-            .filter(|t| t.candidate == candidate.label)
-            .collect();
-        if matching.is_empty() {
-            continue;
+        if candidate.label != baseline_label
+            && let (Some(cand_rep), Some(base_rep)) = (
+                candidate_reports.get(&candidate.label),
+                candidate_reports.get(baseline_label),
+            )
+            && let Ok(paired) =
+                compute_paired_comparison(&candidate.label, baseline_label, &trial_scores)
+        {
+            let rec = evaluate_recommendation(cand_rep, base_rep, &paired, &gates_config);
+            recommendations.push(rec);
         }
-
-        let n = matching.len() as f64;
-        let mean_quality = matching
-            .iter()
-            .map(|t| t.score.quality.unwrap_or(0.0))
-            .sum::<f64>()
-            / n;
-        let mean_cost_efficiency = matching
-            .iter()
-            .map(|t| t.score.cost_efficiency.unwrap_or(0.0))
-            .sum::<f64>()
-            / n;
-        let mean_time_efficiency = matching
-            .iter()
-            .map(|t| t.score.time_efficiency.unwrap_or(0.0))
-            .sum::<f64>()
-            / n;
-        let mean_total_score = matching
-            .iter()
-            .map(|t| t.score.total.unwrap_or(0.0))
-            .sum::<f64>()
-            / n;
-        let required_pass_rate = matching
-            .iter()
-            .filter(|t| t.score.required_passed == Some(true))
-            .count() as f64
-            / n;
-        let total_cost = matching
-            .iter()
-            .filter_map(|t| t.accounting.as_ref().and_then(|a| a.total_cost))
-            .sum();
-
-        candidate_scores.insert(
-            candidate.label.clone(),
-            CandidateScoreSummary {
-                candidate: candidate.label.clone(),
-                runs: matching.len(),
-                mean_quality,
-                mean_cost_efficiency,
-                mean_time_efficiency,
-                mean_total_score,
-                required_pass_rate,
-                total_cost,
-            },
-        );
     }
 
     let summary = CampaignSummaryReport {
@@ -886,8 +895,9 @@ async fn run() -> Result<()> {
         total_trials_completed: trials.len(),
         cumulative_cost,
         budget_exhausted,
-        candidate_scores,
+        candidate_reports,
         comparisons,
+        recommendations,
     };
 
     std::fs::write(
@@ -1008,6 +1018,7 @@ mod tests {
 
         let task = Task {
             prompt: "Write ready to answer.txt and finish.".into(),
+            category: "general".into(),
             initial_files: BTreeMap::from([("answer.txt".into(), "pending".into())]),
             reference_cost: 0.05,
             reference_time_ms: 5000,
