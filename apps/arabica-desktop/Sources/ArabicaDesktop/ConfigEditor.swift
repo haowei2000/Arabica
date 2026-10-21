@@ -5,9 +5,28 @@ import Foundation
 
 @MainActor
 final class ConfigEditor: ObservableObject {
+    enum PendingAction {
+        case provider(String)
+        case model(String)
+        case addProvider
+        case addModel
+        case reload
+    }
+
+    enum StatusKind {
+        case information
+        case success
+        case error
+    }
+
+    struct ChatGPTAuthPreparation {
+        fileprivate let launchDraft: [String]
+    }
+
     @Published var providerOptions: [String] = []
     @Published var providerName = "primary"
     @Published var apiType = "open_ai_responses"
+    @Published var authMode = "api_key"
     @Published var baseURL = "https://api.openai.com/v1"
     @Published var apiKeyEnv = "ARABICA_PROVIDER_PRIMARY_API_KEY"
     @Published var apiKey = ""
@@ -24,21 +43,61 @@ final class ConfigEditor: ObservableObject {
     @Published var configuredPolicies: [ConfiguredPolicyItem] = []
     @Published var thinking = ""
     @Published var status = ""
+    @Published private(set) var statusKind: StatusKind = .information
+    @Published var pendingAction: PendingAction?
     @Published var canAddEntries = false
     @Published var isSaving = false
+    @Published var isChatGPTAuthRunning = false
+    @Published var chatGPTConnected = false
     @Published var mcpServers: [MCPServerItem] = []
     @Published var skillRoots: [SkillRootItem] = []
     @Published var discoveredSkills: [DiscoveredSkillItem] = []
+    @Published var isSyncingModels = false
 
     var modelsForSelectedProvider: [String] {
-        modelOptions.filter { modelProviders[$0] == providerName }
+        let aliases = modelOptions.filter { modelProviders[$0] == providerName }
+        return modelAlias.isEmpty || aliases.contains(modelAlias) ? aliases : aliases + [modelAlias]
+    }
+
+    var hasUnsavedChanges: Bool { draft != savedDraft }
+
+    var canChangeChatGPTConnection: Bool {
+        !isSaving && !isChatGPTAuthRunning && !isSyncingModels
+            && (!chatGPTConnected || !hasUnsavedChanges)
+    }
+
+    var chatGPTAuthButtonTitle: String {
+        if isChatGPTAuthRunning { return chatGPTConnected ? "Disconnecting…" : "Waiting for browser…" }
+        if chatGPTConnected { return "Disconnect" }
+        return hasUnsavedChanges && !isChatGPTBootstrapDraft ? "Save & Sign in" : "Sign in"
+    }
+
+    var chatGPTAuthHelp: String {
+        if isChatGPTAuthRunning { return "Wait for the current account operation to finish." }
+        if isSaving || isSyncingModels { return "Wait for the configuration update to finish." }
+        if hasUnsavedChanges && !isChatGPTBootstrapDraft {
+            return chatGPTConnected
+                ? "Save Changes or discard your draft before disconnecting the account."
+                : "Save the current configuration, then open ChatGPT sign-in in your browser."
+        }
+        return chatGPTConnected ? "Disconnect the locally saved ChatGPT account." : "Sign in to ChatGPT in your browser."
+    }
+
+    private var draft: [String] {
+        [providerName, apiType, authMode, baseURL, apiKeyEnv, apiKey, String(clearSavedKey),
+         modelAlias, modelProvider, modelID, defaultPolicy, policyDefaultModel, thinking]
     }
 
     private var original = ""
+    private var savedDraft: [String] = []
+    private var chatGPTBootstrapDraft: [String]?
+    private var isChatGPTBootstrapDraft: Bool { chatGPTBootstrapDraft == draft }
+    private let explicitConfigURL: URL?
     private var originalKey: String?
     private var providerSection = "providers.primary"
     private var modelSection: String?
     var configURL: URL {
+        if let explicitConfigURL { return explicitConfigURL }
         let home = ProcessInfo.processInfo.environment["ARABICA_HOME"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".arabica", isDirectory: true)
@@ -49,38 +108,43 @@ final class ConfigEditor: ObservableObject {
         configURL.deletingLastPathComponent()
     }
 
-    init() { reload() }
+    init(configURL: URL? = nil) {
+        explicitConfigURL = configURL
+        reload()
+    }
 
     func reload() {
+        chatGPTBootstrapDraft = nil
         status = ""
+        statusKind = .information
         originalKey = nil
         hasSavedKey = false
         clearSavedKey = false
         apiKey = ""
+        authMode = "api_key"
+        chatGPTConnected = Self.hasChatGPTCredentials(at: arabicaHomeURL)
         do {
             original = try String(contentsOf: configURL, encoding: .utf8)
         } catch CocoaError.fileReadNoSuchFile {
             original = ""
         } catch {
             original = ""
-            status = "Could not read \(configURL.path): \(error.localizedDescription)"
+            report("Could not read \(configURL.path): \(error.localizedDescription)", kind: .error)
+            savedDraft = draft
             return
         }
 
         let document = ConfigDocument(original)
         let blend = document.values(in: "blend")
-        let providerSections = document.sectionNames.filter { $0.hasPrefix("providers.") }.sorted()
-        providerOptions = providerSections.map { String($0.dropFirst("providers.".count)) }
-        let modelSections = document.sectionNames.filter { $0.hasPrefix("models.") }.sorted()
-        modelOptions = modelSections.map { String($0.dropFirst("models.".count)) }
-        modelProviders = modelSections.reduce(into: [:]) { providers, section in
-            guard let provider = document.values(in: section)["provider"] else { return }
-            providers[String(section.dropFirst("models.".count))] = provider
+        let providerSections = document.childSectionNames(in: "providers").sorted()
+        providerOptions = providerSections
+        let modelSections = document.childSectionNames(in: "models").sorted()
+        modelOptions = modelSections
+        modelProviders = modelSections.reduce(into: [:]) { providers, alias in
+            guard let provider = document.values(in: ConfigDocument.tablePath("models", alias))["provider"] else { return }
+            providers[alias] = provider
         }
-        policyOptions = document.sectionNames
-            .filter { $0.hasPrefix("blend.policies.") }
-            .map { String($0.dropFirst("blend.policies.".count)) }
-            .sorted()
+        policyOptions = document.childSectionNames(in: "blend.policies").sorted()
         let configuredPolicy = blend["default_policy"]
         defaultPolicy = configuredPolicy.flatMap { policyOptions.contains($0) ? $0 : nil } ?? policyOptions.first ?? ""
         if providerOptions.isEmpty, document.sectionNames.contains("provider") {
@@ -91,11 +155,11 @@ final class ConfigEditor: ObservableObject {
             if !providerOptions.contains(providerName) {
                 providerName = providerOptions.first ?? "primary"
             }
-            providerSection = "providers.\(providerName)"
+            providerSection = ConfigDocument.tablePath("providers", providerName)
         }
         let initialPolicy = policyOptions.contains(defaultPolicy) ? defaultPolicy : policyOptions.first
         if let initialPolicy {
-            policyDefaultModel = document.values(in: "blend.policies.\(initialPolicy)")["default_model"] ?? ""
+            policyDefaultModel = document.values(in: ConfigDocument.tablePath("blend", "policies", initialPolicy))["default_model"] ?? ""
         } else {
             policyDefaultModel = blend["default_model"] ?? ""
         }
@@ -104,12 +168,12 @@ final class ConfigEditor: ObservableObject {
         if !modelOptions.contains(modelAlias) {
             modelAlias = modelOptions.contains(policyDefaultModel) ? policyDefaultModel : modelOptions.first ?? "default"
         }
-        modelSection = modelOptions.contains(modelAlias) ? "models.\(modelAlias)" : nil
+        modelSection = modelOptions.contains(modelAlias) ? ConfigDocument.tablePath("models", modelAlias) : nil
         let model = modelSection.map { document.values(in: $0) } ?? [:]
         modelProvider = model["provider"] ?? providerName
         if providerOptions.contains(modelProvider) {
             providerName = modelProvider
-            providerSection = "providers.\(providerName)"
+            providerSection = ConfigDocument.tablePath("providers", providerName)
         }
         loadProvider(from: document)
         modelID = model["model_id"] ?? (providerSection == "provider" ? document.values(in: providerSection)["model"] : nil) ?? ""
@@ -123,18 +187,23 @@ final class ConfigEditor: ObservableObject {
         let roots = document.skillRoots(relativeTo: arabicaHomeURL)
         skillRoots = roots
         discoveredSkills = scanDiscoveredSkills(in: roots)
+        savedDraft = draft
     }
 
     func selectProvider(_ name: String) {
         guard name != providerName else { return }
-        guard saveBeforeSwitch() else { return }
+        request(.provider(name))
+    }
+
+    private func loadSelectedProvider(_ name: String) {
         providerName = name
-        providerSection = "providers.\(name)"
+        providerSection = ConfigDocument.tablePath("providers", name)
         loadProvider(from: ConfigDocument(original))
         if let alias = modelOptions.first(where: { modelProviders[$0] == name }) {
             modelAlias = alias
-            modelSection = "models.\(alias)"
+            modelSection = ConfigDocument.tablePath("models", alias)
             modelID = ConfigDocument(original).values(in: modelSection!)["model_id"] ?? ""
+            modelProvider = name
         } else {
             modelProvider = name
             modelAlias = ""
@@ -142,39 +211,205 @@ final class ConfigEditor: ObservableObject {
             modelID = ""
         }
         status = ""
+        savedDraft = draft
     }
 
     func selectModel(_ alias: String) {
         guard alias != modelAlias else { return }
-        guard saveBeforeSwitch() else { return }
+        request(.model(alias))
+    }
+
+    private func loadSelectedModel(_ alias: String) {
         modelAlias = alias
-        modelSection = "models.\(alias)"
+        modelSection = ConfigDocument.tablePath("models", alias)
         let model = ConfigDocument(original).values(in: modelSection!)
         modelProvider = model["provider"] ?? providerName
         modelID = model["model_id"] ?? ""
         if providerOptions.contains(modelProvider) {
             providerName = modelProvider
-            providerSection = "providers.\(providerName)"
+            providerSection = ConfigDocument.tablePath("providers", providerName)
             loadProvider(from: ConfigDocument(original))
         }
         status = ""
+        savedDraft = draft
     }
 
     func selectPolicy(_ policy: String) {
-        guard policy != defaultPolicy else { return }
+        guard policyOptions.contains(policy), policy != defaultPolicy else { return }
         defaultPolicy = policy
-        policyDefaultModel = ConfigDocument(original).values(in: "blend.policies.\(policy)")["default_model"] ?? modelOptions.first ?? ""
+        policyDefaultModel = ConfigDocument(original).values(in: ConfigDocument.tablePath("blend", "policies", policy))["default_model"] ?? modelOptions.first ?? ""
+    }
+
+    func selectAuthMode(_ mode: String) {
+        let canBootstrap = mode == "chatgpt" && original.isEmpty && !hasUnsavedChanges
+        authMode = mode
+        if mode == "chatgpt" {
+            setAPIType("open_ai_responses")
+            baseURL = "https://api.openai.com/v1"
+            apiKey = ""
+            clearSavedKey = hasSavedKey
+        } else {
+            apiKeyEnv = Self.defaultAPIKeyEnvironmentVariable(providerName: providerName)
+            clearSavedKey = false
+        }
+        chatGPTBootstrapDraft = canBootstrap ? draft : nil
+    }
+
+    func connectChatGPT() {
+        runChatGPTAuth(
+            arguments: ["chatgpt-login"],
+            successMessage: "Connected to ChatGPT. Reopen the workspace to reconnect Arabica.",
+            savingChanges: true)
+    }
+
+    func disconnectChatGPT() {
+        runChatGPTAuth(arguments: ["chatgpt-logout"], successMessage: "ChatGPT disconnected.")
+    }
+
+    func syncModels(provider: String? = nil) {
+        guard !isSyncingModels, !isChatGPTAuthRunning else { return }
+        guard !hasUnsavedChanges else {
+            report("Save or discard configuration changes before synchronizing models.")
+            return
+        }
+        guard let executable = Self.arabicaExecutableURL() else {
+            report("Arabica executable was not found. Set ARABICA_EXECUTABLE or rebuild the desktop app.", kind: .error)
+            return
+        }
+        isSyncingModels = true
+        var args = ["models", "sync"]
+        let targetProvider = provider ?? (providerName.isEmpty ? nil : providerName)
+        if let target = targetProvider {
+            args.append(contentsOf: ["--provider", target])
+        }
+        let home = arabicaHomeURL
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Self.runCliCommand(executable: executable, arguments: args, home: home)
+            }.value
+            guard let self else { return }
+            self.isSyncingModels = false
+            if result.status == 0 {
+                self.completeConfigurationUpdate(successMessage: "Models synchronized with provider successfully.")
+            } else {
+                let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.report(detail.isEmpty ? "Model sync failed (exit \(result.status))." : detail, kind: .error)
+            }
+        }
+    }
+
+    func prepareChatGPTAuth(executable: URL?, savingChanges: Bool) -> ChatGPTAuthPreparation? {
+        guard !isSaving, !isChatGPTAuthRunning, !isSyncingModels else { return nil }
+        if hasUnsavedChanges && !savingChanges {
+            report("Save or discard configuration changes before changing the ChatGPT connection.")
+            return nil
+        }
+        guard executable != nil else {
+            report("Arabica executable was not found. Set ARABICA_EXECUTABLE or rebuild the desktop app.", kind: .error)
+            return nil
+        }
+        if savingChanges && isChatGPTBootstrapDraft {
+            // A fresh login creates its own provider and model catalog. Only the
+            // untouched initial ChatGPT draft can bypass model validation.
+            do {
+                guard try configurationOnDisk() == original else {
+                    report("The configuration changed on disk. Reload it before signing in.", kind: .error)
+                    return nil
+                }
+            } catch {
+                report("Could not read configuration: \(error.localizedDescription)", kind: .error)
+                return nil
+            }
+        } else {
+            // Login also updates the on-disk model catalog, so commit edited drafts first.
+            guard !hasUnsavedChanges || save() else { return nil }
+        }
+        return ChatGPTAuthPreparation(launchDraft: draft)
+    }
+
+    private func runChatGPTAuth(arguments: [String], successMessage: String, savingChanges: Bool = false) {
+        let executable = Self.arabicaExecutableURL()
+        guard let preparation = prepareChatGPTAuth(executable: executable, savingChanges: savingChanges),
+              let executable else { return }
+        isChatGPTAuthRunning = true
+        let home = arabicaHomeURL
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Self.runCliCommand(executable: executable, arguments: ["auth"] + arguments, home: home)
+            }.value
+            guard let self else { return }
+            self.isChatGPTAuthRunning = false
+            if result.status == 0 {
+                self.completeConfigurationUpdate(successMessage: successMessage, authPreparation: preparation)
+            } else {
+                let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.report(detail.isEmpty ? "ChatGPT connection change failed (exit \(result.status))." : detail, kind: .error)
+            }
+        }
+    }
+
+    func completeConfigurationUpdate(successMessage: String, authPreparation: ChatGPTAuthPreparation? = nil) {
+        chatGPTConnected = Self.hasChatGPTCredentials(at: arabicaHomeURL)
+        let canReload = authPreparation.map { draft == $0.launchDraft } ?? !hasUnsavedChanges
+        guard canReload else {
+            report("\(successMessage) Your unsaved edits were kept. Reload the configuration to review the changes on disk.", kind: .success)
+            return
+        }
+        reload()
+        if modelOptions.contains(policyDefaultModel) { selectModel(policyDefaultModel) }
+        report(successMessage, kind: .success)
+    }
+
+    private static func arabicaExecutableURL() -> URL? {
+        if let override = ProcessInfo.processInfo.environment["ARABICA_EXECUTABLE"],
+           FileManager.default.isExecutableFile(atPath: override) {
+            return URL(fileURLWithPath: override)
+        }
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("arabica"),
+           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
+        return nil
+    }
+
+    nonisolated private static func runCliCommand(executable: URL, arguments: [String], home: URL) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["ARABICA_HOME"] = home.path
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        } catch {
+            return (1, error.localizedDescription)
+        }
+    }
+
+    private static func hasChatGPTCredentials(at home: URL) -> Bool {
+        let path = home.appendingPathComponent("chatgpt-auth.json")
+        guard let data = try? Data(contentsOf: path),
+              let credentials = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accessToken = credentials["access_token"] as? String else { return false }
+        return !accessToken.isEmpty
     }
 
     func addProvider() {
-        guard canAddEntries, saveBeforeSwitch() else {
-            if !canAddEntries { status = "Save one provider and model before adding another entry." }
-            return
-        }
+        guard canAddEntries else { return }
+        request(.addProvider)
+    }
+
+    private func createProvider() {
         let name = nextName(prefix: "provider", options: providerOptions)
         providerOptions.append(name)
         providerName = name
-        providerSection = "providers.\(name)"
+        providerSection = ConfigDocument.tablePath("providers", name)
         modelProvider = name
         let alias = nextName(prefix: "model", options: modelOptions)
         modelOptions.append(alias)
@@ -182,6 +417,7 @@ final class ConfigEditor: ObservableObject {
         modelAlias = alias
         modelSection = nil
         modelID = ""
+        authMode = "api_key"
         apiType = "open_ai_responses"
         baseURL = "https://api.openai.com/v1"
         apiKeyEnv = Self.defaultAPIKeyEnvironmentVariable(providerName: name)
@@ -190,14 +426,15 @@ final class ConfigEditor: ObservableObject {
         hasSavedKey = false
         clearSavedKey = false
         thinking = ""
-        status = "New [providers.\(name)] and [models.\(alias)] will be written when you save."
+        report("Enter a model ID, then save to add provider \(name) and model \(alias).")
     }
 
     func addModel() {
-        guard canAddEntries, (modelAlias.isEmpty || saveBeforeSwitch()) else {
-            if !canAddEntries { status = "Save one provider and model before adding another entry." }
-            return
-        }
+        guard canAddEntries else { return }
+        request(.addModel)
+    }
+
+    private func createModel() {
         let alias = nextName(prefix: "model", options: modelOptions)
         modelOptions.append(alias)
         modelProviders[alias] = providerName
@@ -205,17 +442,60 @@ final class ConfigEditor: ObservableObject {
         modelSection = nil
         modelProvider = providerName
         modelID = ""
-        status = "New [models.\(alias)] will be written when you save."
+        report("Enter a model ID, then save to add model \(alias).")
     }
 
-    private func saveBeforeSwitch() -> Bool {
-        save()
-        return status.hasPrefix("Saved to ")
+    func requestReload() { request(.reload) }
+
+    private func request(_ action: PendingAction) {
+        if hasUnsavedChanges {
+            pendingAction = action
+        } else {
+            perform(action)
+        }
+    }
+
+    func saveAndContinue(_ action: PendingAction? = nil) {
+        guard let action = action ?? pendingAction else { return }
+        pendingAction = nil
+        guard save() else { return }
+        perform(action)
+    }
+
+    func discardAndContinue(_ action: PendingAction? = nil) {
+        guard let action = action ?? pendingAction else { return }
+        pendingAction = nil
+        reload()
+        if case .reload = action { return }
+        perform(action)
+    }
+
+    private func perform(_ action: PendingAction) {
+        switch action {
+        case .provider(let name): loadSelectedProvider(name)
+        case .model(let alias): loadSelectedModel(alias)
+        case .addProvider: createProvider()
+        case .addModel: createModel()
+        case .reload: reload()
+        }
+    }
+
+    func setAPIType(_ value: String) {
+        apiType = value
+        if !thinking.isEmpty, !Self.supportedThinkingValues(apiType: value).contains(thinking) {
+            thinking = ""
+        }
+    }
+
+    private func report(_ message: String, kind: StatusKind = .information) {
+        status = message
+        statusKind = kind
     }
 
     private func loadProvider(from document: ConfigDocument) {
         let values = document.values(in: providerSection)
         apiType = values["api_type"] ?? "open_ai_responses"
+        authMode = values["auth"]?.lowercased() == "chatgpt" ? "chatgpt" : "api_key"
         baseURL = values["base_url"] ?? "https://api.openai.com/v1"
         apiKeyEnv = values["api_key_env"] ?? Self.defaultAPIKeyEnvironmentVariable(providerName: providerName)
         originalKey = values["api_key"]
@@ -223,6 +503,9 @@ final class ConfigEditor: ObservableObject {
         apiKey = ""
         clearSavedKey = false
         thinking = values["thinking"] ?? values["reasoning_effort"] ?? ""
+        if apiType == "open_ai_responses", ["off", "default"].contains(thinking) {
+            thinking = ""
+        }
     }
 
     private static func defaultAPIKeyEnvironmentVariable(providerName: String) -> String {
@@ -243,64 +526,87 @@ final class ConfigEditor: ObservableObject {
             }
             NSWorkspace.shared.open(configURL)
         } catch {
-            status = "Could not open config file: \(error.localizedDescription)"
+            report("Could not open config file: \(error.localizedDescription)", kind: .error)
         }
     }
 
-    func save() {
-        guard !isSaving else { return }
+    @discardableResult
+    func save() -> Bool {
+        guard !isSaving else { return false }
+        guard !isChatGPTAuthRunning, !isSyncingModels else {
+            report("Wait for the current connection or model update to finish before saving.")
+            return false
+        }
         let cleanProvider = providerName.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanAlias = modelAlias.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanModelProvider = modelProvider.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanModel = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanAPIKeyEnv = apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanPolicyDefaultModel = policyDefaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
         if let thinkingError = Self.thinkingValidationError(apiType: apiType, thinking: thinking) {
-            status = thinkingError
-            return
+            report(thinkingError, kind: .error)
+            return false
         }
         guard !cleanProvider.isEmpty, !cleanAlias.isEmpty, !cleanModelProvider.isEmpty, !cleanModel.isEmpty,
-              !apiType.isEmpty, let url = URL(string: baseURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
-            status = "Enter a provider name, model alias, model ID, API type, and a valid HTTP(S) base URL."
-            return
+              !apiType.isEmpty, let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""), !(url.host?.isEmpty ?? true) else {
+            report("Enter a model ID and a valid HTTP(S) base URL, including its hostname.", kind: .error)
+            return false
+        }
+        if authMode == "chatgpt", (apiType != "open_ai_responses" || baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) != "https://api.openai.com/v1") {
+            report("ChatGPT login requires the OpenAI Responses API at https://api.openai.com/v1.", kind: .error)
+            return false
         }
         let defaultModel = cleanPolicyDefaultModel.isEmpty ? cleanAlias : cleanPolicyDefaultModel
         guard modelOptions.contains(defaultModel) || defaultModel == cleanAlias else {
-            status = "The blend default_model must reference a model alias in [models.<alias>]."
-            return
+            report("Choose a default model that exists in the model catalog.", kind: .error)
+            return false
         }
-        guard !apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                !(apiKey.isEmpty && originalKey == nil) ||
-                !(ProcessInfo.processInfo.environment[apiKeyEnv]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
-            status = "Enter an API key or the name of an environment variable that contains it."
-            return
+        guard authMode == "chatgpt" || !cleanAPIKeyEnv.isEmpty || !apiKey.isEmpty || (originalKey != nil && !clearSavedKey) else {
+            report("Enter an API key or the name of an environment variable that contains it.", kind: .error)
+            return false
         }
 
         isSaving = true
         defer { isSaving = false }
         do {
+            let diskContents = try configurationOnDisk()
+            guard diskContents == original else {
+                report("The configuration changed on disk. Reload it before saving to avoid overwriting those changes.", kind: .error)
+                return false
+            }
+            var providerValues = [
+                "api_type": ConfigDocument.quote(apiType),
+                "base_url": ConfigDocument.quote(baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+            ]
+            if authMode == "chatgpt" {
+                providerValues["auth"] = ConfigDocument.quote("chatgpt")
+            } else if !cleanAPIKeyEnv.isEmpty {
+                providerValues["api_key_env"] = ConfigDocument.quote(cleanAPIKeyEnv)
+            }
             let result = try ConfigDocument(original).updating(
                 oldProviderSection: providerSection,
-                newProviderSection: "providers.\(cleanProvider)",
+                newProviderSection: ConfigDocument.tablePath("providers", cleanProvider),
                 oldModelSection: modelSection,
-                newModelSection: "models.\(cleanAlias)",
-                providerValues: [
-                    "api_type": ConfigDocument.quote(apiType),
-                    "base_url": ConfigDocument.quote(baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-                    "api_key_env": ConfigDocument.quote(apiKeyEnv.trimmingCharacters(in: .whitespacesAndNewlines)),
-                ],
+                newModelSection: ConfigDocument.tablePath("models", cleanAlias),
+                providerValues: providerValues,
                 modelValues: ["provider": ConfigDocument.quote(cleanProvider), "model_id": ConfigDocument.quote(cleanModel)],
                 thinking: thinking.trimmingCharacters(in: .whitespacesAndNewlines),
                 defaultPolicy: defaultPolicy,
                 defaultModelAlias: defaultModel,
-                newAPIKey: apiKey.isEmpty ? nil : apiKey,
-                removeAPIKey: clearSavedKey
+                newAPIKey: authMode == "chatgpt" || apiKey.isEmpty ? nil : apiKey,
+                removeAPIKey: clearSavedKey || authMode == "chatgpt",
+                removeAuth: authMode != "chatgpt",
+                removeAPIKeyEnv: authMode == "chatgpt" || cleanAPIKeyEnv.isEmpty
             )
             try writeSecurely(result, to: configURL)
             original = result
             reload()
-            status = "Saved to \(configURL.path). Reopen the workspace to reconnect Arabica."
+            report("Configuration saved. Reopen the workspace to apply connection and routing changes.", kind: .success)
+            return true
         } catch {
-            status = "Could not save config: \(error.localizedDescription)"
+            report("Could not save configuration: \(error.localizedDescription)", kind: .error)
+            return false
         }
     }
 
@@ -316,11 +622,11 @@ final class ConfigEditor: ObservableObject {
     }
 
     static func supportedThinkingValues(apiType: String) -> [String] {
-        switch apiType {
-        case "open_ai_chat_completions":
+        switch apiType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "open_ai_chat_completions", "openai_chat_completions", "chat_completions":
             return ["off", "on"]
-        case "open_ai_responses":
-            return ["off", "low", "medium", "high"]
+        case "open_ai_responses", "openai_responses", "responses":
+            return ["low", "medium", "high", "xhigh", "max"]
         default:
             return ["off"]
         }
@@ -351,6 +657,14 @@ final class ConfigEditor: ObservableObject {
             throw error
         }
     }
+
+    private func configurationOnDisk() throws -> String {
+        do {
+            return try String(contentsOf: configURL, encoding: .utf8)
+        } catch CocoaError.fileReadNoSuchFile {
+            return ""
+        }
+    }
 }
 
 struct ConfigDocument {
@@ -358,6 +672,19 @@ struct ConfigDocument {
     var sectionNames: [String] { lines.compactMap(Self.sectionName) }
 
     init(_ text: String) { lines = text.components(separatedBy: .newlines) }
+
+    static func tablePath(_ keys: String...) -> String {
+        keys.map { isBareKey($0) ? $0 : quote($0) }.joined(separator: ".")
+    }
+
+    func childSectionNames(in section: String) -> [String] {
+        guard let parent = Self.keyPath(section) else { return [] }
+        return sectionNames.compactMap { name in
+            guard let path = Self.keyPath(name), path.count == parent.count + 1,
+                  Array(path.dropLast()) == parent else { return nil }
+            return path.last
+        }
+    }
 
     func values(in section: String) -> [String: String] {
         guard let range = range(of: section) else { return [:] }
@@ -380,22 +707,26 @@ struct ConfigDocument {
         defaultPolicy: String,
         defaultModelAlias: String,
         newAPIKey: String?,
-        removeAPIKey: Bool
+        removeAPIKey: Bool,
+        removeAuth: Bool = false,
+        removeAPIKeyEnv: Bool = false
     ) throws -> String {
         var result = self
-        if oldProviderSection != newProviderSection, result.range(of: newProviderSection) != nil {
+        if Self.keyPath(oldProviderSection) != Self.keyPath(newProviderSection), result.range(of: newProviderSection) != nil {
             throw EditorError.multipleManagedSections
         }
-        if let oldModelSection, oldModelSection != newModelSection,
+        if let oldModelSection, Self.keyPath(oldModelSection) != Self.keyPath(newModelSection),
            result.range(of: newModelSection) != nil { throw EditorError.multipleManagedSections }
 
-        if oldProviderSection == "provider" {
+        if Self.keyPath(oldProviderSection) == ["provider"] {
             result.renameSection("provider", to: newProviderSection)
             result.removeKey("model", in: newProviderSection)
         } else if result.range(of: newProviderSection) == nil {
             result.appendSection(newProviderSection)
         }
         for (key, value) in providerValues { result.set(key, value: value, in: newProviderSection) }
+        if removeAuth { result.removeKey("auth", in: newProviderSection) }
+        if removeAPIKeyEnv { result.removeKey("api_key_env", in: newProviderSection) }
         if !thinking.isEmpty {
             result.set("thinking", value: Self.quote(thinking), in: newProviderSection)
         }
@@ -407,15 +738,15 @@ struct ConfigDocument {
             result.removeKey("api_key", in: newProviderSection)
         }
         if let oldModelSection {
-            if oldModelSection != newModelSection { result.renameSection(oldModelSection, to: newModelSection) }
+            if Self.keyPath(oldModelSection) != Self.keyPath(newModelSection) { result.renameSection(oldModelSection, to: newModelSection) }
         } else if result.range(of: newModelSection) == nil {
             result.appendSection(newModelSection)
         }
         for (key, value) in modelValues { result.set(key, value: value, in: newModelSection) }
         if result.range(of: "blend") == nil { result.appendSection("blend") }
-        let namedPolicies = result.sectionNames.filter { $0.hasPrefix("blend.policies.") }
+        let namedPolicies = result.childSectionNames(in: "blend.policies")
         if !namedPolicies.isEmpty {
-            let policySection = "blend.policies.\(defaultPolicy)"
+            let policySection = Self.tablePath("blend", "policies", defaultPolicy)
             guard !defaultPolicy.isEmpty, result.range(of: policySection) != nil else {
                 throw EditorError.multipleManagedSections
             }
@@ -428,7 +759,7 @@ struct ConfigDocument {
     }
 
     func settingDefaultPolicy(_ policyID: String) throws -> String {
-        guard range(of: "blend.policies.\(policyID)") != nil else {
+        guard range(of: Self.tablePath("blend", "policies", policyID)) != nil else {
             throw EditorError.multipleManagedSections
         }
         var result = self
@@ -438,8 +769,11 @@ struct ConfigDocument {
     }
 
     private mutating func renameSection(_ name: String, to replacement: String) {
-        guard let index = lines.firstIndex(where: { Self.sectionName($0) == name }) else { return }
-        lines[index] = "[\(replacement)]"
+        guard let path = Self.keyPath(name),
+              let index = lines.firstIndex(where: { Self.tableHeader($0)?.keys == path }) else { return }
+        let content = Self.withoutComment(lines[index])
+        let comment = String(lines[index].dropFirst(content.count))
+        lines[index] = "[\(replacement)]" + (comment.isEmpty ? "" : " \(comment)")
     }
 
     private mutating func appendSection(_ name: String) {
@@ -468,28 +802,93 @@ struct ConfigDocument {
     }
 
     private func range(of section: String) -> Range<Int>? {
-        guard let start = lines.firstIndex(where: { Self.sectionName($0) == section }) else { return nil }
+        guard let path = Self.keyPath(section),
+              let start = lines.firstIndex(where: {
+                  guard let header = Self.tableHeader($0) else { return false }
+                  return !header.isArray && header.keys == path
+              }) else { return nil }
         let end = lines[(start + 1)...].firstIndex(where: { Self.isTableHeader($0) }) ?? lines.endIndex
         return (start + 1)..<end
     }
 
     private static func isTableHeader(_ line: String) -> Bool {
-        let value = line.trimmingCharacters(in: .whitespaces)
-        return value.hasPrefix("[") && value.hasSuffix("]")
+        tableHeader(line) != nil
     }
 
     private static func sectionName(_ line: String) -> String? {
-        let value = line.trimmingCharacters(in: .whitespaces)
-        guard value.hasPrefix("["), value.hasSuffix("]"), !value.hasPrefix("[[") else { return nil }
-        return String(value.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        guard let header = tableHeader(line), !header.isArray else { return nil }
+        return header.keys.map { isBareKey($0) ? $0 : quote($0) }.joined(separator: ".")
+    }
+
+    private static func tableHeader(_ line: String) -> (keys: [String], isArray: Bool)? {
+        let content = withoutComment(line).trimmingCharacters(in: .whitespaces)
+        let isArray = content.hasPrefix("[[")
+        let bracketCount = isArray ? 2 : 1
+        guard content.hasPrefix("["), content.hasSuffix(isArray ? "]]" : "]"),
+              content.count > bracketCount * 2,
+              let keys = keyPath(String(content.dropFirst(bracketCount).dropLast(bracketCount))) else { return nil }
+        return (keys, isArray)
+    }
+
+    private static func isBareKey(_ value: String) -> Bool {
+        !value.isEmpty && value.unicodeScalars.allSatisfy {
+            (0x30...0x39).contains($0.value) || (0x41...0x5A).contains($0.value) ||
+                (0x61...0x7A).contains($0.value) || $0 == "_" || $0 == "-"
+        }
+    }
+
+    private static func keyPath(_ source: String) -> [String]? {
+        let characters = Array(source)
+        var index = 0
+        var keys: [String] = []
+        while index < characters.count {
+            while index < characters.count, characters[index].isWhitespace { index += 1 }
+            guard index < characters.count else { return nil }
+            let start = index
+            let first = characters[index]
+            if first == "\"" || first == "'" {
+                index += 1
+                var escaped = false
+                while index < characters.count {
+                    let character = characters[index]
+                    index += 1
+                    if escaped { escaped = false; continue }
+                    if first == "\"", character == "\\" { escaped = true; continue }
+                    if character == first { break }
+                }
+                guard let decoded = decode(String(characters[start..<index])) else { return nil }
+                keys.append(decoded)
+            } else {
+                while index < characters.count, characters[index] != ".", !characters[index].isWhitespace { index += 1 }
+                let key = String(characters[start..<index])
+                guard isBareKey(key) else { return nil }
+                keys.append(key)
+            }
+            while index < characters.count, characters[index].isWhitespace { index += 1 }
+            if index == characters.count { return keys }
+            guard characters[index] == "." else { return nil }
+            index += 1
+        }
+        return nil
     }
 
     private static func keyValue(_ line: String) -> (key: String, value: String)? {
         let content = withoutComment(line)
-        guard let equals = content.firstIndex(of: "=") else { return nil }
-        let key = content[..<equals].trimmingCharacters(in: .whitespaces)
-        guard !key.isEmpty else { return nil }
-        return (key, content[content.index(after: equals)...].trimmingCharacters(in: .whitespaces))
+        var quote: Character?
+        var escaped = false
+        for index in content.indices {
+            let character = content[index]
+            if escaped { escaped = false; continue }
+            if character == "\\", quote == "\"" { escaped = true; continue }
+            if character == "\"" || character == "'" {
+                if quote == character { quote = nil } else if quote == nil { quote = character }
+            }
+            if character == "=", quote == nil {
+                guard let keys = keyPath(String(content[..<index])), keys.count == 1 else { return nil }
+                return (keys[0], content[content.index(after: index)...].trimmingCharacters(in: .whitespaces))
+            }
+        }
+        return nil
     }
 
     private static func withoutComment(_ line: String) -> String {
@@ -508,11 +907,41 @@ struct ConfigDocument {
 
     private static func decode(_ value: String) -> String? {
         guard value.count >= 2 else { return nil }
-        if value.first == "'", value.last == "'" { return String(value.dropFirst().dropLast()) }
+        let body = String(value.dropFirst().dropLast())
+        guard !body.contains("\n"), !body.contains("\r") else { return nil }
+        if value.first == "'", value.last == "'", !body.contains("'") { return body }
         guard value.first == "\"", value.last == "\"" else { return nil }
-        guard let data = "[\(value)]".data(using: .utf8),
-              let decoded = try? JSONSerialization.jsonObject(with: data) as? [String], decoded.count == 1 else { return nil }
-        return decoded[0]
+        var decoded = ""
+        var iterator = body.unicodeScalars.makeIterator()
+        while let scalar = iterator.next() {
+            guard scalar.value >= 0x20 || scalar.value == 0x09 else { return nil }
+            guard scalar.value != 0x7F, scalar != "\"" else { return nil }
+            if scalar != "\\" {
+                decoded.unicodeScalars.append(scalar)
+                continue
+            }
+            guard let escaped = iterator.next() else { return nil }
+            switch escaped {
+            case "b": decoded += "\u{08}"
+            case "t": decoded += "\t"
+            case "n": decoded += "\n"
+            case "f": decoded += "\u{0C}"
+            case "r": decoded += "\r"
+            case "\"": decoded += "\""
+            case "\\": decoded += "\\"
+            case "u", "U":
+                var digits = ""
+                for _ in 0..<(escaped == "u" ? 4 : 8) {
+                    guard let digit = iterator.next(), digit.isASCII,
+                          Character(String(digit)).isHexDigit else { return nil }
+                    digits.unicodeScalars.append(digit)
+                }
+                guard let number = UInt32(digits, radix: 16), let unicode = UnicodeScalar(number) else { return nil }
+                decoded.unicodeScalars.append(unicode)
+            default: return nil
+            }
+        }
+        return decoded
     }
 
     static func quote(_ value: String) -> String {
@@ -541,8 +970,8 @@ struct ConfigDocument {
         var inMcp = false
 
         for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed == "[[mcp]]" {
+            let header = Self.tableHeader(line)
+            if let header, header.isArray, header.keys == ["mcp"] {
                 if inMcp {
                     if let item = Self.parseMcpItem(from: currentLines) {
                         servers.append(item)
@@ -551,8 +980,8 @@ struct ConfigDocument {
                 }
                 inMcp = true
                 continue
-            } else if trimmed.hasPrefix("[") && inMcp {
-                if !trimmed.hasPrefix("[mcp.") {
+            } else if let header, inMcp {
+                if header.isArray || header.keys.first != "mcp" || header.keys.count == 1 {
                     if let item = Self.parseMcpItem(from: currentLines) {
                         servers.append(item)
                     }
@@ -579,12 +1008,9 @@ struct ConfigDocument {
         var inEnv = false
 
         for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed == "[mcp.env]" {
-                inEnv = true
+            if let header = tableHeader(line) {
+                inEnv = !header.isArray && header.keys == ["mcp", "env"]
                 continue
-            } else if trimmed.hasPrefix("[") {
-                inEnv = false
             }
             if inEnv {
                 if let (key, _) = keyValue(line) {
@@ -637,10 +1063,8 @@ struct ConfigDocument {
     }
 
     func configuredPolicies() -> [ConfiguredPolicyItem] {
-        let policySections = sectionNames.filter { $0.hasPrefix("blend.policies.") }
-        return policySections.map { section in
-            let id = String(section.dropFirst("blend.policies.".count))
-            let vals = values(in: section)
+        childSectionNames(in: "blend.policies").map { id in
+            let vals = values(in: Self.tablePath("blend", "policies", id))
             let version = vals["version"].flatMap { UInt64($0) }
             let defaultModel = vals["default_model"] ?? ""
             let afterSuccess = vals["after_tool_success"]

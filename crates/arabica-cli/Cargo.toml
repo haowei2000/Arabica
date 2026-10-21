@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 agent-client-protocol.workspace = true
 rmcp.workspace = true
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rpassword = "7.5"
 clap.workspace = true
 crossterm = "0.29"
@@ -28,17 +28,30 @@ similar.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 sha2.workspace = true
+base64.workspace = true
+rand.workspace = true
+jsonwebtoken.workspace = true
+url.workspace = true
 hex.workspace = true
+ed25519-dalek = "2"
+flate2 = "1"
+fs2.workspace = true
+semver = "1"
+self-replace = "1.5"
+tar = "0.4"
+tempfile = "3"
+zip = { version = "4", default-features = false, features = ["deflate"] }
 toml.workspace = true
+toml_edit = "0.23"
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
-arabica-adapters = { version = "0.5.0", path = "../arabica-adapters" }
-arabica-model = { version = "0.5.0", path = "../arabica-model" }
-arabica-protocol = { version = "0.5.0", path = "../arabica-protocol" }
-arabica-provider = { version = "0.5.0", path = "../arabica-provider" }
-arabica-runner = { version = "0.5.0", path = "../arabica-runner" }
-arabica-runtime = { version = "0.5.0", path = "../arabica-runtime" }
-arabica-session = { version = "0.5.0", path = "../arabica-session" }
+arabica-adapters = { version = "0.9.0", path = "../arabica-adapters" }
+arabica-model = { version = "0.9.0", path = "../arabica-model" }
+arabica-protocol = { version = "0.9.0", path = "../arabica-protocol" }
+arabica-provider = { version = "0.9.0", path = "../arabica-provider" }
+arabica-runner = { version = "0.9.0", path = "../arabica-runner" }
+arabica-runtime = { version = "0.9.0", path = "../arabica-runtime" }
+arabica-session = { version = "0.9.0", path = "../arabica-session" }
 tokio.workspace = true
 uuid.workspace = true
 serde-saphyr = { version = "=0.0.28", default-features = false, features = ["deserialize"] }

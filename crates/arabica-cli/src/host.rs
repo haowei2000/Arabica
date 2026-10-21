@@ -54,6 +54,15 @@ pub struct HostConfigArgs {
     /// Override the default Blend alias model ID (ARABICA__MODEL).
     #[arg(long)]
     pub model: Option<String>,
+    /// Select a configured model alias as the policy's default model.
+    #[arg(long, conflicts_with = "model")]
+    pub model_alias: Option<String>,
+    /// Select a configured Blend policy.
+    #[arg(long)]
+    pub policy: Option<String>,
+    /// Override reasoning effort for the selected default model.
+    #[arg(long)]
+    pub thinking: Option<String>,
     /// Override ARABICA__API_TYPE for the default alias's provider.
     #[arg(long)]
     pub api_type: Option<String>,

@@ -13,6 +13,12 @@ headless; the desktop package owns only presentation and process management.
 - An Arabica provider configuration in `~/.arabica/config.toml` or the
   supported environment variables (see the repository configuration guide)
 
+The current native appearance requires building with the latest macOS SDK.
+Desktop CI and release builds pin Xcode 27.1 (27A9275), with the macOS 27.0
+SDK, while retaining macOS 14 as the deployment target. Standard navigation,
+toolbars, lists, and forms follow the appearance of the system running the app.
+Building with an older SDK can retain the older system styling even on a new Mac.
+
 ## Build and run
 
 From this directory:
@@ -32,31 +38,93 @@ development, `swift build` and `swift test` work independently; set
 running the Swift executable outside the application bundle.
 
 Choose a workspace folder, create a conversation, and send a message. Previous
-sessions in that folder can be loaded or resumed from the sidebar; the context
-menu closes a session. ACP v1 tool calls show
+sessions can be found with the toolbar search and loaded or resumed. The native
+window toolbar groups Toggle Sidebar, Search Conversations, Open Workspace, and
+Choose Workspace. Option-Command-S toggles the sidebar; Shift-Command-F opens
+search, and Command-O opens a workspace folder. Drafts and attachments
+are kept separately for each conversation while the app is running. Streaming
+replies follow the latest message until you scroll back; **Jump to Latest**
+resumes following the conversation. ACP v1 tool calls show
 their category, status, text results, diffs, terminal references, and file
 locations. Write and command calls use native permission dialogs. The client
 also handles ACP file and terminal requests within the chosen workspace.
 The paperclip adds files as ACP resource links to a prompt.
+Drag the sidebar divider to resize it, or double-click to reset its width.
+The sidebar uses a native `NSOutlineView`: workspace folders contain conversation
+children with compact single-line titles. Arrow keys navigate the tree; Left and
+Right collapse and expand folders, and Return activates **Show more**. Each folder
+initially shows five conversations. Paths and full status descriptions are available
+in tooltips and accessibility help. Folder disclosure keeps the current conversation
+open. Row actions appear on hover or selection and are also available by right-click;
+New Conversation remains in the top toolbar and each folder's menu. Running, approval,
+error, pinned, and unread indicators stay compact. Choose **View Options → Show Archived
+Conversations** to browse the archive. Narrow windows temporarily collapse the
+sidebar while retaining search and expansion state.
+Filter conversations by title, project, path, or ID. Pin conversations within a project, rename them, or move them
+between Active and Archived; both pinning and archiving persist as shared
+application preferences. Removing a project only hides it from the sidebar.
+Closing a conversation releases its connection while preserving its history
+and in-memory draft. Durable rename uses the optional ACP session extension;
+older hosts leave Rename disabled. See [client session metadata](../../docs/client-sessions.md).
+Opening another project reuses the ACP connection and keeps background tasks
+running. Client file and terminal requests retain their originating session's
+workspace, including after approval. Sidebar rows distinguish loading, running,
+approval, failure, completion, and cancellation, and keep unread background
+results until visited. Busy sessions and projects are protected from sidebar
+organization actions across windows. Sending in an archived conversation
+restores it to Active.
+
+The composer places one **Policy** menu next to Send or Stop, below the message
+field. It has no persistent status banner. Connection, loading, and option-change
+progress appears on the relevant action; configuration errors remain available in
+its help and the conversation error area. **SOE** is a single-model policy that
+uses the selected model for every step. Its model submenu contains Thinking Level.
+Named policies use model routing and thinking levels from the configuration file;
+the composer exposes neither per-model nor thinking overrides for them. Changing
+policies preserves SOE's per-model preferences for the next switch back. Sending
+waits for confirmation of a policy change, and stopping remains pending until the
+run finishes. You can keep writing the next draft while a run is active.
+
+Shift-Command-N opens an independent conversation window with its own ACP
+connection, selected conversation, and drafts. Menu commands target the focused
+conversation window. Settings reconnects the most recently active conversation
+window; appearance preferences remain application-wide. Closing a conversation
+window stops its associated ACP process.
 Settings owns persistent provider, default model, and default policy choices
-in `~/.arabica/config.toml`. It never displays a saved API key and writes the
-configuration with owner-only permissions. Multiple provider/model catalogs,
-policy routes, and MCP definitions remain available through the advanced
-config file opened from Settings. The Composer shows the current session's ACP
-model, policy, and thinking options, plus session modes when the host reports
-them; changing those controls does not rewrite the saved defaults.
+in `$ARABICA_HOME/config.toml` (or `~/.arabica/config.toml` by default). Category
+Native navigation leads to item lists and grouped forms for providers, models,
+policies, MCP servers, and skill directories. Valid edits save automatically.
+Saved credentials remain masked; replacing or removing a secret is explicit.
+Invalid edits stay in the form with an error, and external file changes are
+reported as a conflict instead of being overwritten. The shared Rust host
+validates edits and writes the file atomically with owner-only permissions,
+preserving comments and untouched advanced configuration.
+
+Appearance and typography changes also save automatically. Use **Reconnect**
+to apply connection changes to the active workspace after current activity
+finishes. **Advanced** opens the TOML file for settings outside the forms.
+The composer's Policy menu includes session
+modes when the host reports them; changing its controls saves workspace preferences
+without rewriting the provider defaults. The bundled runtime supports the
+current ChatGPT authentication configuration, including `auth = "chatgpt"`;
+configuration rejection messages identify a safe line and column and direct you
+to Settings.
 
 ## Scope of this version
 
 The client displays text messages, reasoning, plans, configuration options,
-available commands, usage, and tool calls. Rich Markdown, image attachments,
-and distribution signing are later work. The desktop client
+available commands, usage, and tool calls. Markdown includes inline formatting,
+ATX and Setext headings, nested lists and quotes, task indicators, indented and
+fenced code, and horizontally scrollable tables.
+Mermaid blocks preview common flowcharts and sequence diagrams locally; other
+diagram syntax remains available as source with an explanation. Image attachment
+previews remain future work. The desktop client
 speaks ACP v1 and accepts unknown `_meta` extension fields without making
 assumptions about their contents.
 
 ## Background evaluation inspector
 
-Use the toolbar's **Background evaluation** button or **Option-Command-I** to
+Use **View Options → Show Evaluation Panel** in the toolbar or **Option-Command-I** to
 show the collapsible inspector. The panel reads the optional ACP evaluation
 capability and does not send extensions to older agents. Status queries have a
 10-second timeout and run every five seconds while the inspector is visible.

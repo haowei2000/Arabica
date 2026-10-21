@@ -19,6 +19,15 @@ cargo build -p arabica-cli --release
 
 The binary is at `target/release/arabica`.
 
+## Updates
+
+Use `arabica update` to install the latest signed standalone release,
+`arabica update --check` to check without installing, and `arabica update --auto
+off` to disable daily background updates. `arabica --version` prints the installed
+version. Automatic updates run only for interactive standalone installations;
+ACP, scripts, development builds, and package-manager installations do not update
+themselves. See [software updates](updates.md) for details.
+
 ## Configuration
 
 CLI and ACP load the named provider catalog from `$ARABICA_HOME/config.toml`
@@ -73,8 +82,14 @@ If a provider table contains `api_key`, restrict `config.toml` to your account w
 more permissive file or a symlink. Alternatively, run `arabica auth login`
 once to enter the key without echoing it. The key is then saved in `$ARABICA_HOME/auth.json`
 (default `~/.arabica/auth.json`) with owner-only file permissions. Run
-`structure auth status` to see which credential source is active, or
-`structure auth logout` to remove the separately saved key. Provider
+`arabica auth status` to see which credential source is active, or
+`arabica auth logout` to remove the separately saved key. To use an eligible
+ChatGPT plan from this open-source client, run `arabica auth chatgpt-login`.
+After browser authorization, Arabica configures its default model to use the
+OpenAI Responses API and the ChatGPT plan. If no GPT model is already selected,
+it starts with `gpt-6.1-sol`. The official Sign in with ChatGPT flow stores its
+protected credential record in `$ARABICA_HOME/chatgpt-auth.json`; manage it
+with `arabica auth chatgpt-status` and `arabica auth chatgpt-logout`. Provider
 environment variables take precedence over TOML `api_key`; `auth.json` is a
 saved-key fallback for the default provider. Existing shared `[provider]`,
 `OPENAI__*`, and `ARABICA__MODELS` configurations must be migrated to named
@@ -152,7 +167,7 @@ arabica --allow-shell
 arabica --plain
 ```
 
-In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
+In the TUI, typing `/` completes commands, `/thinking `, `/model `, or `/policy ` offers
 configured choices, and `@` searches workspace file paths (respecting ignore
 rules). Use Up/Down to select a suggestion; Tab or Enter accepts it. Left/Right
 always move the editor cursor. Enter sends, Shift+Enter inserts a line. The
@@ -189,11 +204,42 @@ resumed session starts with an empty one. `/context` opens a scrollable view of 
 provider-reported token usage, a policy preview for the next turn, and the
 workspace archive count. The preview excludes the next message and FileBackedGC
 admission; it is not a token estimate. Escape or `q` closes the view. The
-archive count covers the workspace, not just the current session. `/model <alias>` and
-`/thinking <off|on|low|medium|high>` change the
-configured Blend alias or its thinking mode for the next prompt and persist those choices for this workspace. Selecting an alias can switch both provider and model. Chat
-Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
-and `high`.
+archive count covers the workspace, not just the current session.
+
+Use `/model <alias>`, `/policy <name>`, and `/thinking <level>` to change the
+default model, Blend policy, and reasoning effort for the next prompt. Calling
+any of these commands without an argument lists the current selections and
+available choices. Both the fullscreen TUI and plain terminal support them.
+Explicit `/model` and `/thinking` commands select SOE for the active terminal
+session. `/thinking` keeps that session's current model. Choices are saved
+under `$ARABICA_HOME/workspaces/<workspace-id>/config.toml` and shared with the
+desktop and other ACP clients. New or restored sessions read the latest policy
+selection. SOE also restores its saved model and per-model reasoning effort;
+named policies reload their model and thinking defaults from the configuration
+file. Selecting another alias restores that alias's saved SOE effort. Selecting
+a named policy restores its declared default model, file-defined thinking, and
+other routes, including planning and error recovery. `/policy soe` restores the
+saved SOE model and thinking. Interactive model and thinking changes require
+renaming an existing configured policy named `soe`; explicit CLI invocation
+flags remain available for that policy.
+
+Chat Completions supports `off` and `on`; Responses supports `default`, `low`,
+`medium`, `high`, `xhigh`, and `max`. `default` omits an explicit reasoning
+request and uses the model's own default; the legacy Responses `off` value has
+the same meaning. Individual models may support only a subset of effort values.
+
+Startup flags make temporary selections without changing saved preferences:
+
+```bash
+arabica --policy daily-development --model-alias daily --thinking medium
+arabica --policy focused --model-alias repair --thinking high -p "Inspect this change"
+```
+
+Flags override workspace preferences, which override the user configuration.
+`--model` remains a raw upstream model-ID override and cannot be combined with
+`--model-alias`. An explicit `--policy` uses that policy's default model unless
+`--model-alias` is also supplied. See [the daily development example](examples/daily-development.toml)
+for ordinary execution, dedicated planning, error repair, and a fixed-model policy.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval. The chooser defaults to **Allow once**; Enter confirms the selected
@@ -217,9 +263,10 @@ Shell is available only with `--allow-shell` and also requires approval.
 Speaks [Agent Client Protocol](https://agentclientprotocol.com) v1 over
 stdio. `initialize` always answers protocol version 1 with no auth methods
 (`authMethods: []`): credentials come from provider key environment variables
-or the user config. Every `session/new` builds its own runtime and its own
-session manager, so concurrent sessions (multiple editor windows, multiple
-projects) do not share state or serialize behind one lock.
+or the user config, or an existing ChatGPT login in the configured Arabica
+home. Every `session/new` builds its own runtime and its own session manager,
+so concurrent sessions (multiple editor windows, multiple projects) do not
+share state or serialize behind one lock.
 
 ### Zed
 
@@ -248,10 +295,26 @@ secure launch environment if that is unacceptable. The aliases and endpoints
 come from `~/.arabica/config.toml`. Zed's own model-provider settings do not
 configure Structure's providers.
 
-New and restored sessions expose ACP model and thinking selectors. The model
-selector contains configured aliases. Chat
-Completions has `off` and `on` thinking levels; Responses has `off`, `low`,
-`medium`, and `high`. A switch applies to the next prompt in that session.
+New and restored sessions expose an ACP policy selector with `soe` (SOE),
+configured policies, and compatible stored policy versions. SOE runs every step
+with one selected model and clears alternate, recovery, planning, and tool routes.
+Only SOE exposes model and thinking selectors; its model selector includes
+configured aliases and their upstream IDs. The desktop groups these controls in
+the Policy menu below the composer. Named policies use the per-model thinking in
+the configuration file, ignoring SOE workspace and ACP invocation thinking
+overrides. Terminal and one-shot invocation overrides retain their existing
+behavior. The `soe` policy key is reserved in ACP; rename a configured policy
+using that key before connecting.
+
+Changes apply to the next prompt and are saved as workspace preferences, with
+SOE thinking saved separately for each alias. Visiting a named policy preserves
+those SOE preferences for switching back. Existing configured policy routing is
+preserved until SOE is selected. Changes are rejected while a prompt is running;
+the desktop also prevents overlapping setting changes.
+Terminal and one-shot sessions recognize the same saved SOE selection. Saved
+SOE model and thinking overrides are ignored when a named policy is selected;
+explicit CLI flags still override that invocation's default model and thinking.
+Existing configured policies named `soe` retain their CLI routing behavior.
 The Chat Completions adapter sends a nonstandard `thinking` parameter when
 enabled, so the endpoint must support it. In ACP sessions it requests Chat
 Completions streaming and forwards text and `reasoning_content` deltas as
@@ -276,11 +339,14 @@ not just displayed.
 
 ### Sessions and MCP tools
 
-ACP sessions are saved under `$ARABICA_HOME` (or its default location) as
-append-only event logs. The agent supports `session/list`, `session/load`
+ACP sessions are saved in `sessions.sqlite3` under `$ARABICA_HOME` (or its
+default location), with ordered events and separate session metadata. The
+agent supports `session/list`, `session/load`
 (replays history), `session/resume` (continues without replay), and
-`session/close` (suspends the session so it can be opened again). A client
-may supply MCP servers in `session/new`, `session/load`, or `session/resume`;
+`session/close` (suspends the session so it can be opened again). The optional
+[session metadata extension](client-sessions.md) supports persistent title
+changes without loading or prompting a session. A client may supply MCP
+servers in `session/new`, `session/load`, or `session/resume`;
 each request reconnects to its supplied servers and discovers their tools.
 Server configuration, especially environment variables and HTTP headers, is
 not written to the session log.
@@ -295,11 +361,35 @@ exposed to the model yet. Every MCP tool call requires an
 ACP `session/request_permission` decision, even if the server advertises a
 read-only hint.
 
-The MCP client uses the official Rust SDK (`rmcp`). A stdio server receives
+The MCP client uses the official Rust SDK (`rmcp`) and prefers the stateless
+[MCP 2026-07-28 protocol](https://modelcontextprotocol.io/specification/2026-07-28).
+Both transports probe with `server/discover`; modern requests carry the
+protocol version, Arabica client identity, and supported client capabilities
+on every request. Modern HTTP also carries the corresponding protocol and
+method headers, without an initialization handshake or MCP session ID, so
+requests can be handled by different server instances. Servers that reject
+the modern probe as a legacy request fall back to the `2025-11-25`
+initialization handshake; a recognized modern protocol error is reported
+instead of silently downgrading.
+
+Paginated tool discovery, JSON and request-scoped SSE responses, nested
+`x-mcp-header` annotations, structured tool results, and bounded MRTR
+continuations are handled by the SDK. Arabica currently advertises no
+optional client capabilities: elicitation, sampling, roots, MCP Apps, and
+Tasks are not enabled. A state-only MRTR continuation echoes its opaque
+`requestState` with a fresh request ID; it is not exposed as a completed
+tool result. MCP connection and credential scope remains per ACP session.
+
+A stdio server receives
 only a small base environment (`PATH`, `HOME`, temporary-directory and locale
 variables) plus the `env` entries supplied by the ACP client; it does not
 inherit the model provider's API key. HTTP requests use the headers in the
-client's server configuration.
+client's server configuration. Protocol-owned headers (`Accept`,
+`Content-Type`, `Mcp-Session-Id`, `Last-Event-ID`, `MCP-Protocol-Version`,
+`Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*`) are generated by the transport
+and cannot be set in the server configuration. HTTP redirects follow only
+same-origin 307/308 responses, preserving the request body and credential
+boundary.
 
 ### User-configured MCP servers
 
@@ -341,9 +431,11 @@ an ACP client and mock model provider, multi-turn message ordering, permission
 requests, ACP load/resume, and print-mode cross-process session recovery. The
 in-process ACP client test
 `client_supplied_stdio_mcp_tool_is_discovered_approved_and_executed` connects
-to a stdio MCP fixture, approves a tool, and checks its side effect. The HTTP
-MCP test verifies discovery, a client-supplied request header, and a tool
-call. After building the binary, configure Zed as above and verify a new
+to a stdio MCP fixture, approves a tool, and checks its side effect. Strict
+modern stdio and HTTP fixtures additionally verify discovery, per-request
+metadata, pagination, tool results, and legacy fallback. HTTP coverage
+includes protocol headers, request-scoped SSE, and MRTR continuation.
+After building the binary, configure Zed as above and verify a new
 session, a tool approval, and reopening the session after restarting Zed.
 
 ## `arabica -p`

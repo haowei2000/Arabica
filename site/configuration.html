@@ -25,7 +25,7 @@
         <div class="map-server"><span class="map-kicker">Separate process configuration</span><strong>HTTP server environment</strong><span>Provider catalog · routing · tool root · memory strategy</span></div>
       </div>
       <div class="docs-callout"><p><strong>Three different meanings of “policy”.</strong> A Blend policy routes model aliases; runner permissions decide whether tools can run; compaction strategy controls runtime memory retention. They are configured and used separately.</p></div>
-      <p>Project <code>AGENTS.md</code> files are instructions sent to the model, not settings in <code>config.toml</code>. They apply to CLI and ACP workspaces. Arabica Desktop is an ACP client: its Settings form edits the primary provider/default model in the shared user file, while session selectors use options reported by the ACP host.</p>
+      <p>Project <code>AGENTS.md</code> files are instructions sent to the model, not settings in <code>config.toml</code>. They apply to CLI and ACP workspaces. Arabica Desktop is an ACP client: its Settings item lists and forms edit providers, model aliases, routing policies, MCP servers, and skill directories in the shared user file. Valid changes save automatically; session selectors use options reported by the ACP host.</p>
     </section>
     <section class="docs-section" id="quickstart"><h2>Quick start</h2><p>Create a named provider, one model alias, and a default policy. Enter the API key separately so it is not written into the TOML file.</p>
 <pre class="code-block"><code>mkdir -p ~/.arabica
@@ -133,6 +133,8 @@ url = "https://mcp.example.test/mcp"
 [mcp.headers]
 Authorization = "Bearer your-token"</code></pre>
       <p>Each server uses exactly one transport: local <code>command</code> (stdio) or HTTP <code>url</code>. Store secrets in environment/header entries only when needed, and keep the config file private.</p>
+      <p>Both transports prefer the stateless <a href="https://modelcontextprotocol.io/specification/2026-07-28">MCP 2026-07-28 protocol</a> and automatically fall back to the legacy initialization handshake for older servers. Modern requests carry their protocol version, client identity, and capabilities independently; HTTP requests do not need an MCP session ID. The same configuration works in the desktop app, terminal, and ACP clients.</p>
+      <p>Use <code>headers</code> for authentication and application-specific headers. Protocol headers such as <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code>, <code>Mcp-Name</code>, and <code>Mcp-Param-*</code> are generated automatically and cannot be overridden. HTTP redirects are limited to same-origin 307/308 responses. Optional capabilities such as MCP Apps, Tasks, and elicitation are not enabled.</p>
     </section>
     <section class="docs-section" id="server"><h2>HTTP server configuration</h2><p><code>arabica-server</code> uses process environment variables rather than the CLI/ACP user TOML. Set the required provider catalog and model aliases, then optional routing and runtime settings.</p>
       <div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Environment variable</th><th>Purpose</th></tr></thead><tbody>

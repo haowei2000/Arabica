@@ -292,7 +292,7 @@ impl SqliteArchiveStore {
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL;\
-                 PRAGMA synchronous=FULL;\
+                 PRAGMA synchronous=NORMAL;\
                  CREATE TABLE IF NOT EXISTS runtime_memory_archive (\
                    memory_id TEXT PRIMARY KEY NOT NULL,\
                    content TEXT NOT NULL,\

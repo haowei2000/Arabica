@@ -18,6 +18,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::host::{HostConfigArgs, workspace_id_for};
 
+pub const SOE_POLICY_ID: &str = "soe";
+
+/// A single-model policy never falls back or routes to another alias.
+pub fn soe_policy(alias: String) -> BlendRoutingPolicy {
+    BlendRoutingPolicy {
+        policy_id: SOE_POLICY_ID.to_owned(),
+        version: 1,
+        default_model: alias.clone(),
+        after_tool_success: None,
+        after_tool_error: None,
+        recovery_model: None,
+        planning_model: None,
+        tool_routes: Vec::new(),
+        recovery_after_no_progress_steps: default_recovery_threshold(),
+        minimum_model_dwell_steps: default_model_dwell_steps(),
+        tool_call_capable_models: [alias.clone()].into(),
+        typed_completion_capable_models: [alias].into(),
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UserConfig {
@@ -152,6 +172,7 @@ fn default_model_dwell_steps() -> usize {
 
 #[derive(Debug)]
 pub struct ResolvedCliConfig {
+    pub invocation: HostConfigArgs,
     /// Configuration for the default model alias, retained for host settings.
     pub provider: ApiProviderConfig,
     pub blend_policy: Option<BlendRoutingPolicy>,
@@ -246,6 +267,7 @@ impl UserMcpServer {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UserProvider {
+    auth: Option<String>,
     api_type: Option<String>,
     api_key: Option<String>,
     api_key_env: Option<String>,
@@ -266,6 +288,10 @@ pub struct WorkspaceSettings {
     pub model_alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blend_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_thinking: BTreeMap<String, String>,
 }
 
 pub fn user_config_path(home: &Path) -> PathBuf {
@@ -276,6 +302,13 @@ pub fn workspace_config_path(home: &Path, cwd: &Path) -> PathBuf {
     home.join("workspaces")
         .join(workspace_id_for(cwd).to_string())
         .join("config.toml")
+}
+
+pub fn read_workspace_settings(
+    home: &Path,
+    cwd: &Path,
+) -> Result<WorkspaceSettings, Box<dyn std::error::Error>> {
+    read_toml(&workspace_config_path(home, cwd))
 }
 
 fn read_toml<T: for<'de> Deserialize<'de> + Default>(
@@ -366,6 +399,334 @@ fn read_user_config(home: &Path) -> Result<UserConfig, Box<dyn std::error::Error
     Ok(config)
 }
 
+/// Schema and semantic validation for a configuration edit. This deliberately
+/// does not resolve credentials, workspace overrides, saved policies, or hosts.
+pub(crate) struct SettingsValidationError {
+    pub path: Vec<String>,
+    pub message: &'static str,
+}
+
+pub(crate) fn validate_settings_document(
+    document: &toml::Value,
+) -> Result<(), SettingsValidationError> {
+    fn invalid(path: Vec<String>, message: &'static str) -> SettingsValidationError {
+        SettingsValidationError { path, message }
+    }
+    fn field(section: &str, name: &str, key: &str) -> Vec<String> {
+        vec![section.to_owned(), name.to_owned(), key.to_owned()]
+    }
+    fn http_url(value: &str) -> bool {
+        url::Url::parse(value)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+    }
+    let config: UserConfig = document.clone().try_into().map_err(|_| invalid(
+        Vec::new(),
+        "The configuration has an unsupported field, an incorrect field type, or a missing required field. Match the documented config.toml schema.",
+    ))?;
+    for (name, provider) in &config.providers {
+        let path = |key| field("providers", name, key);
+        if name.trim().is_empty() {
+            return Err(invalid(
+                vec!["providers".to_owned(), name.clone()],
+                "Provider IDs must not be empty.",
+            ));
+        }
+        if provider
+            .api_key
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(invalid(
+                path("api_key"),
+                "An API key must not be empty. Remove the field to use another credential source.",
+            ));
+        }
+        if provider
+            .api_key_env
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty() || value.contains(['=', '\0']))
+        {
+            return Err(invalid(
+                path("api_key_env"),
+                "Specify a non-empty environment variable name without equals signs or NUL characters.",
+            ));
+        }
+        let chatgpt = provider
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.eq_ignore_ascii_case("chatgpt"));
+        if provider.auth.is_some() && !chatgpt {
+            return Err(invalid(
+                path("auth"),
+                "The supported provider authentication mode is chatgpt. Remove auth to use an API key.",
+            ));
+        }
+        if chatgpt && (provider.api_key.is_some() || provider.api_key_env.is_some()) {
+            return Err(invalid(
+                path("auth"),
+                "ChatGPT authentication cannot be combined with API-key fields.",
+            ));
+        }
+        let api_type = provider
+            .api_type
+            .as_deref()
+            .map(str::parse::<ApiType>)
+            .transpose()
+            .map_err(|_| invalid(path("api_type"), "Select a supported provider API type."))?
+            .unwrap_or(if chatgpt {
+                ApiType::OpenAiResponses
+            } else {
+                ApiType::OpenAiChatCompletions
+            });
+        if chatgpt && api_type != ApiType::OpenAiResponses {
+            return Err(invalid(
+                path("api_type"),
+                "ChatGPT authentication requires the OpenAI Responses API.",
+            ));
+        }
+        if let Some(base_url) = &provider.base_url {
+            if !http_url(base_url) {
+                return Err(invalid(
+                    path("base_url"),
+                    "Use an absolute HTTP or HTTPS provider URL.",
+                ));
+            }
+            if chatgpt && base_url.trim_end_matches('/') != "https://api.openai.com/v1" {
+                return Err(invalid(
+                    path("base_url"),
+                    "ChatGPT authentication requires https://api.openai.com/v1.",
+                ));
+            }
+        }
+        if provider.max_tokens == Some(0) {
+            return Err(invalid(
+                path("max_tokens"),
+                "The token limit must be positive.",
+            ));
+        }
+        if provider.request_timeout_secs == Some(0) {
+            return Err(invalid(
+                path("request_timeout_secs"),
+                "The request timeout must be positive.",
+            ));
+        }
+        if provider.anthropic_cache_static_prefix == Some(true)
+            && api_type != ApiType::AnthropicMessages
+        {
+            return Err(invalid(
+                path("anthropic_cache_static_prefix"),
+                "Static prefix caching requires the Anthropic Messages API.",
+            ));
+        }
+        if provider.thinking.is_some() && provider.reasoning_effort.is_some() {
+            return Err(invalid(
+                path("thinking"),
+                "Configure either thinking or reasoning_effort, not both.",
+            ));
+        }
+        let mut configuration = ApiProviderConfig::new(
+            api_type,
+            "settings-validation",
+            "https://example.invalid",
+            "settings-validation",
+        );
+        for (key, value) in [
+            ("thinking", &provider.thinking),
+            ("reasoning_effort", &provider.reasoning_effort),
+        ] {
+            if let Some(value) = value {
+                set_thinking(&mut configuration, value).map_err(|_| {
+                    invalid(
+                        path(key),
+                        "Select a thinking level supported by this provider API type.",
+                    )
+                })?;
+            }
+        }
+    }
+    for (alias, model) in &config.models {
+        if alias.trim().is_empty() {
+            return Err(invalid(
+                vec!["models".to_owned(), alias.clone()],
+                "Model aliases must not be empty.",
+            ));
+        }
+        if !config.providers.contains_key(&model.provider) {
+            return Err(invalid(
+                field("models", alias, "provider"),
+                "Select an existing provider before saving this model.",
+            ));
+        }
+        if model.model_id.trim().is_empty() {
+            return Err(invalid(
+                field("models", alias, "model_id"),
+                "A model ID must not be empty.",
+            ));
+        }
+    }
+    if let Some(blend) = &config.blend {
+        let aliases = config
+            .models
+            .iter()
+            .map(|(alias, model)| (alias.clone(), model.model_id.clone()))
+            .collect();
+        let policies = configured_file_blend_policies(blend, &aliases).map_err(|_| invalid(
+            vec!["blend".to_owned()],
+            "Policies require existing model aliases, positive version and thresholds, and valid unique tool routes. Use either a single policy or named policies.",
+        ))?;
+        if blend
+            .default_policy
+            .as_ref()
+            .is_some_and(|id| !policies.contains_key(id))
+        {
+            return Err(invalid(
+                vec!["blend".to_owned(), "default_policy".to_owned()],
+                "Select an existing default policy.",
+            ));
+        }
+    }
+    let mut server_names = BTreeSet::new();
+    for (index, server) in config.mcp.iter().enumerate() {
+        let path = |key: &str| vec!["mcp".to_owned(), index.to_string(), key.to_owned()];
+        if server.name.trim().is_empty() || !server_names.insert(server.name.as_str()) {
+            return Err(invalid(
+                path("name"),
+                "MCP server names must be non-empty and unique.",
+            ));
+        }
+        match (&server.command, &server.url) {
+            (Some(command), None)
+                if Path::new(command).is_absolute() && !command.contains('\0') =>
+            {
+                if server
+                    .headers
+                    .as_ref()
+                    .is_some_and(|headers| !headers.is_empty())
+                {
+                    return Err(invalid(
+                        path("headers"),
+                        "HTTP headers apply only to MCP servers configured with a URL.",
+                    ));
+                }
+            }
+            (Some(_), None) => {
+                return Err(invalid(
+                    path("command"),
+                    "Use an absolute executable path for an MCP stdio server.",
+                ));
+            }
+            (None, Some(url)) if http_url(url) => {
+                if !server.args.is_empty() || server.env.as_ref().is_some_and(|env| !env.is_empty())
+                {
+                    return Err(invalid(
+                        path("url"),
+                        "Arguments and environment variables apply only to MCP stdio servers.",
+                    ));
+                }
+            }
+            (None, Some(_)) => {
+                return Err(invalid(
+                    path("url"),
+                    "Use an absolute HTTP or HTTPS MCP URL.",
+                ));
+            }
+            _ => {
+                return Err(invalid(
+                    path("command"),
+                    "Configure exactly one MCP transport: command or url.",
+                ));
+            }
+        }
+        if server.args.iter().any(|argument| argument.contains('\0')) {
+            return Err(invalid(
+                path("args"),
+                "MCP arguments must not contain NUL characters.",
+            ));
+        }
+        for (key, value) in server.env.iter().flatten() {
+            if key.is_empty() || key.contains(['=', '\0']) || value.contains('\0') {
+                let mut path = path("env");
+                path.push(key.clone());
+                return Err(invalid(
+                    path,
+                    "Environment names must be non-empty and contain no equals sign or NUL; values must contain no NUL.",
+                ));
+            }
+        }
+        for (key, value) in server.headers.iter().flatten() {
+            let mut field_path = path("headers");
+            field_path.push(key.clone());
+            let name = reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                .map_err(|_| invalid(field_path.clone(), "Specify a valid HTTP header name."))?;
+            reqwest::header::HeaderValue::from_str(value).map_err(|_| {
+                invalid(
+                    field_path.clone(),
+                    "The HTTP header value contains unsupported characters.",
+                )
+            })?;
+            if matches!(
+                name.as_str(),
+                "accept"
+                    | "content-type"
+                    | "mcp-session-id"
+                    | "last-event-id"
+                    | "mcp-protocol-version"
+                    | "mcp-method"
+                    | "mcp-name"
+            ) || name.as_str().starts_with("mcp-param-")
+            {
+                return Err(invalid(
+                    field_path,
+                    "Protocol-owned MCP headers are generated automatically and cannot be overridden.",
+                ));
+            }
+        }
+    }
+    for (index, root) in config.skills.roots.iter().enumerate() {
+        if root.as_os_str().is_empty() || root.to_string_lossy().contains('\0') {
+            return Err(invalid(
+                vec!["skills".to_owned(), "roots".to_owned(), index.to_string()],
+                "Specify a non-empty skills directory path without NUL characters.",
+            ));
+        }
+    }
+    if let Some(context) = &config.context {
+        context.validate().map_err(|_| invalid(vec!["context".to_owned()], "The context policy requires valid sets, references, a non-empty ID, and a positive version."))?;
+    }
+    if let Some(evaluation) = config.evaluation {
+        let evaluation: arabica_runtime::EvaluationConfig =
+            evaluation.try_into().map_err(|_| {
+                invalid(
+                    vec!["evaluation".to_owned()],
+                    "The evaluation configuration contains an unsupported field or field type.",
+                )
+            })?;
+        let registry =
+            arabica_runtime::EvaluationRegistry::builtins(&evaluation).map_err(|_| {
+                invalid(
+                    vec!["evaluation".to_owned()],
+                    "The evaluation configuration has invalid clustering bounds or strategies.",
+                )
+            })?;
+        let evidence = arabica_runtime::EvaluationEvidence::from_history(&[]);
+        registry
+            .context(&evaluation.context_strategy, &evidence)
+            .and_then(|_| {
+                registry
+                    .model(&evaluation.model_strategy, &evidence)
+                    .map(|_| ())
+            })
+            .map_err(|_| {
+                invalid(
+                    vec!["evaluation".to_owned()],
+                    "Select registered evaluation strategies.",
+                )
+            })?;
+    }
+    resolve_permission_policy(config.permissions.as_ref()).map_err(|_| invalid(vec!["permissions".to_owned()], "Permission rules require valid tool names, parameters, regex patterns, and allow, ask, or deny actions."))?;
+    Ok(())
+}
+
 pub fn user_config_key(home: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
     Ok(read_user_config(home)?
         .providers
@@ -438,19 +799,13 @@ pub fn user_config_blend_policies(
     home: &Path,
     cwd: &Path,
 ) -> Result<BTreeMap<String, BlendRoutingPolicy>, Box<dyn std::error::Error>> {
-    let args = crate::host::HostConfigArgs {
-        model: None,
-        base_url: None,
-        api_type: None,
-    };
-    let resolved = resolve_cli_runtime_config(&args, home, cwd, |_| None)?;
-    let mut policies = resolved.blend_policies;
-    if let Some(default_policy) = resolved.blend_policy {
-        policies
-            .entry(default_policy.policy_id.clone())
-            .or_insert(default_policy);
-    }
-    Ok(policies)
+    let resolved = resolve_cli_runtime_config(
+        &HostConfigArgs::default(),
+        home,
+        cwd,
+        crate::host::process_environment,
+    )?;
+    Ok(resolved.blend_policies)
 }
 
 /// Relative skill roots resolve against ARABICA_HOME, never the model's input.
@@ -479,15 +834,136 @@ pub fn resolve_cli_config(
     Ok(resolve_cli_runtime_config(args, home, cwd, lookup)?.provider)
 }
 
+fn configured_blend_policies(
+    blend: &UserBlend,
+    models: &BTreeMap<String, String>,
+    home: &Path,
+) -> Result<BTreeMap<String, BlendRoutingPolicy>, Box<dyn std::error::Error>> {
+    let mut policies = configured_file_blend_policies(blend, models)?;
+    if let Ok(records) = arabica_adapters::SqliteEvaluationStore::read_policy_versions(
+        &home.join("evaluation.sqlite3"),
+        None,
+    ) {
+        for record in records {
+            let policy = record.policy;
+            let key = format!("{}-v{}", record.policy_id, record.version);
+            if validate_blend_policy(&policy, models).is_ok() {
+                policies.entry(key).or_insert(policy);
+            }
+        }
+    }
+    Ok(policies)
+}
+
+fn configured_file_blend_policies(
+    blend: &UserBlend,
+    models: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, BlendRoutingPolicy>, Box<dyn std::error::Error>> {
+    let named_policies = !blend.policies.is_empty();
+    let mut policies = BTreeMap::new();
+    if named_policies {
+        if blend.policy_id.is_some()
+            || blend.version.is_some()
+            || blend.default_model.is_some()
+            || blend.after_tool_success.is_some()
+            || blend.after_tool_error.is_some()
+            || blend.recovery_model.is_some()
+            || blend.planning_model.is_some()
+            || !blend.tool_routes.is_empty()
+            || blend.recovery_after_no_progress_steps.is_some()
+            || blend.minimum_model_dwell_steps.is_some()
+            || !blend.tool_call_capable_models.is_empty()
+            || !blend.typed_completion_capable_models.is_empty()
+        {
+            return Err(
+                "configure either the single [blend] policy or [blend.policies.<name>] entries, not both".into(),
+            );
+        }
+        for (id, configured) in &blend.policies {
+            let policy = BlendRoutingPolicy {
+                policy_id: id.clone(),
+                version: configured.version.unwrap_or(1),
+                default_model: configured.default_model.clone(),
+                after_tool_success: configured.after_tool_success.clone(),
+                after_tool_error: configured.after_tool_error.clone(),
+                recovery_model: configured.recovery_model.clone(),
+                planning_model: configured.planning_model.clone(),
+                tool_routes: configured.tool_routes.clone(),
+                recovery_after_no_progress_steps: configured.recovery_after_no_progress_steps,
+                minimum_model_dwell_steps: configured.minimum_model_dwell_steps,
+                tool_call_capable_models: configured.tool_call_capable_models.clone(),
+                typed_completion_capable_models: configured.typed_completion_capable_models.clone(),
+            };
+            validate_blend_policy(&policy, models)?;
+            policies.insert(id.clone(), policy);
+        }
+    } else {
+        let id = blend
+            .policy_id
+            .clone()
+            .or_else(|| blend.default_policy.clone())
+            .unwrap_or_else(|| "cli-config".to_owned());
+        let policy = BlendRoutingPolicy {
+            policy_id: id.clone(),
+            version: blend.version.unwrap_or(1),
+            default_model: blend
+                .default_model
+                .clone()
+                .ok_or("[blend].default_model is required")?,
+            after_tool_success: blend.after_tool_success.clone(),
+            after_tool_error: blend.after_tool_error.clone(),
+            recovery_model: blend.recovery_model.clone(),
+            planning_model: blend.planning_model.clone(),
+            tool_routes: blend.tool_routes.clone(),
+            recovery_after_no_progress_steps: blend
+                .recovery_after_no_progress_steps
+                .unwrap_or_else(default_recovery_threshold),
+            minimum_model_dwell_steps: blend
+                .minimum_model_dwell_steps
+                .unwrap_or_else(default_model_dwell_steps),
+            tool_call_capable_models: blend.tool_call_capable_models.clone(),
+            typed_completion_capable_models: blend.typed_completion_capable_models.clone(),
+        };
+        validate_blend_policy(&policy, models)?;
+        policies.insert(id, policy);
+    }
+
+    Ok(policies)
+}
+
 pub fn resolve_cli_runtime_config(
     args: &HostConfigArgs,
     home: &Path,
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<ResolvedCliConfig, Box<dyn std::error::Error>> {
+    resolve_runtime_config(args, home, cwd, lookup, true)
+}
+
+/// ACP resolves workspace preferences separately for each session's cwd.
+pub fn resolve_cli_acp_config(
+    args: &HostConfigArgs,
+    home: &Path,
+    cwd: &Path,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<ResolvedCliConfig, Box<dyn std::error::Error>> {
+    resolve_runtime_config(args, home, cwd, lookup, false)
+}
+
+fn resolve_runtime_config(
+    args: &HostConfigArgs,
+    home: &Path,
+    cwd: &Path,
+    lookup: impl Fn(&str) -> Option<String>,
+    use_workspace: bool,
+) -> Result<ResolvedCliConfig, Box<dyn std::error::Error>> {
     let user = read_user_config(home)?;
     let permission_policy = resolve_permission_policy(user.permissions.as_ref())?;
-    let workspace: WorkspaceSettings = read_toml(&workspace_config_path(home, cwd))?;
+    let workspace = if use_workspace {
+        read_workspace_settings(home, cwd)?
+    } else {
+        WorkspaceSettings::default()
+    };
     if user.models.is_empty() && user.blend.is_some() {
         return Err("[blend] requires at least one [models.<alias>] entry".into());
     }
@@ -517,21 +993,39 @@ pub fn resolve_cli_runtime_config(
             Ok((alias.clone(), model.model_id.clone()))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let configured_default_alias = user
-        .blend
-        .as_ref()
-        .and_then(UserBlend::configured_default_model)
-        .map(str::to_owned)
-        .ok_or("[blend].default_model or a named [blend.policies.<name>] policy is required")?;
+    let blend = user.blend.as_ref().expect("validated Blend configuration");
+    let blend_policies = configured_blend_policies(blend, &models, home)?;
+    let selected_policy_id = args
+        .policy
+        .as_deref()
+        .or(workspace.blend_policy.as_deref())
+        .or_else(|| blend.configured_default_policy_id())
+        .ok_or("a Blend policy is required")?;
+    // Existing configured policies named `soe` retain their CLI meaning. ACP
+    // rejects that collision before advertising its built-in SOE control.
+    let is_soe = selected_policy_id == SOE_POLICY_ID && !blend_policies.contains_key(SOE_POLICY_ID);
+    let configured_policy_id = if is_soe {
+        blend
+            .configured_default_policy_id()
+            .ok_or("a Blend policy is required")?
+    } else {
+        selected_policy_id
+    };
+    let configured_default_alias = blend_policies
+        .get(configured_policy_id)
+        .ok_or_else(|| format!("unknown Blend policy {selected_policy_id:?}"))?
+        .default_model
+        .clone();
     if !user.models.contains_key(&configured_default_alias) {
         return Err(format!(
             "[blend].default_model alias {configured_default_alias:?} is not configured"
         )
         .into());
     }
-    let default_alias = workspace
+    let default_alias = args
         .model_alias
         .clone()
+        .or_else(|| is_soe.then(|| workspace.model_alias.clone()).flatten())
         .unwrap_or(configured_default_alias);
     if !user.models.contains_key(&default_alias) {
         return Err(format!("workspace model alias {default_alias:?} is not configured").into());
@@ -550,6 +1044,29 @@ pub fn resolve_cli_runtime_config(
             )
         })?;
         let same_as_default_provider = model.provider == default_provider_name;
+        let chatgpt_auth = user_provider
+            .auth
+            .as_deref()
+            .is_some_and(|auth| auth.eq_ignore_ascii_case("chatgpt"));
+        if user_provider
+            .auth
+            .as_deref()
+            .is_some_and(|auth| !auth.eq_ignore_ascii_case("chatgpt"))
+        {
+            return Err(format!(
+                "unsupported auth mode for provider {:?}; expected chatgpt",
+                model.provider
+            )
+            .into());
+        }
+        if chatgpt_auth && (user_provider.api_key.is_some() || user_provider.api_key_env.is_some())
+        {
+            return Err(format!(
+                "provider {:?} cannot combine auth = \"chatgpt\" with API-key settings",
+                model.provider
+            )
+            .into());
+        }
         let api_type = if same_as_default_provider {
             args.api_type
                 .clone()
@@ -558,8 +1075,21 @@ pub fn resolve_cli_runtime_config(
         } else {
             user_provider.api_type.clone()
         }
-        .unwrap_or_else(|| ApiType::OpenAiChatCompletions.to_string())
+        .unwrap_or_else(|| {
+            if chatgpt_auth {
+                ApiType::OpenAiResponses.to_string()
+            } else {
+                ApiType::OpenAiChatCompletions.to_string()
+            }
+        })
         .parse::<ApiType>()?;
+        if chatgpt_auth && api_type != ApiType::OpenAiResponses {
+            return Err(format!(
+                "provider {:?} with auth = \"chatgpt\" must use the OpenAI Responses API",
+                model.provider
+            )
+            .into());
+        }
         let base_url = if same_as_default_provider {
             args.base_url
                 .clone()
@@ -568,7 +1098,15 @@ pub fn resolve_cli_runtime_config(
         } else {
             user_provider.base_url.clone()
         }
+        .or_else(|| chatgpt_auth.then(|| "https://api.openai.com/v1".to_owned()))
         .ok_or_else(|| format!("base_url is required for provider {:?}", model.provider))?;
+        if chatgpt_auth && base_url.trim_end_matches('/') != "https://api.openai.com/v1" {
+            return Err(format!(
+                "provider {:?} using ChatGPT plan authentication must call https://api.openai.com/v1",
+                model.provider
+            )
+            .into());
+        }
         let env_name = user_provider
             .api_key_env
             .clone()
@@ -582,15 +1120,19 @@ pub fn resolve_cli_runtime_config(
         } else {
             None
         };
-        let api_key = environment_key
-            .or_else(|| user_provider.api_key.clone())
-            .or(saved_key)
-            .ok_or_else(|| {
-                format!(
-                    "API key is required for provider {:?}; set {env_name} or api_key",
-                    model.provider
-                )
-            })?;
+        let api_key = if chatgpt_auth {
+            "chatgpt-oauth-managed".to_owned()
+        } else {
+            environment_key
+                .or_else(|| user_provider.api_key.clone())
+                .or(saved_key)
+                .ok_or_else(|| {
+                    format!(
+                        "API key is required for provider {:?}; set {env_name} or api_key",
+                        model.provider
+                    )
+                })?
+        };
         if user_provider.max_tokens == Some(0) {
             return Err(format!(
                 "max_tokens must be positive for provider {:?}",
@@ -623,6 +1165,15 @@ pub fn resolve_cli_runtime_config(
         }
         let mut config =
             ApiProviderConfig::new(api_type, api_key, base_url, model.model_id.clone());
+        if chatgpt_auth {
+            let credentials_path = crate::auth::chatgpt_credentials_path(home);
+            let credentials = crate::auth::read_chatgpt_credentials(home)?
+                .ok_or("ChatGPT plan is not connected; run `arabica auth chatgpt-login`")?;
+            if credentials.access_token.is_empty() || credentials.refresh_token.is_empty() {
+                return Err("ChatGPT plan is signed out; run `arabica auth chatgpt-login`".into());
+            }
+            config.chatgpt_credentials = Some(credentials_path);
+        }
         config.max_tokens = user_provider.max_tokens;
         config.request_timeout_secs = user_provider.request_timeout_secs.unwrap_or(300);
         config.anthropic_cache_static_prefix =
@@ -634,14 +1185,21 @@ pub fn resolve_cli_runtime_config(
         if let Some(thinking) = user_provider.thinking.as_deref() {
             set_thinking(&mut config, thinking)?;
         }
+        if is_soe && let Some(thinking) = workspace.model_thinking.get(alias) {
+            set_thinking(&mut config, thinking)?;
+        }
         if alias == &default_alias {
-            if let Some(thinking) = workspace.thinking.as_deref() {
+            if let Some(thinking) = args.thinking.as_deref().or_else(|| {
+                (is_soe && !workspace.model_thinking.contains_key(alias))
+                    .then_some(workspace.thinking.as_deref())
+                    .flatten()
+            }) {
                 set_thinking(&mut config, thinking)?;
             }
             if let Some(model_id) = args
                 .model
                 .clone()
-                .or(workspace.model.clone())
+                .or_else(|| is_soe.then(|| workspace.model.clone()).flatten())
                 .or_else(|| lookup("ARABICA__MODEL"))
             {
                 config.model = model_id;
@@ -649,100 +1207,20 @@ pub fn resolve_cli_runtime_config(
         }
         model_configs.insert(alias.clone(), config);
     }
-    let (blend_policy, blend_policies) = match user.blend.as_ref() {
-        None => (None, BTreeMap::new()),
-        Some(blend) => {
-            let named_policies = !blend.policies.is_empty();
-            let mut policies = BTreeMap::new();
-            if named_policies {
-                if blend.policy_id.is_some()
-                    || blend.version.is_some()
-                    || blend.default_model.is_some()
-                    || blend.after_tool_success.is_some()
-                    || blend.after_tool_error.is_some()
-                    || blend.recovery_model.is_some()
-                    || blend.planning_model.is_some()
-                    || !blend.tool_routes.is_empty()
-                    || blend.recovery_after_no_progress_steps.is_some()
-                    || blend.minimum_model_dwell_steps.is_some()
-                    || !blend.tool_call_capable_models.is_empty()
-                    || !blend.typed_completion_capable_models.is_empty()
-                {
-                    return Err(
-                        "configure either the single [blend] policy or [blend.policies.<name>] entries, not both".into(),
-                    );
-                }
-                for (id, configured) in &blend.policies {
-                    let policy = BlendRoutingPolicy {
-                        policy_id: id.clone(),
-                        version: configured.version.unwrap_or(1),
-                        default_model: configured.default_model.clone(),
-                        after_tool_success: configured.after_tool_success.clone(),
-                        after_tool_error: configured.after_tool_error.clone(),
-                        recovery_model: configured.recovery_model.clone(),
-                        planning_model: configured.planning_model.clone(),
-                        tool_routes: configured.tool_routes.clone(),
-                        recovery_after_no_progress_steps: configured
-                            .recovery_after_no_progress_steps,
-                        minimum_model_dwell_steps: configured.minimum_model_dwell_steps,
-                        tool_call_capable_models: configured.tool_call_capable_models.clone(),
-                        typed_completion_capable_models: configured
-                            .typed_completion_capable_models
-                            .clone(),
-                    };
-                    validate_blend_policy(&policy, &models)?;
-                    policies.insert(id.clone(), policy);
-                }
-            } else {
-                let id = blend
-                    .policy_id
-                    .clone()
-                    .or_else(|| blend.default_policy.clone())
-                    .unwrap_or_else(|| "cli-config".to_owned());
-                let policy = BlendRoutingPolicy {
-                    policy_id: id.clone(),
-                    version: blend.version.unwrap_or(1),
-                    default_model: blend
-                        .default_model
-                        .clone()
-                        .ok_or("[blend].default_model is required")?,
-                    after_tool_success: blend.after_tool_success.clone(),
-                    after_tool_error: blend.after_tool_error.clone(),
-                    recovery_model: blend.recovery_model.clone(),
-                    planning_model: blend.planning_model.clone(),
-                    tool_routes: blend.tool_routes.clone(),
-                    recovery_after_no_progress_steps: blend
-                        .recovery_after_no_progress_steps
-                        .unwrap_or_else(default_recovery_threshold),
-                    minimum_model_dwell_steps: blend
-                        .minimum_model_dwell_steps
-                        .unwrap_or_else(default_model_dwell_steps),
-                    tool_call_capable_models: blend.tool_call_capable_models.clone(),
-                    typed_completion_capable_models: blend.typed_completion_capable_models.clone(),
-                };
-                validate_blend_policy(&policy, &models)?;
-                policies.insert(id, policy);
-            }
-
-            let selected_id = blend
-                .configured_default_policy_id()
-                .ok_or("[blend].default_policy must name one of the configured policies")?;
-            let mut selected = policies.get(selected_id).cloned().ok_or_else(|| {
-                format!("[blend].default_policy {selected_id:?} is not configured")
-            })?;
-            if let Some(workspace_alias) = workspace.model_alias.as_deref() {
-                selected.default_model = workspace_alias.to_owned();
-                validate_blend_policy(&selected, &models)?;
-                policies.insert(selected_id.to_owned(), selected.clone());
-            }
-            (Some(selected), policies)
-        }
+    let mut selected_policy = if is_soe {
+        soe_policy(default_alias.clone())
+    } else {
+        blend_policies[selected_policy_id].clone()
     };
+    selected_policy.default_model = default_alias.clone();
+    validate_blend_policy(&selected_policy, &models)?;
+    let blend_policy = Some(selected_policy);
     let provider = model_configs
         .get(&default_alias)
         .expect("validated default alias")
         .clone();
     Ok(ResolvedCliConfig {
+        invocation: args.clone(),
         provider,
         blend_policy,
         blend_policies,
@@ -827,6 +1305,12 @@ fn validate_blend_policy(
     policy: &BlendRoutingPolicy,
     models: &BTreeMap<String, String>,
 ) -> Result<(), String> {
+    if !models.contains_key(&policy.default_model) {
+        return Err(format!(
+            "[blend].default_model alias {:?} is not configured",
+            policy.default_model
+        ));
+    }
     let aliases = std::iter::once(policy.default_model.as_str())
         .chain(policy.after_tool_success.as_deref())
         .chain(policy.after_tool_error.as_deref())
@@ -890,7 +1374,7 @@ fn provider_api_key_env(provider: &str) -> String {
 
 pub fn set_thinking(config: &mut ApiProviderConfig, value: &str) -> Result<(), String> {
     match (config.api_type, value) {
-        (_, "off") => {
+        (_, "off" | "default") => {
             config.thinking_enabled = false;
             config.reasoning_effort = None;
         }
@@ -898,7 +1382,7 @@ pub fn set_thinking(config: &mut ApiProviderConfig, value: &str) -> Result<(), S
             config.thinking_enabled = true;
             config.reasoning_effort = None;
         }
-        (ApiType::OpenAiResponses, "low" | "medium" | "high") => {
+        (ApiType::OpenAiResponses, "low" | "medium" | "high" | "xhigh" | "max") => {
             config.thinking_enabled = true;
             config.reasoning_effort = Some(value.to_owned());
         }
@@ -910,6 +1394,71 @@ pub fn set_thinking(config: &mut ApiProviderConfig, value: &str) -> Result<(), S
         }
     }
     Ok(())
+}
+
+pub fn thinking_levels(api_type: ApiType) -> &'static [&'static str] {
+    match api_type {
+        ApiType::OpenAiResponses => &["default", "low", "medium", "high", "xhigh", "max"],
+        ApiType::OpenAiChatCompletions => &["off", "on"],
+        _ => &["off"],
+    }
+}
+
+pub fn thinking_level(config: &ApiProviderConfig) -> &str {
+    if !config.thinking_enabled && config.api_type == ApiType::OpenAiResponses {
+        "default"
+    } else if !config.thinking_enabled {
+        "off"
+    } else if config.api_type == ApiType::OpenAiResponses {
+        config.reasoning_effort.as_deref().unwrap_or("high")
+    } else {
+        "on"
+    }
+}
+
+/// Refresh only file-owned thinking, preserving live endpoints and CLI overrides.
+pub(crate) fn reset_configured_model_thinking(
+    home: &Path,
+    configs: &mut BTreeMap<String, ApiProviderConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let user = read_user_config(home)?;
+    for (alias, config) in configs {
+        let Some(model) = user.models.get(alias) else {
+            continue;
+        };
+        let provider = user
+            .providers
+            .get(&model.provider)
+            .ok_or_else(|| format!("model alias {alias:?} references an unknown provider"))?;
+        if provider.thinking.is_some() && provider.reasoning_effort.is_some() {
+            return Err(format!(
+                "configure only one of thinking or reasoning_effort for provider {:?}",
+                model.provider
+            )
+            .into());
+        }
+        set_thinking(config, "off")?;
+        if let Some(thinking) = provider
+            .thinking
+            .as_deref()
+            .or(provider.reasoning_effort.as_deref())
+        {
+            set_thinking(config, thinking)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn policy_selection_key<'a>(
+    policies: &'a BTreeMap<String, BlendRoutingPolicy>,
+    policy: &'a BlendRoutingPolicy,
+) -> &'a str {
+    policies
+        .iter()
+        .find(|(_, candidate)| {
+            candidate.policy_id == policy.policy_id && candidate.version == policy.version
+        })
+        .map_or(policy.policy_id.as_str(), |(key, _)| key.as_str())
 }
 
 pub fn save_workspace_settings(
@@ -978,6 +1527,7 @@ mod tests {
         assert!(defaults.thinking_enabled);
 
         save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
             settings.model = Some("workspace-model".to_owned());
             settings.thinking = Some("off".to_owned());
         })
@@ -1049,6 +1599,187 @@ typed_completion_capable_models = ["strong"]
                 .unwrap()
                 .typed_completion_capable_models,
             BTreeSet::from(["strong".to_owned()])
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_selection_and_invocation_overrides_preserve_policy_templates() {
+        let root =
+            std::env::temp_dir().join(format!("arabica-selections-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(
+            user_config_path(&home),
+            r#"
+[providers.test]
+api_type = "open_ai_responses"
+base_url = "https://example.test/v1"
+[models.daily]
+provider = "test"
+model_id = "daily-model"
+[models.strong]
+provider = "test"
+model_id = "strong-model"
+[blend]
+default_policy = "routine"
+[blend.policies.routine]
+default_model = "daily"
+[blend.policies.precise]
+default_model = "strong"
+planning_model = "strong"
+"#,
+        )
+        .unwrap();
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some("precise".to_owned());
+            settings.model_alias = Some("daily".to_owned());
+            settings
+                .model_thinking
+                .insert("daily".to_owned(), "low".to_owned());
+            settings
+                .model_thinking
+                .insert("strong".to_owned(), "high".to_owned());
+        })
+        .unwrap();
+        let env =
+            |name: &str| (name == "ARABICA_PROVIDER_TEST_API_KEY").then(|| "test-key".to_owned());
+        let saved =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        assert_eq!(saved.blend_policy.as_ref().unwrap().policy_id, "precise");
+        assert_eq!(saved.provider.model, "strong-model");
+        assert_eq!(thinking_level(&saved.provider), "default");
+        assert_eq!(saved.blend_policies["precise"].default_model, "strong");
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+        })
+        .unwrap();
+        let soe = resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        let policy = soe.blend_policy.as_ref().unwrap();
+        assert_eq!(policy.policy_id, SOE_POLICY_ID);
+        assert_eq!(policy.default_model, "daily");
+        assert!(policy.planning_model.is_none());
+        assert!(policy.after_tool_error.is_none());
+        assert_eq!(
+            policy.tool_call_capable_models,
+            BTreeSet::from(["daily".to_owned()])
+        );
+        assert_eq!(thinking_level(&soe.provider), "low");
+        assert_eq!(thinking_level(&soe.model_configs["strong"]), "high");
+        let soe_flags = HostConfigArgs {
+            policy: Some(SOE_POLICY_ID.to_owned()),
+            model_alias: Some("strong".to_owned()),
+            thinking: Some("max".to_owned()),
+            ..Default::default()
+        };
+        let explicit_soe = resolve_cli_runtime_config(&soe_flags, &home, &cwd, env).unwrap();
+        assert_eq!(explicit_soe.provider.model, "strong-model");
+        assert_eq!(thinking_level(&explicit_soe.provider), "max");
+        assert_eq!(thinking_level(&explicit_soe.model_configs["daily"]), "low");
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some("precise".to_owned());
+        })
+        .unwrap();
+        let returned =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        assert_eq!(returned.provider.model, "strong-model");
+        assert_eq!(thinking_level(&returned.provider), "default");
+        assert_eq!(thinking_level(&returned.model_configs["daily"]), "default");
+        let remembered = read_workspace_settings(&home, &cwd).unwrap();
+        assert_eq!(remembered.model_thinking["daily"], "low");
+        assert_eq!(remembered.model_thinking["strong"], "high");
+        let flags = HostConfigArgs {
+            policy: Some("precise".to_owned()),
+            thinking: Some("max".to_owned()),
+            ..Default::default()
+        };
+        let selected = resolve_cli_runtime_config(&flags, &home, &cwd, env).unwrap();
+        assert_eq!(selected.provider.model, "strong-model");
+        assert_eq!(thinking_level(&selected.provider), "max");
+        assert_eq!(thinking_level(&selected.model_configs["daily"]), "default");
+        let acp = resolve_cli_acp_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        assert_eq!(acp.blend_policy.as_ref().unwrap().policy_id, "routine");
+        assert_eq!(thinking_level(&acp.provider), "default");
+        let invalid = HostConfigArgs {
+            policy: Some("missing".to_owned()),
+            ..Default::default()
+        };
+        assert!(
+            resolve_cli_runtime_config(&invalid, &home, &cwd, env)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown Blend policy")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_named_soe_retains_its_cli_routes_and_ignores_builtin_preferences() {
+        let root = std::env::temp_dir().join(format!("arabica-named-soe-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(
+            user_config_path(&home),
+            r#"
+[providers.test]
+api_type = "open_ai_responses"
+base_url = "https://example.test/v1"
+thinking = "medium"
+[models.fast]
+provider = "test"
+model_id = "model-fast"
+[models.strong]
+provider = "test"
+model_id = "model-strong"
+[blend]
+default_policy = "soe"
+[blend.policies.soe]
+default_model = "fast"
+after_tool_error = "strong"
+planning_model = "strong"
+"#,
+        )
+        .unwrap();
+        save_workspace_settings(&home, &cwd, |settings| {
+            settings.blend_policy = Some(SOE_POLICY_ID.to_owned());
+            settings.model_alias = Some("strong".to_owned());
+            settings.thinking = Some("off".to_owned());
+            settings
+                .model_thinking
+                .insert("fast".to_owned(), "low".to_owned());
+        })
+        .unwrap();
+        let env =
+            |name: &str| (name == "ARABICA_PROVIDER_TEST_API_KEY").then(|| "test-key".to_owned());
+        let resolved =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, env).unwrap();
+        let policy = resolved.blend_policy.as_ref().unwrap();
+        assert_eq!(policy.policy_id, SOE_POLICY_ID);
+        assert_eq!(policy.default_model, "fast");
+        assert_eq!(policy.after_tool_error.as_deref(), Some("strong"));
+        assert_eq!(policy.planning_model.as_deref(), Some("strong"));
+        assert_eq!(thinking_level(&resolved.provider), "medium");
+        let flags = HostConfigArgs {
+            policy: Some(SOE_POLICY_ID.to_owned()),
+            model_alias: Some("strong".to_owned()),
+            thinking: Some("max".to_owned()),
+            ..Default::default()
+        };
+        let selected = resolve_cli_runtime_config(&flags, &home, &cwd, env).unwrap();
+        assert_eq!(selected.provider.model, "model-strong");
+        assert_eq!(thinking_level(&selected.provider), "max");
+        assert_eq!(
+            selected
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .after_tool_error
+                .as_deref(),
+            Some("strong")
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -1218,6 +1949,91 @@ default_model = "fast"
         assert_eq!(
             env_precedence.model_configs["strong"].api_key,
             "env-anthropic-secret"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chatgpt_auth_selects_the_official_responses_endpoint_and_profile() {
+        let root =
+            std::env::temp_dir().join(format!("arabica-si-wc-config-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(
+            user_config_path(&home),
+            r#"
+[providers.openai]
+auth = "chatgpt"
+
+[models.default]
+provider = "openai"
+model_id = "gpt-6.1-sol"
+
+[blend]
+default_model = "default"
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(user_config_path(&home), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        let credentials_path = crate::auth::chatgpt_credentials_path(&home);
+        let credentials = arabica_provider::ChatGptCredentials {
+            email: Some("user@example.test".to_owned()),
+            subject: "subject".to_owned(),
+            client_id: "oaiapp_test".to_owned(),
+            ext_agent_host_id: "urn:uuid:test".to_owned(),
+            id_token: "id".to_owned(),
+            access_token: "access".to_owned(),
+            refresh_token: "refresh".to_owned(),
+            scopes: vec!["chatgpt.tokens.use.direct".to_owned()],
+            expires_at_unix: u64::MAX,
+        };
+        fs::write(&credentials_path, serde_json::to_vec(&credentials).unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&credentials_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let resolved =
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, |_| None).unwrap();
+        let config = &resolved.model_configs["default"];
+        assert_eq!(config.api_type, ApiType::OpenAiResponses);
+        assert_eq!(config.base_url, "https://api.openai.com/v1");
+        assert_eq!(
+            config.chatgpt_credentials.as_deref(),
+            Some(credentials_path.as_path())
+        );
+
+        fs::write(
+            user_config_path(&home),
+            r#"
+[providers.openai]
+auth = "chatgpt"
+base_url = "https://other.example/v1"
+
+[models.default]
+provider = "openai"
+model_id = "gpt-6.1-sol"
+
+[blend]
+default_model = "default"
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(user_config_path(&home), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        assert!(
+            resolve_cli_runtime_config(&HostConfigArgs::default(), &home, &cwd, |_| None).is_err()
         );
         fs::remove_dir_all(root).unwrap();
     }

@@ -2,32 +2,72 @@
 set -euo pipefail
 
 profile="${1:-release}"
-app_version="${ARABICA_VERSION:-0.1.0}"
-app_version="${app_version#v}"
-app_version="${app_version%%-*}"
-app_version="${app_version%%+*}"
 if [[ "$profile" != "debug" && "$profile" != "release" ]]; then
   echo "usage: $0 [debug|release]" >&2
   exit 2
 fi
 
-app_root="$(cd "$(dirname "$0")/.." && pwd)"
+app_root="${ARABICA_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+app_root="$(cd "$app_root" && pwd)"
 repo_root="$(cd "$app_root/../.." && pwd)"
-swift_args=(-c "$profile")
+app_version="${ARABICA_VERSION:-$(awk '/^\[workspace.package\]/ { package=1; next } package && /^version = / { gsub(/"/, "", $3); print $3; exit }' "$repo_root/Cargo.toml")}"
+app_version="${app_version#v}"
+app_version="${app_version%%-*}"
+app_version="${app_version%%+*}"
+update_public_key="$(cat "$repo_root/crates/arabica-cli/src/update-public-key.txt")"
+case "${ARABICA_ARCH:-$(uname -m)}" in
+  arm64|aarch64) update_arch=aarch64 ;;
+  x86_64) update_arch=x86_64 ;;
+  *) echo 'Unsupported update architecture' >&2; exit 1 ;;
+esac
+# Swift's compile and link drivers must agree on the selected SDK. Without
+# SDKROOT, the link driver can stamp the deployment target as the SDK version,
+# which keeps the app in the older system-appearance compatibility mode.
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+swift_args=(
+  -c "$profile" --sdk "$SDKROOT"
+  # Put the SDK on the actual clang link command as well. Environment-only
+  # SDKROOT changes do not invalidate Swift Build's cached link operation.
+  -Xswiftc -Xclang-linker -Xswiftc -isysroot
+  -Xswiftc -Xclang-linker -Xswiftc "$SDKROOT"
+)
 cargo_args=(-p arabica-cli)
 if [[ "$profile" == "release" ]]; then cargo_args+=(--release); fi
+agent_bin="$repo_root/target/$profile/arabica"
+case "$(uname -m)" in arm64|aarch64) host_arch=aarch64 ;; x86_64) host_arch=x86_64 ;; esac
+if [[ "$update_arch" != "$host_arch" ]]; then
+  rust_target="${update_arch}-apple-darwin"
+  swift_arch="$update_arch"
+  if [[ "$swift_arch" == "aarch64" ]]; then swift_arch=arm64; fi
+  swift_args+=(--triple "${swift_arch}-apple-macosx14.0")
+  cargo_args+=(--target "$rust_target")
+  agent_bin="$repo_root/target/$rust_target/$profile/arabica"
+fi
 
 swift build --package-path "$app_root" "${swift_args[@]}"
 cargo build --manifest-path "$repo_root/Cargo.toml" "${cargo_args[@]}"
 
 swift_bin="$(swift build --package-path "$app_root" --show-bin-path "${swift_args[@]}")/ArabicaDesktop"
-agent_bin="$repo_root/target/$profile/arabica"
+mach_arch="$update_arch"
+if [[ "$mach_arch" == "aarch64" ]]; then mach_arch=arm64; fi
+for binary in "$swift_bin" "$agent_bin"; do
+  if [[ "$(lipo -archs "$binary")" != "$mach_arch" ]]; then
+    echo "Unexpected executable architecture in $binary; expected $mach_arch" >&2
+    exit 1
+  fi
+done
 bundle="$app_root/dist/Arabica.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$swift_bin" "$bundle/Contents/MacOS/ArabicaDesktop"
 cp "$agent_bin" "$bundle/Contents/Resources/arabica"
 chmod 755 "$bundle/Contents/MacOS/ArabicaDesktop" "$bundle/Contents/Resources/arabica"
+mkdir -p "$bundle/Contents/Frameworks"
+swift_bin_dir="$(dirname "$swift_bin")"
+test -d "$swift_bin_dir/Sparkle.framework"
+ditto "$swift_bin_dir/Sparkle.framework" "$bundle/Contents/Frameworks/Sparkle.framework"
+cp "$app_root/.build/artifacts/sparkle/Sparkle/LICENSE" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$bundle/Contents/MacOS/ArabicaDesktop"
 
 icon_work="$(mktemp -d)"
 trap 'rm -rf "$icon_work"' EXIT
@@ -69,7 +109,20 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$app_version</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>SUFeedURL</key><string>https://github.com/haowei2000/Arabica/releases/latest/download/appcast-${update_arch}.xml</string>
+  <key>SUPublicEDKey</key><string>$update_public_key</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUAutomaticallyUpdate</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SURequireSignedFeed</key><true/>
 </dict></plist>
 PLIST
+
+if [[ "$profile" == "debug" ]]; then
+  # install_name_tool invalidates Swift's linker-generated ad-hoc signature.
+  codesign --force --sign - "$bundle/Contents/MacOS/ArabicaDesktop"
+  codesign --force --sign - "$bundle"
+fi
 
 echo "Built $bundle"

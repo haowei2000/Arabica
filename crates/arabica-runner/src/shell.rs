@@ -26,6 +26,12 @@ const CREDENTIAL_SEGMENTS: &[&str] = &[
     "PASSWD",
     "CREDENTIAL",
     "CREDENTIALS",
+    "AUTHORIZATION",
+    "BEARER",
+    "ACCESSKEY",
+    "PAT",
+    "SIGNING",
+    "PRIVATEKEY",
 ];
 
 /// Limits for the `shell` tool.
@@ -115,6 +121,11 @@ pub(crate) async fn run(
         .ok_or_else(|| RunnerError::new("shell.command must be a string"))?;
     if command.trim().is_empty() {
         return Err(RunnerError::new("shell.command must not be empty"));
+    }
+    if let Some(reason) = is_catastrophic_command(command) {
+        return Err(RunnerError::new(format!(
+            "shell command blocked by security sandbox: {reason}"
+        )));
     }
     let timeout_secs = arguments
         .get("timeout_sec")
@@ -308,4 +319,243 @@ async fn read_bounded(path: &Path, max_bytes: u64) -> Result<String, RunnerError
         size - 2 * half,
         String::from_utf8_lossy(&tail)
     ))
+}
+
+/// Checks whether a shell command is catastrophic to the host or environment.
+pub(crate) fn is_catastrophic_command(command: &str) -> Option<&'static str> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // 1. Fork bomb detection (e.g. :(){ :|:& };:)
+    let stripped_ws: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if stripped_ws.contains(":(){:|:&};:") || stripped_ws.contains(":(){:|:&};") {
+        return Some("fork bomb detected");
+    }
+
+    // 2. Chained command detection (quote-aware splitting)
+    for part in split_command_chain(trimmed) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        let tokens = tokenize_args(part);
+        if tokens.is_empty() {
+            continue;
+        }
+
+        // Skip command wrappers like sudo, doas, env
+        let mut idx = 0;
+        while idx < tokens.len() {
+            let t = tokens[idx].as_str();
+            if t == "sudo" || t == "doas" || t == "env" || (t.starts_with('-') && idx == 0) {
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+        if idx >= tokens.len() {
+            continue;
+        }
+
+        let cmd_name = tokens[idx].as_str();
+        let args = &tokens[idx + 1..];
+
+        // 3. Destructive recursive removal of filesystem root
+        if cmd_name == "rm" {
+            let has_recursive = args.iter().any(|arg| {
+                if arg == "-r" || arg == "-R" || arg == "--recursive" {
+                    return true;
+                }
+                if arg.starts_with('-') && !arg.starts_with("--") {
+                    return arg.contains('r') || arg.contains('R');
+                }
+                false
+            });
+
+            if has_recursive {
+                for arg in args {
+                    if arg == "/"
+                        || arg == "/*"
+                        || arg == "/."
+                        || arg == "/.."
+                        || arg == "/.*"
+                        || arg == "--no-preserve-root"
+                    {
+                        return Some(
+                            "destructive recursive deletion of filesystem root is blocked",
+                        );
+                    }
+                }
+            }
+        }
+
+        // 4. Raw block device destruction (mkfs, dd)
+        if cmd_name.starts_with("mkfs") {
+            for arg in args {
+                if is_raw_block_device(arg) {
+                    return Some("formatting raw system disk device is blocked");
+                }
+            }
+        }
+
+        if cmd_name == "dd" {
+            for arg in args {
+                if let Some(target) = arg.strip_prefix("of=")
+                    && is_raw_block_device(target)
+                {
+                    return Some("direct overwrite of raw system disk device is blocked");
+                }
+            }
+        }
+
+        // 5. System root permission destruction (chmod -R, chown -R on /)
+        if cmd_name == "chmod" || cmd_name == "chown" {
+            let has_recursive = args.iter().any(|arg| arg == "-R" || arg == "--recursive");
+            if has_recursive {
+                for arg in args {
+                    if arg == "/" || arg == "/*" {
+                        return Some(
+                            "recursive permission destruction of filesystem root is blocked",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn is_raw_block_device(path: &str) -> bool {
+    let p = path.trim();
+    p.starts_with("/dev/sd")
+        || p.starts_with("/dev/nvme")
+        || p.starts_with("/dev/vd")
+        || p.starts_with("/dev/hd")
+        || p.starts_with("/dev/disk")
+}
+
+fn split_command_chain(command: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = command.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                current.push(c);
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                current.push(c);
+            }
+            ';' if !in_single && !in_double => {
+                parts.push(std::mem::take(&mut current));
+            }
+            '&' | '|' if !in_single && !in_double => {
+                if chars.peek() == Some(&c) {
+                    chars.next();
+                }
+                parts.push(std::mem::take(&mut current));
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.trim().is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
+fn tokenize_args(segment: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    for c in segment.chars() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catastrophic_commands_are_blocked() {
+        for blocked in [
+            "rm -rf /",
+            "rm -fr /",
+            "rm -r -f /",
+            "rm -rf /*",
+            "rm -rf /.*",
+            "sudo rm -rf /",
+            "doas rm -rf /",
+            "rm --recursive --no-preserve-root /",
+            ":(){ :|:& };:",
+            ":(){:|:&};:",
+            "mkfs.ext4 /dev/sda1",
+            "mkfs /dev/nvme0n1p1",
+            "dd if=/dev/zero of=/dev/sda bs=1M",
+            "chmod -R 777 /",
+            "chown -R root:root /",
+            "echo hello; rm -rf /",
+            "cd /tmp && rm -rf /",
+            "true || rm -rf /",
+        ] {
+            assert!(
+                is_catastrophic_command(blocked).is_some(),
+                "must block catastrophic command: {blocked}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_commands_are_allowed() {
+        for safe in [
+            "cargo build",
+            "rm -rf target/",
+            "rm -rf /tmp/scratch",
+            "rm file.txt",
+            "echo 'rm -rf /'",
+            "echo \"rm -rf /\"",
+            "cat /dev/null",
+            "dd if=/dev/zero of=test.img bs=1M count=10",
+            "chmod 644 /tmp/file.txt",
+            "git clean -fdx",
+        ] {
+            assert!(
+                is_catastrophic_command(safe).is_none(),
+                "must allow safe command: {safe}"
+            );
+        }
+    }
 }

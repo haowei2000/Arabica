@@ -130,32 +130,32 @@ fn shell_output_redirection_position(command: &str) -> Option<usize> {
     let mut single_quoted = false;
     let mut double_quoted = false;
     let mut escaped = false;
-    let chars: Vec<char> = command.chars().collect();
-    for (index, character) in chars.iter().copied().enumerate() {
+    let bytes = command.as_bytes();
+    for (index, &byte) in bytes.iter().enumerate() {
         if escaped {
             escaped = false;
             continue;
         }
-        if character == '\\' && !single_quoted {
+        if byte == b'\\' && !single_quoted {
             escaped = true;
             continue;
         }
-        if character == '\'' && !double_quoted {
+        if byte == b'\'' && !double_quoted {
             single_quoted = !single_quoted;
             continue;
         }
-        if character == '"' && !single_quoted {
+        if byte == b'"' && !single_quoted {
             double_quoted = !double_quoted;
             continue;
         }
-        if character != '>' || single_quoted || double_quoted {
+        if byte != b'>' || single_quoted || double_quoted {
             continue;
         }
         // Descriptor duplication such as `2>&1` and discarding a stream to
         // `/dev/null` change routing, not workspace state. Other unquoted
         // output redirects can write a file and invalidate reusable results.
-        let target = chars[index + 1..].iter().collect::<String>();
-        if chars.get(index + 1) != Some(&'&') && !target.trim_start().starts_with("/dev/null") {
+        let target = &command[index + 1..];
+        if bytes.get(index + 1) != Some(&b'&') && !target.trim_start().starts_with("/dev/null") {
             return Some(index);
         }
     }

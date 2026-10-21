@@ -10,10 +10,13 @@
 //! turn is in flight -- see `concepts::ordering` in the `agent-client-protocol`
 //! crate for why a handler must never `.await` its own run to completion.
 
+#[cfg(test)]
+mod configuration_tests;
 mod content;
 mod evaluation;
 mod mapping;
 mod permission;
+mod session_metadata;
 mod stop_reason;
 mod time;
 
@@ -48,12 +51,15 @@ use arabica_session::{
 };
 use arabica_session::{NewSession, SessionStore, SessionWriter};
 
-use crate::config::ResolvedCliConfig;
+use crate::config::{ResolvedCliConfig, SOE_POLICY_ID};
 use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_blend};
-use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType, BlendProvider};
+#[cfg(test)]
+use arabica_provider::{ApiModelProvider, BlendProvider};
+use arabica_provider::{ApiProviderConfig, ApiType};
 
 #[derive(Clone)]
 struct AcpProviderSettings {
+    overrides: crate::host::HostConfigArgs,
     initial: ApiProviderConfig,
     models: Vec<String>,
     aliases: BTreeMap<String, String>,
@@ -63,66 +69,248 @@ struct AcpProviderSettings {
 }
 
 impl AcpProviderSettings {
+    fn from_resolved(
+        overrides: crate::host::HostConfigArgs,
+        resolved: &ResolvedCliConfig,
+    ) -> Result<Self, AcpError> {
+        let catalog = resolved.model_catalog();
+        let blend_policies = resolved.blend_policies.clone();
+        if blend_policies.contains_key(SOE_POLICY_ID) {
+            return Err(AcpError::invalid_params().data(
+                "soe is reserved for the single-model policy in ACP; rename the configured policy",
+            ));
+        }
+        let provider_config = catalog.provider.clone();
+        let aliases = catalog.models.clone();
+        let model_configs = catalog.model_configs.clone();
+        let blend_policy = catalog.blend_policy.clone();
+        let mut models = aliases.keys().cloned().collect::<Vec<_>>();
+        let initial_selection = blend_policy
+            .as_ref()
+            .map(|policy| policy.default_model.clone());
+        if !aliases.is_empty() {
+            if initial_selection
+                .as_ref()
+                .is_none_or(|selected| !aliases.contains_key(selected))
+            {
+                return Err(AcpError::invalid_params()
+                    .data("Blend default_model must name a configured model alias"));
+            }
+        } else if !models.contains(&provider_config.model) {
+            models.insert(0, provider_config.model.clone());
+        }
+        Ok(Self {
+            overrides,
+            initial: provider_config,
+            models,
+            aliases,
+            model_configs,
+            blend_policy,
+            blend_policies,
+        })
+    }
+
+    fn configured_for_workspace(&self, home: &Path, cwd: &Path) -> AcpResult<Self> {
+        // Named policies use the file's per-model thinking. Invocation and
+        // workspace thinking overrides belong only to ACP's SOE policy.
+        let mut overrides = self.overrides.clone();
+        overrides.thinking = None;
+        overrides.model_alias = None;
+        if overrides.policy.as_deref() == Some(SOE_POLICY_ID) {
+            overrides.policy = None;
+        }
+        match crate::config::resolve_cli_acp_config(&overrides, home, cwd, |key| {
+            std::env::var(key).ok()
+        }) {
+            Ok(resolved) => Self::from_resolved(self.overrides.clone(), &resolved),
+            Err(error) if home.join("config.toml").exists() => {
+                Err(AcpError::invalid_params().data(error.to_string()))
+            }
+            // Tests can supply an in-memory provider catalog without a user file.
+            Err(_) => Ok(self.clone()),
+        }
+    }
+
+    fn for_workspace(&self, home: &Path, cwd: &Path) -> AcpResult<Self> {
+        let mut next = self.configured_for_workspace(home, cwd)?;
+        let preferences = crate::config::read_workspace_settings(home, cwd)
+            .map_err(|error| AcpError::invalid_params().data(error.to_string()))?;
+        let policy_id = self
+            .overrides
+            .policy
+            .as_ref()
+            .or(preferences.blend_policy.as_ref());
+        if next.aliases.is_empty() || policy_id.is_some_and(|id| id == SOE_POLICY_ID) {
+            return next.with_soe_preferences(&preferences);
+        }
+        if let Some(id) = policy_id {
+            next.blend_policy = Some(next.blend_policies.get(id).cloned().ok_or_else(|| {
+                AcpError::invalid_params().data(format!("unknown Blend policy {id:?}"))
+            })?);
+        }
+        if let Some(policy) = &next.blend_policy {
+            next.initial = next
+                .model_configs
+                .get(&policy.default_model)
+                .cloned()
+                .ok_or_else(|| {
+                    AcpError::invalid_params().data("policy default model is unavailable")
+                })?;
+        }
+        Ok(next)
+    }
+
+    fn with_soe_preferences(
+        mut self,
+        preferences: &crate::config::WorkspaceSettings,
+    ) -> AcpResult<Self> {
+        if !self.aliases.is_empty() {
+            let alias = self
+                .overrides
+                .model_alias
+                .clone()
+                .or_else(|| preferences.model_alias.clone())
+                .or_else(|| {
+                    self.blend_policy
+                        .as_ref()
+                        .map(|policy| policy.default_model.clone())
+                })
+                .ok_or_else(|| AcpError::invalid_params().data("SOE model is unavailable"))?;
+            if !self.aliases.contains_key(&alias) {
+                return Err(
+                    AcpError::invalid_params().data(format!("unknown model alias {alias:?}"))
+                );
+            }
+            for (alias, thinking) in &preferences.model_thinking {
+                if let Some(config) = self.model_configs.get_mut(alias) {
+                    crate::config::set_thinking(config, thinking)
+                        .map_err(|error| AcpError::invalid_params().data(error))?;
+                }
+            }
+            let selected = self
+                .model_configs
+                .get_mut(&alias)
+                .ok_or_else(|| AcpError::invalid_params().data("SOE model is unavailable"))?;
+            if let Some(model) = self
+                .overrides
+                .model
+                .clone()
+                .or_else(|| preferences.model.clone())
+            {
+                selected.model = model;
+            }
+            if let Some(thinking) = self.overrides.thinking.as_ref().or_else(|| {
+                (!preferences.model_thinking.contains_key(&alias))
+                    .then_some(preferences.thinking.as_ref())
+                    .flatten()
+            }) {
+                crate::config::set_thinking(selected, thinking)
+                    .map_err(|error| AcpError::invalid_params().data(error))?;
+            }
+            self.initial = selected.clone();
+            self.blend_policy = Some(crate::config::soe_policy(alias));
+        } else {
+            if let Some(model) = self
+                .overrides
+                .model
+                .clone()
+                .or_else(|| preferences.model.clone())
+            {
+                self.initial.model = model;
+            }
+            if let Some(thinking) = self
+                .overrides
+                .thinking
+                .as_ref()
+                .or(preferences.thinking.as_ref())
+            {
+                crate::config::set_thinking(&mut self.initial, thinking)
+                    .map_err(|error| AcpError::invalid_params().data(error))?;
+            }
+            self.blend_policy = None;
+        }
+        Ok(self)
+    }
+
+    fn is_soe(&self, policy: Option<&BlendRoutingPolicy>) -> bool {
+        self.aliases.is_empty() || policy.is_some_and(|policy| policy.policy_id == SOE_POLICY_ID)
+    }
+
+    fn build_model(&self) -> AcpResult<HostModel> {
+        crate::host::HostModelCatalog {
+            provider: self.initial.clone(),
+            models: self.aliases.clone(),
+            blend_policy: self.blend_policy.clone(),
+            model_configs: self.model_configs.clone(),
+        }
+        .build_model()
+        .map_err(provider_error)
+    }
+
     fn options(
         &self,
         config: &ApiProviderConfig,
         policy: Option<&BlendRoutingPolicy>,
     ) -> Vec<SessionConfigOption> {
-        let models = self
-            .models
-            .iter()
-            .map(|model| SessionConfigSelectOption::new(model.clone(), model.clone()))
-            .collect::<Vec<_>>();
+        let mut policies = vec![SessionConfigSelectOption::new(SOE_POLICY_ID, "SOE")];
+        policies.extend(
+            self.blend_policies
+                .keys()
+                .map(|id| SessionConfigSelectOption::new(id.clone(), id.clone())),
+        );
+        let selected_policy = match policy {
+            Some(policy) if !self.is_soe(Some(policy)) => {
+                crate::config::policy_selection_key(&self.blend_policies, policy).to_owned()
+            }
+            _ => SOE_POLICY_ID.to_owned(),
+        };
+        let mut options = vec![
+            SessionConfigOption::select("blend.policy", "Policy", selected_policy, policies)
+                .category(SessionConfigOptionCategory::ModelConfig),
+        ];
+        if !self.is_soe(policy) {
+            return options;
+        }
         let selected_model = policy
             .map(|policy| policy.default_model.as_str())
             .unwrap_or(&config.model);
-        let mut options = vec![
+        let models = self
+            .models
+            .iter()
+            .map(|model| {
+                SessionConfigSelectOption::new(
+                    model.clone(),
+                    if model == selected_model && self.aliases.contains_key(model) {
+                        format!("{model} · {}", config.model)
+                    } else {
+                        self.model_configs.get(model).map_or_else(
+                            || model.clone(),
+                            |config| format!("{model} · {}", config.model),
+                        )
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        options.push(
             SessionConfigOption::select("model", "Model", selected_model.to_owned(), models)
                 .category(SessionConfigOptionCategory::Model),
-        ];
-        if let Some(policy) = policy {
-            let policies = self
-                .blend_policies
-                .keys()
-                .map(|id| SessionConfigSelectOption::new(id.clone(), id.clone()))
-                .collect::<Vec<_>>();
-            if policies.len() > 1 {
-                options.push(
-                    SessionConfigOption::select(
-                        "blend.policy",
-                        "Policy",
-                        policy.policy_id.clone(),
-                        policies,
-                    )
-                    .category(SessionConfigOptionCategory::ModelConfig),
-                );
-            }
-        }
+        );
         if !matches!(
             config.api_type,
             ApiType::OpenAiChatCompletions | ApiType::OpenAiResponses
         ) {
             return options;
         }
-        let levels = if config.api_type == ApiType::OpenAiResponses {
-            vec!["off", "low", "medium", "high"]
-        } else {
-            vec!["off", "on"]
-        };
-        let current = if !config.thinking_enabled {
-            "off"
-        } else if config.api_type == ApiType::OpenAiResponses {
-            config.reasoning_effort.as_deref().unwrap_or("medium")
-        } else {
-            "on"
-        };
+        let levels = crate::config::thinking_levels(config.api_type);
+        let current = crate::config::thinking_level(config);
         options.push(
             SessionConfigOption::select(
                 "thinking",
                 "Thinking",
                 current.to_owned(),
                 levels
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .map(|level| SessionConfigSelectOption::new(level, level))
                     .collect::<Vec<_>>(),
             )
@@ -215,10 +403,8 @@ impl AcpState {
         self
     }
 
-    fn config_options(&self) -> Option<Vec<SessionConfigOption>> {
-        self.provider_settings
-            .as_ref()
-            .map(|settings| settings.options(&settings.initial, settings.blend_policy.as_ref()))
+    fn config_options(settings: Option<&AcpProviderSettings>) -> Option<Vec<SessionConfigOption>> {
+        settings.map(|settings| settings.options(&settings.initial, settings.blend_policy.as_ref()))
     }
 
     fn build_runtime(
@@ -226,6 +412,7 @@ impl AcpState {
         model: HostModel,
         cwd: &Path,
         mcp: crate::mcp::McpTools,
+        settings: Option<&AcpProviderSettings>,
     ) -> Result<HostRuntime, AcpError> {
         build_host_runtime_with_blend(
             model,
@@ -233,9 +420,7 @@ impl AcpState {
             self.tool_policy.clone(),
             &self.arabica_home,
             mcp,
-            self.provider_settings
-                .as_ref()
-                .and_then(|settings| settings.blend_policy.clone()),
+            settings.and_then(|settings| settings.blend_policy.clone()),
         )
         .map_err(runtime_error)
     }
@@ -287,10 +472,18 @@ impl AcpState {
                 .data(format!("cwd must be absolute: {}", request.cwd.display())));
         }
         let workspace_id = crate::host::workspace_id_for(&request.cwd);
-        let model = (self.model_factory)()?;
+        let session_settings = self
+            .provider_settings
+            .as_ref()
+            .map(|settings| settings.for_workspace(&self.arabica_home, &request.cwd))
+            .transpose()?;
+        let model = match &session_settings {
+            Some(settings) => settings.build_model()?,
+            None => (self.model_factory)()?,
+        };
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
+        let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let instructions_sha256 =
             crate::instructions::sha256(manager.runtime().system_instructions());
@@ -341,22 +534,20 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store,
-                    provider_config: self
-                        .provider_settings
+                    provider_config: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
-                    model_configs: self
-                        .provider_settings
+                    model_configs: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.model_configs.clone())),
-                    blend_policy: self
-                        .provider_settings
+                    blend_policy: session_settings
                         .as_ref()
                         .and_then(|settings| settings.blend_policy.clone())
                         .map(Mutex::new),
                 }),
             );
-        Ok(NewSessionResponse::new(acp_session_id).config_options(self.config_options()))
+        Ok(NewSessionResponse::new(acp_session_id)
+            .config_options(Self::config_options(session_settings.as_ref())))
     }
 
     /// `session/load`: only reachable once `initialize` has advertised
@@ -395,10 +586,18 @@ impl AcpState {
             .open(&workspace_id, &arabica_session_id)
             .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
 
-        let model = (self.model_factory)()?;
+        let session_settings = self
+            .provider_settings
+            .as_ref()
+            .map(|settings| settings.for_workspace(&self.arabica_home, &request.cwd))
+            .transpose()?;
+        let model = match &session_settings {
+            Some(settings) => settings.build_model()?,
+            None => (self.model_factory)()?,
+        };
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
+        let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let restore_report = manager
             .restore_session(
@@ -441,23 +640,21 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store,
-                    provider_config: self
-                        .provider_settings
+                    provider_config: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
-                    model_configs: self
-                        .provider_settings
+                    model_configs: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.model_configs.clone())),
-                    blend_policy: self
-                        .provider_settings
+                    blend_policy: session_settings
                         .as_ref()
                         .and_then(|settings| settings.blend_policy.clone())
                         .map(Mutex::new),
                 }),
             );
 
-        Ok(LoadSessionResponse::new().config_options(self.config_options()))
+        Ok(LoadSessionResponse::new()
+            .config_options(Self::config_options(session_settings.as_ref())))
     }
 
     /// `session/resume`: only reachable once `initialize` has advertised
@@ -495,10 +692,18 @@ impl AcpState {
             .open(&workspace_id, &arabica_session_id)
             .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
 
-        let model = (self.model_factory)()?;
+        let session_settings = self
+            .provider_settings
+            .as_ref()
+            .map(|settings| settings.for_workspace(&self.arabica_home, &request.cwd))
+            .transpose()?;
+        let model = match &session_settings {
+            Some(settings) => settings.build_model()?,
+            None => (self.model_factory)()?,
+        };
         let mcp =
             connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
-        let runtime = self.build_runtime(model, &request.cwd, mcp)?;
+        let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         manager
             .restore_session(
@@ -521,35 +726,34 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store,
-                    provider_config: self
-                        .provider_settings
+                    provider_config: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.initial.clone())),
-                    model_configs: self
-                        .provider_settings
+                    model_configs: session_settings
                         .as_ref()
                         .map(|settings| Mutex::new(settings.model_configs.clone())),
-                    blend_policy: self
-                        .provider_settings
+                    blend_policy: session_settings
                         .as_ref()
                         .and_then(|settings| settings.blend_policy.clone())
                         .map(Mutex::new),
                 }),
             );
 
-        Ok(ResumeSessionResponse::new().config_options(self.config_options()))
+        Ok(ResumeSessionResponse::new()
+            .config_options(Self::config_options(session_settings.as_ref())))
     }
 
     fn set_config_option(
         &self,
         request: SetSessionConfigOptionRequest,
     ) -> AcpResult<SetSessionConfigOptionResponse> {
-        let settings = self.provider_settings.as_ref().ok_or_else(|| {
+        let initial_settings = self.provider_settings.as_ref().ok_or_else(|| {
             AcpError::invalid_request().data("provider configuration is unavailable")
         })?;
         let entry = self.entry(&request.session_id).ok_or_else(|| {
             AcpError::invalid_params().data(format!("unknown session {}", request.session_id))
         })?;
+        let settings = initial_settings.configured_for_workspace(&self.arabica_home, &entry.cwd)?;
         let config_lock = entry.provider_config.as_ref().ok_or_else(|| {
             AcpError::invalid_request().data("provider configuration is unavailable")
         })?;
@@ -557,13 +761,6 @@ impl AcpState {
             AcpError::invalid_request().data("a prompt is already in progress for this session")
         })?;
         let mut config = config_lock.lock().expect("provider config lock poisoned");
-        let mut updated = config.clone();
-        let mut session_model_configs = entry
-            .model_configs
-            .as_ref()
-            .map(|configs| configs.lock().expect("model configs lock poisoned").clone())
-            .unwrap_or_else(|| settings.model_configs.clone());
-        let mut selected_alias = None;
         let value = request
             .value
             .as_value_id()
@@ -571,124 +768,164 @@ impl AcpState {
             .to_string();
         let config_id = request.config_id.to_string();
         if config_id == "blend.policy" {
-            let policy = settings
-                .blend_policies
-                .get(&value)
-                .cloned()
-                .ok_or_else(|| AcpError::invalid_params().data("unknown Blend policy"))?;
-            let next_config = session_model_configs
-                .get(&policy.default_model)
-                .cloned()
-                .ok_or_else(|| {
-                    AcpError::invalid_params().data("policy default model is unavailable")
-                })?;
-            let model = if settings.aliases.is_empty() {
-                HostModel::Api(ApiModelProvider::new(next_config.clone()).map_err(provider_error)?)
+            let mut next = if value == SOE_POLICY_ID {
+                let preferences =
+                    crate::config::read_workspace_settings(&self.arabica_home, &entry.cwd)
+                        .map_err(|error| AcpError::invalid_params().data(error.to_string()))?;
+                settings.with_soe_preferences(&preferences)?
             } else {
-                HostModel::Blend(
-                    BlendProvider::from_configs(
-                        policy.default_model.clone(),
-                        session_model_configs.clone(),
-                    )
-                    .map_err(provider_error)?,
-                )
+                let policy = settings
+                    .blend_policies
+                    .get(&value)
+                    .cloned()
+                    .ok_or_else(|| AcpError::invalid_params().data("unknown Blend policy"))?;
+                let mut next = settings;
+                next.initial = next
+                    .model_configs
+                    .get(&policy.default_model)
+                    .cloned()
+                    .ok_or_else(|| {
+                        AcpError::invalid_params().data("policy default model is unavailable")
+                    })?;
+                next.blend_policy = Some(policy);
+                next
             };
-            manager
-                .runtime_mut()
-                .set_blend_policy(Some(policy.clone()))
-                .map_err(runtime_error)?;
-            *manager.runtime_mut().model_mut() = model;
-            *config = next_config;
-            if let Some(lock) = &entry.blend_policy {
-                *lock.lock().expect("Blend policy lock poisoned") = policy.clone();
+            // No-alias API hosts have intrinsic SOE without Blend routing.
+            if next.aliases.is_empty() {
+                next.blend_policy = None;
             }
-            if let Some(configs) = &entry.model_configs {
-                *configs.lock().expect("model configs lock poisoned") = session_model_configs;
-            }
-            return Ok(SetSessionConfigOptionResponse::new(
-                settings.options(&config, Some(&policy)),
+            let selected_alias = next
+                .blend_policy
+                .as_ref()
+                .map(|policy| policy.default_model.clone());
+            return self.apply_provider_settings(
+                &entry,
+                manager.runtime_mut(),
+                &mut config,
+                next,
+                |preferences| {
+                    preferences.blend_policy = Some(value.clone());
+                    if value == SOE_POLICY_ID
+                        && let Some(alias) = selected_alias
+                    {
+                        preferences.model_alias = Some(alias);
+                    }
+                    // SOE's remembered model and thinking remain available when
+                    // visiting a named policy, but do not affect its providers.
+                },
+            );
+        }
+        let current_policy = entry
+            .blend_policy
+            .as_ref()
+            .map(|lock| lock.lock().expect("Blend policy lock poisoned").clone());
+        if !settings.is_soe(current_policy.as_ref())
+            && matches!(config_id.as_str(), "model" | "thinking")
+        {
+            return Err(AcpError::invalid_params().data(
+                "model and thinking can be changed only under SOE; edit the configuration file for named policies",
             ));
         }
+        let mut next = settings;
+        next.initial = config.clone();
+        next.blend_policy = current_policy;
+        next.model_configs = entry
+            .model_configs
+            .as_ref()
+            .map(|configs| configs.lock().expect("model configs lock poisoned").clone())
+            .unwrap_or_else(|| next.model_configs.clone());
+        let mut selected_alias = None;
         match config_id.as_str() {
-            "model" if settings.aliases.contains_key(&value) => {
-                updated = session_model_configs[&value].clone();
+            "model" if next.aliases.contains_key(&value) => {
+                next.initial = next.model_configs.get(&value).cloned().ok_or_else(|| {
+                    AcpError::invalid_params().data("selected model is unavailable")
+                })?;
+                next.blend_policy = Some(crate::config::soe_policy(value.clone()));
                 selected_alias = Some(value.clone());
             }
-            "model" if settings.models.contains(&value) => updated.model = value,
-            "thinking" => match (updated.api_type, value.as_str()) {
-                (_, "off") => {
-                    updated.thinking_enabled = false;
-                    updated.reasoning_effort = None;
-                }
-                (ApiType::OpenAiResponses, "low" | "medium" | "high") => {
-                    updated.thinking_enabled = true;
-                    updated.reasoning_effort = Some(value);
-                }
-                (ApiType::OpenAiChatCompletions, "on") => {
-                    updated.thinking_enabled = true;
-                }
-                _ => {
-                    return Err(AcpError::invalid_params()
-                        .data("unsupported thinking level for this provider"));
-                }
-            },
+            "model" if next.models.contains(&value) => next.initial.model = value.clone(),
+            "thinking" => crate::config::set_thinking(&mut next.initial, &value)
+                .map_err(|error| AcpError::invalid_params().data(error))?,
             "model" => {
                 return Err(AcpError::invalid_params()
                     .data("model is not a configured model or Blend alias"));
             }
             _ => return Err(AcpError::invalid_params().data("unknown configuration option")),
         }
-        let model = if !settings.aliases.is_empty() {
-            let default_alias = selected_alias
-                .clone()
-                .or_else(|| {
-                    entry.blend_policy.as_ref().and_then(|lock| {
-                        lock.lock().ok().map(|policy| policy.default_model.clone())
-                    })
-                })
-                .unwrap_or_else(|| {
-                    settings
-                        .blend_policy
-                        .as_ref()
-                        .expect("Blend aliases require policy")
-                        .default_model
-                        .clone()
-                });
-            session_model_configs.insert(default_alias.clone(), updated.clone());
-            HostModel::Blend(
-                BlendProvider::from_configs(default_alias, session_model_configs.clone())
-                    .map_err(provider_error)?,
-            )
-        } else {
-            HostModel::Api(ApiModelProvider::new(updated.clone()).map_err(provider_error)?)
-        };
-        if let Some(configs) = &entry.model_configs {
-            *configs.lock().expect("model configs lock poisoned") = session_model_configs;
-        }
-        *manager.runtime_mut().model_mut() = model;
-        if let Some(alias) = selected_alias {
-            let mut policy = entry
-                .blend_policy
-                .as_ref()
-                .and_then(|lock| lock.lock().ok().map(|policy| policy.clone()))
-                .or_else(|| settings.blend_policy.clone())
-                .ok_or_else(|| AcpError::invalid_params().data("Blend policy is unavailable"))?;
-            policy.default_model = alias;
-            manager
-                .runtime_mut()
-                .set_blend_policy(Some(policy.clone()))
-                .map_err(runtime_error)?;
-            if let Some(lock) = &entry.blend_policy {
-                *lock.lock().expect("blend policy lock poisoned") = policy;
-            }
-        }
-        *config = updated;
-        let current_policy = entry
+        let active_alias = next
             .blend_policy
             .as_ref()
-            .and_then(|lock| lock.lock().ok().map(|policy| policy.clone()));
+            .map(|policy| policy.default_model.clone());
+        if let Some(alias) = &active_alias {
+            next.model_configs
+                .insert(alias.clone(), next.initial.clone());
+        }
+        let selected_model = next.initial.model.clone();
+        self.apply_provider_settings(
+            &entry,
+            manager.runtime_mut(),
+            &mut config,
+            next,
+            |preferences| {
+                preferences.blend_policy = Some(SOE_POLICY_ID.to_owned());
+                if config_id == "thinking" {
+                    if let Some(alias) = &active_alias {
+                        preferences.thinking = None;
+                        preferences
+                            .model_thinking
+                            .insert(alias.clone(), value.clone());
+                    } else {
+                        preferences.thinking = Some(value.clone());
+                    }
+                } else if let Some(alias) = &selected_alias {
+                    preferences.model = None;
+                    preferences.model_alias = Some(alias.clone());
+                    preferences.thinking = None;
+                } else {
+                    preferences.model = Some(selected_model);
+                }
+            },
+        )
+    }
+
+    fn apply_provider_settings(
+        &self,
+        entry: &SessionEntry,
+        runtime: &mut HostRuntime,
+        config: &mut ApiProviderConfig,
+        next: AcpProviderSettings,
+        edit_preferences: impl FnOnce(&mut crate::config::WorkspaceSettings),
+    ) -> AcpResult<SetSessionConfigOptionResponse> {
+        let model = next.build_model()?;
+        let previous_policy = entry
+            .blend_policy
+            .as_ref()
+            .map(|lock| lock.lock().expect("Blend policy lock poisoned").clone());
+        let previous_model = std::mem::replace(runtime.model_mut(), model);
+        if let Err(error) = runtime.set_blend_policy(next.blend_policy.clone()) {
+            *runtime.model_mut() = previous_model;
+            return Err(runtime_error(error));
+        }
+        if let Err(error) =
+            crate::config::save_workspace_settings(&self.arabica_home, &entry.cwd, edit_preferences)
+        {
+            *runtime.model_mut() = previous_model;
+            runtime
+                .set_blend_policy(previous_policy)
+                .map_err(runtime_error)?;
+            return Err(AcpError::internal_error().data(error.to_string()));
+        }
+        *config = next.initial.clone();
+        if let Some(lock) = &entry.blend_policy
+            && let Some(policy) = &next.blend_policy
+        {
+            *lock.lock().expect("Blend policy lock poisoned") = policy.clone();
+        }
+        if let Some(configs) = &entry.model_configs {
+            *configs.lock().expect("model configs lock poisoned") = next.model_configs.clone();
+        }
         Ok(SetSessionConfigOptionResponse::new(
-            settings.options(&config, current_policy.as_ref()),
+            next.options(config, next.blend_policy.as_ref()),
         ))
     }
 
@@ -823,47 +1060,9 @@ fn session_error(error: SessionError) -> AcpError {
 pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) -> AcpResult<()> {
     let arabica_home = arabica_adapters::default_arabica_home()
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
-    let catalog = resolved.model_catalog();
-    let blend_policies = resolved.blend_policies.clone();
-    let provider_config = catalog.provider.clone();
-    let aliases = catalog.models.clone();
-    let model_configs = catalog.model_configs.clone();
-    let blend_policy = catalog.blend_policy.clone();
+    let settings = AcpProviderSettings::from_resolved(resolved.invocation.clone(), &resolved)?;
     let permission_policy = resolved.permission_policy.clone();
-    let mut models = aliases.keys().cloned().collect::<Vec<_>>();
-    let initial_selection = blend_policy
-        .as_ref()
-        .map(|policy| policy.default_model.clone());
-    if !aliases.is_empty() {
-        if initial_selection
-            .as_ref()
-            .is_none_or(|selected| !aliases.contains_key(selected))
-        {
-            return Err(AcpError::invalid_params()
-                .data("Blend default_model must name a configured model alias"));
-        }
-    } else if !models.contains(&provider_config.model) {
-        models.insert(0, provider_config.model.clone());
-    }
-    let mut blend_policies = blend_policies;
-    if let Ok(records) = arabica_adapters::SqliteEvaluationStore::read_policy_versions(
-        &arabica_home.join("evaluation.sqlite3"),
-        None,
-    ) {
-        for record in records {
-            let key = format!("{}-v{}", record.policy_id, record.version);
-            blend_policies.entry(key).or_insert(record.policy);
-        }
-    }
-    let settings = AcpProviderSettings {
-        initial: provider_config.clone(),
-        models,
-        aliases: aliases.clone(),
-        model_configs,
-        blend_policy: blend_policy.clone(),
-        blend_policies,
-    };
-    let model_catalog = catalog.clone();
+    let model_catalog = resolved.model_catalog();
     let model_factory: Arc<ModelFactory> =
         Arc::new(move || model_catalog.build_model().map_err(provider_error));
     serve(
@@ -904,16 +1103,26 @@ async fn serve(
                                 ),
                         )
                         .agent_info(Implementation::new("arabica", env!("CARGO_PKG_VERSION")))
-                        .meta(serde_json::Map::from_iter([(
-                            "arabica.evaluation".into(),
-                            serde_json::json!({
-                                "schemaVersion": 1,
-                                "get": "_arabica/evaluation/get",
-                                "refresh": "_arabica/evaluation/refresh",
-                                "policyAction": "_arabica/evaluation/policy/action",
-                                "asynchronous": true
-                            }),
-                        )])),
+                        .meta(serde_json::Map::from_iter([
+                            (
+                                "arabica.evaluation".into(),
+                                serde_json::json!({
+                                    "schemaVersion": 1,
+                                    "get": "_arabica/evaluation/get",
+                                    "refresh": "_arabica/evaluation/refresh",
+                                    "policyAction": "_arabica/evaluation/policy/action",
+                                    "asynchronous": true
+                                }),
+                            ),
+                            (
+                                "arabica.session".into(),
+                                serde_json::json!({
+                                    "schemaVersion": 1,
+                                    "rename": session_metadata::RENAME_METHOD,
+                                    "maxTitleLength": session_metadata::MAX_TITLE_LENGTH
+                                }),
+                            ),
+                        ])),
                 )
             },
             agent_client_protocol::on_receive_request!(),
@@ -1006,6 +1215,20 @@ async fn serve(
                             responder: Responder<CloseSessionResponse>,
                             _connection: ConnectionTo<Client>| {
                     match state.close_session(request).await {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: session_metadata::RenameSessionRequest,
+                            responder: Responder<session_metadata::RenameSessionResponse>,
+                            _connection: ConnectionTo<Client>| {
+                    match session_metadata::rename(&state, request) {
                         Ok(response) => responder.respond(response),
                         Err(error) => responder.respond_with_error(error),
                     }
@@ -1379,6 +1602,7 @@ mod round_trip {
         let home = temp_root("streaming-home");
         let state = AcpState::new(factory, LocalRunnerPolicy::coding(), home.clone())
             .with_provider_settings(AcpProviderSettings {
+                overrides: Default::default(),
                 initial,
                 models: vec!["mock-model".to_owned()],
                 aliases: BTreeMap::new(),
@@ -1407,7 +1631,7 @@ mod round_trip {
                     .send_request(AcpNewSessionRequest::new(root.clone()))
                     .block_task()
                     .await?;
-                assert_eq!(session.config_options.as_ref().map(Vec::len), Some(2));
+                assert_eq!(session.config_options.as_ref().map(Vec::len), Some(3));
                 let changed = cx
                     .send_request(SetSessionConfigOptionRequest::new(
                         session.session_id.clone(),
@@ -1416,7 +1640,7 @@ mod round_trip {
                     ))
                     .block_task()
                     .await?;
-                assert_eq!(changed.config_options.len(), 2);
+                assert_eq!(changed.config_options.len(), 3);
                 let result = cx
                     .send_request(AcpPromptRequest::new(
                         session.session_id,
@@ -1476,6 +1700,7 @@ mod round_trip {
             arabica_home.clone(),
         )
         .with_provider_settings(AcpProviderSettings {
+            overrides: Default::default(),
             initial,
             models: vec!["first-model".to_owned(), "second-model".to_owned()],
             aliases: BTreeMap::new(),
@@ -1487,7 +1712,7 @@ mod round_trip {
             .new_session(NewSessionRequest::new(root.clone()))
             .await
             .unwrap();
-        assert_eq!(session.config_options.as_ref().unwrap().len(), 2);
+        assert_eq!(session.config_options.as_ref().unwrap().len(), 3);
         let response = state
             .set_config_option(SetSessionConfigOptionRequest::new(
                 session.session_id.clone(),
@@ -1495,7 +1720,7 @@ mod round_trip {
                 "second-model",
             ))
             .unwrap();
-        assert_eq!(response.config_options.len(), 2);
+        assert_eq!(response.config_options.len(), 3);
         state
             .set_config_option(SetSessionConfigOptionRequest::new(
                 session.session_id.clone(),
@@ -1518,11 +1743,11 @@ mod round_trip {
     }
 
     #[tokio::test]
-    async fn acp_blend_alias_selection_changes_the_session_default_model() {
+    async fn acp_soe_model_thinking_survive_named_policy_visits_and_resume() {
         let root = temp_root("blend-config");
         let arabica_home = temp_root("blend-config-home");
         let initial = ApiProviderConfig::new(
-            ApiType::OpenAiChatCompletions,
+            ApiType::OpenAiResponses,
             "test-key",
             "http://127.0.0.1:9/v1",
             "model-fast",
@@ -1589,6 +1814,7 @@ mod round_trip {
             arabica_home.clone(),
         )
         .with_provider_settings(AcpProviderSettings {
+            overrides: Default::default(),
             initial,
             models: aliases.keys().cloned().collect(),
             aliases,
@@ -1600,28 +1826,37 @@ mod round_trip {
             .new_session(NewSessionRequest::new(root.clone()))
             .await
             .unwrap();
-        let model_option = session
-            .config_options
-            .as_ref()
-            .unwrap()
-            .iter()
-            .find(|option| option.id.to_string() == "model")
-            .unwrap();
-        let SessionConfigKind::Select(model_select) = &model_option.kind else {
-            panic!("model option should be a select");
-        };
-        assert_eq!(model_select.current_value.to_string(), "fast");
-        let policy_option = session
-            .config_options
-            .as_ref()
-            .unwrap()
-            .iter()
-            .find(|option| option.id.to_string() == "blend.policy")
-            .unwrap();
-        let SessionConfigKind::Select(policy_select) = &policy_option.kind else {
+        let options = session.config_options.as_ref().unwrap();
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].id.to_string(), "blend.policy");
+        let SessionConfigKind::Select(policy_select) = &options[0].kind else {
             panic!("policy option should be a select");
         };
         assert_eq!(policy_select.current_value.to_string(), "acp-test");
+        for (option, value) in [("model", "strong"), ("thinking", "max")] {
+            assert!(
+                state
+                    .set_config_option(SetSessionConfigOptionRequest::new(
+                        session.session_id.clone(),
+                        option,
+                        value,
+                    ))
+                    .is_err()
+            );
+        }
+        assert!(
+            crate::config::read_workspace_settings(&arabica_home, &root)
+                .unwrap()
+                .blend_policy
+                .is_none()
+        );
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "blend.policy",
+                SOE_POLICY_ID,
+            ))
+            .unwrap();
         let response = state
             .set_config_option(SetSessionConfigOptionRequest::new(
                 session.session_id.clone(),
@@ -1638,6 +1873,27 @@ mod round_trip {
             panic!("model option should be a select");
         };
         assert_eq!(updated_select.current_value.to_string(), "strong");
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "thinking",
+                "max",
+            ))
+            .unwrap();
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "model",
+                "fast",
+            ))
+            .unwrap();
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "thinking",
+                "low",
+            ))
+            .unwrap();
         let entry = state.entry(&session.session_id).unwrap();
         let policy_response = state
             .set_config_option(SetSessionConfigOptionRequest::new(
@@ -1675,6 +1931,166 @@ mod round_trip {
             "strong"
         );
         drop(manager);
+        let saved = crate::config::read_workspace_settings(&arabica_home, &root).unwrap();
+        assert_eq!(saved.blend_policy.as_deref(), Some("simple"));
+        assert_eq!(saved.model_alias.as_deref(), Some("fast"));
+        assert_eq!(saved.model_thinking["strong"], "max");
+        assert_eq!(saved.model_thinking["fast"], "low");
+        let restored = state
+            .new_session(NewSessionRequest::new(root.clone()))
+            .await
+            .unwrap();
+        let restored_entry = state.entry(&restored.session_id).unwrap();
+        assert_eq!(
+            restored_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .policy_id,
+            "simple"
+        );
+        assert_eq!(
+            restored_entry
+                .provider_config
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .reasoning_effort
+                .as_deref(),
+            None
+        );
+        let other_root = temp_root("blend-other-workspace");
+        let isolated = state
+            .new_session(NewSessionRequest::new(other_root.clone()))
+            .await
+            .unwrap();
+        let isolated_entry = state.entry(&isolated.session_id).unwrap();
+        assert_eq!(
+            isolated_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .default_model,
+            "fast"
+        );
+        assert!(
+            !isolated_entry
+                .provider_config
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .thinking_enabled
+        );
+        let active = restored_entry.manager.lock().await;
+        assert!(
+            state
+                .set_config_option(SetSessionConfigOptionRequest::new(
+                    restored.session_id.clone(),
+                    "blend.policy",
+                    SOE_POLICY_ID,
+                ))
+                .is_err()
+        );
+        drop(active);
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                restored.session_id.clone(),
+                "blend.policy",
+                SOE_POLICY_ID,
+            ))
+            .unwrap();
+        assert_eq!(
+            restored_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .default_model,
+            "fast"
+        );
+        assert_eq!(
+            crate::config::thinking_level(
+                &restored_entry
+                    .provider_config
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+            ),
+            "low"
+        );
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                restored.session_id.clone(),
+                "model",
+                "strong",
+            ))
+            .unwrap();
+        assert_eq!(
+            crate::config::thinking_level(
+                &restored_entry
+                    .provider_config
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+            ),
+            "max"
+        );
+        // Release the test's retained writer before reopening the same session.
+        drop(restored_entry);
+        state
+            .close_session(CloseSessionRequest::new(restored.session_id.clone()))
+            .await
+            .unwrap();
+        let resumed = state
+            .resume_session(ResumeSessionRequest::new(
+                restored.session_id.clone(),
+                root.clone(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resumed.config_options.as_ref().unwrap().len(), 3);
+        let resumed_entry = state.entry(&restored.session_id).unwrap();
+        assert_eq!(
+            resumed_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .policy_id,
+            SOE_POLICY_ID
+        );
+        assert_eq!(
+            resumed_entry
+                .blend_policy
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .default_model,
+            "strong"
+        );
+        assert_eq!(
+            crate::config::thinking_level(
+                &resumed_entry
+                    .provider_config
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+            ),
+            "max"
+        );
+        std::fs::remove_dir_all(other_root).ok();
         std::fs::remove_dir_all(root).ok();
         std::fs::remove_dir_all(arabica_home).ok();
     }
@@ -1831,6 +2247,241 @@ mod round_trip {
         .expect("evaluation query blocked on the running session");
         outcome.expect("evaluation extension round trip");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn rename_extension_persists_loaded_and_historical_sessions_without_model_calls() {
+        let root = temp_root("rename-client");
+        let home = temp_root("rename-client-home");
+        let state = scripted_state(vec![], LocalRunnerPolicy::coding(), &home);
+        let retained = state.clone();
+        let (server, channel) = spawn_agent(state);
+        let session_id = tokio::time::timeout(
+            Duration::from_secs(5),
+            ClientRole
+                .builder()
+                .name("rename-client")
+                .connect_with(channel, {
+                    let root = root.clone();
+                    async move |cx| {
+                        let initialized = cx
+                            .send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                            .block_task()
+                            .await?;
+                        assert_eq!(
+                            initialized.meta.as_ref().unwrap()["arabica.session"],
+                            serde_json::json!({
+                                "schemaVersion":1,
+                                "rename":"_arabica/session/rename",
+                                "maxTitleLength":200,
+                            })
+                        );
+                        let session = cx
+                            .send_request(AcpNewSessionRequest::new(root.clone()))
+                            .block_task()
+                            .await?;
+                        let other = cx
+                            .send_request(AcpNewSessionRequest::new(root))
+                            .block_task()
+                            .await?;
+                        let entry = retained.entry(&session.session_id).unwrap();
+                        let workspace_id = crate::host::workspace_id_for(&entry.cwd);
+                        let before = retained
+                            .session_store
+                            .read(&workspace_id, &entry.arabica_session_id)
+                            .unwrap();
+                        let guard = entry.manager.lock().await;
+                        let response = cx
+                            .send_request(session_metadata::RenameSessionRequest {
+                                session_id: session.session_id.clone(),
+                                title: "  A useful title  ".to_owned(),
+                            })
+                            .block_task()
+                            .await?;
+                        assert_eq!(response.session_id, session.session_id);
+                        assert_eq!(response.title, "A useful title");
+                        let after = retained
+                            .session_store
+                            .read(&workspace_id, &entry.arabica_session_id)
+                            .unwrap();
+                        assert_eq!(after.events, before.events);
+                        let mut expected = before.header;
+                        expected.title = Some(response.title);
+                        assert_eq!(
+                            serde_json::to_value(after.header).unwrap(),
+                            serde_json::to_value(expected).unwrap()
+                        );
+                        let listings = cx
+                            .send_request(AcpListSessionsRequest::new())
+                            .block_task()
+                            .await?;
+                        assert_eq!(
+                            listings
+                                .sessions
+                                .iter()
+                                .find(|item| item.session_id == other.session_id)
+                                .unwrap()
+                                .title,
+                            None
+                        );
+                        for (session_id, title) in [
+                            (session.session_id.clone(), "   "),
+                            (AcpSessionId::new("../invalid"), "Title"),
+                            (AcpSessionId::new("unknown"), "Title"),
+                        ] {
+                            assert!(
+                                cx.send_request(session_metadata::RenameSessionRequest {
+                                    session_id,
+                                    title: title.to_owned(),
+                                })
+                                .block_task()
+                                .await
+                                .is_err()
+                            );
+                        }
+                        drop(guard);
+                        drop(entry);
+                        cx.send_request(AcpCloseSessionRequest::new(session.session_id.clone()))
+                            .block_task()
+                            .await?;
+                        Ok(session.session_id)
+                    }
+                }),
+        )
+        .await
+        .expect("rename must not wait for the session manager")
+        .expect("rename round trip succeeds");
+        server.await.unwrap().unwrap();
+
+        let factory: Arc<ModelFactory> = Arc::new(|| panic!("renaming must not construct a model"));
+        let state = AcpState::new(factory, LocalRunnerPolicy::coding(), home.clone());
+        let retained = state.clone();
+        let (server, channel) = spawn_agent(state);
+        ClientRole
+            .builder()
+            .name("historical-rename-client")
+            .connect_with(channel, async move |cx| {
+                cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                    .block_task()
+                    .await?;
+                assert!(retained.entry(&session_id).is_none());
+                let before = retained.session_store.list(None).unwrap();
+                let listing = before
+                    .iter()
+                    .find(|listing| listing.header.id.to_string() == session_id.to_string())
+                    .unwrap();
+                let events = retained
+                    .session_store
+                    .read(&listing.header.workspace_id, &listing.header.id)
+                    .unwrap()
+                    .events;
+                let response = cx
+                    .send_request(session_metadata::RenameSessionRequest {
+                        session_id: session_id.clone(),
+                        title: "Historical title".to_owned(),
+                    })
+                    .block_task()
+                    .await?;
+                assert_eq!(response.title, "Historical title");
+                assert!(retained.entry(&session_id).is_none());
+                let after = retained.session_store.list(None).unwrap();
+                let renamed = after
+                    .iter()
+                    .find(|item| item.header.id == listing.header.id)
+                    .unwrap();
+                assert_eq!(renamed.header.title.as_deref(), Some("Historical title"));
+                assert!(renamed.updated_at_ms >= listing.updated_at_ms);
+                assert_eq!(
+                    retained
+                        .session_store
+                        .read(&listing.header.workspace_id, &listing.header.id)
+                        .unwrap()
+                        .events,
+                    events
+                );
+                Ok(())
+            })
+            .await
+            .expect("historical rename round trip succeeds");
+        server.await.unwrap().unwrap();
+        let listing = SqliteSessionStore::list_sessions(&home, None)
+            .unwrap()
+            .into_iter()
+            .find(|listing| listing.header.title.as_deref() == Some("Historical title"))
+            .unwrap();
+        assert_eq!(listing.header.cwd, root.display().to_string());
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[tokio::test]
+    async fn rename_respects_other_connections_writer_ownership() {
+        let root = temp_root("rename-ownership");
+        let home = temp_root("rename-ownership-home");
+        let owner = scripted_state(vec![], LocalRunnerPolicy::coding(), &home);
+        let session = owner
+            .new_session(AcpNewSessionRequest::new(root.clone()))
+            .await
+            .unwrap();
+        let other = scripted_state(vec![], LocalRunnerPolicy::coding(), &home);
+        let request = session_metadata::RenameSessionRequest {
+            session_id: session.session_id.clone(),
+            title: "Changed elsewhere".to_owned(),
+        };
+        assert!(session_metadata::rename(&other, request.clone()).is_err());
+        assert_eq!(
+            owner.session_store.list(None).unwrap()[0].header.title,
+            None
+        );
+        owner
+            .close_session(AcpCloseSessionRequest::new(session.session_id))
+            .await
+            .unwrap();
+        assert!(session_metadata::rename(&other, request).is_ok());
+        drop(owner);
+        drop(other);
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn rename_rejects_ambiguous_historical_ids_without_mutating_either_session() {
+        let root = temp_root("rename-ambiguous");
+        let home = temp_root("rename-ambiguous-home");
+        let state = scripted_state(vec![], LocalRunnerPolicy::coding(), &home);
+        let session_id = StructureSessionId::new("duplicate-id");
+        for id in ["workspace-a", "workspace-b"] {
+            state
+                .session_store
+                .create(NewSession {
+                    session_id: &session_id,
+                    workspace_id: &arabica_protocol::WorkspaceId::new(id),
+                    cwd: &root,
+                    profile: None,
+                    instructions_sha256: None,
+                })
+                .unwrap();
+        }
+        assert!(
+            session_metadata::rename(
+                &state,
+                session_metadata::RenameSessionRequest {
+                    session_id: AcpSessionId::new("duplicate-id"),
+                    title: "Wrong target".to_owned(),
+                },
+            )
+            .is_err()
+        );
+        let listings = state.session_store.list(None).unwrap();
+        assert_eq!(listings.len(), 2);
+        assert!(
+            listings
+                .iter()
+                .all(|listing| listing.header.title.is_none())
+        );
+        drop(state);
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(home).ok();
     }
 
     #[tokio::test]
