@@ -133,6 +133,8 @@ url = "https://mcp.example.test/mcp"
 [mcp.headers]
 Authorization = "Bearer your-token"</code></pre>
       <p>Each server uses exactly one transport: local <code>command</code> (stdio) or HTTP <code>url</code>. Store secrets in environment/header entries only when needed, and keep the config file private.</p>
+      <p>Both transports prefer the stateless <a href="https://modelcontextprotocol.io/specification/2026-07-28">MCP 2026-07-28 protocol</a> and automatically fall back to the legacy initialization handshake for older servers. Modern requests carry their protocol version, client identity, and capabilities independently; HTTP requests do not need an MCP session ID. The same configuration works in the desktop app, terminal, and ACP clients.</p>
+      <p>Use <code>headers</code> for authentication and application-specific headers. Protocol headers such as <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code>, <code>Mcp-Name</code>, and <code>Mcp-Param-*</code> are generated automatically and cannot be overridden. HTTP redirects are limited to same-origin 307/308 responses. Optional capabilities such as MCP Apps, Tasks, and elicitation are not enabled.</p>
     </section>
     <section class="docs-section" id="server"><h2>HTTP server configuration</h2><p><code>arabica-server</code> uses process environment variables rather than the CLI/ACP user TOML. Set the required provider catalog and model aliases, then optional routing and runtime settings.</p>
       <div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Environment variable</th><th>Purpose</th></tr></thead><tbody>
