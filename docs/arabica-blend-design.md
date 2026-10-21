@@ -457,15 +457,18 @@ changes. Protocol changes also need serialization/schema and restore tests.
    inexpensive, fixed stage-based, and state-aware routing on frozen tasks.
    Frozen paired schedules and summaries report verified success, cost per
    successful task, mean and p95 latency, recovery, safety incidents, and
-   Wilson uncertainty by arm and task stratum. The repository no longer ships
-   a campaign orchestrator, so live execution and empirical comparisons still
-   require an external runner.
+   Wilson uncertainty by arm and task stratum. The `policy_campaign` binary in
+   `benchmarks/runtime-short-memory` executes live policy campaigns and writes
+   `trials.json` and `comparison.json`; see
+   [run evaluation](run-evaluation.md). Weighted task scoring and guarded
+   policy iteration are planned in the
+   [scoring plan](plans/blend-scoring-plan.md).
 6. **Test memory-aware routing.** A paired memory-evidence campaign schema now
    holds model and routing fixed while varying memory projection and recording
-   success, evidence recall, and token usage. The external runner must execute
-   this schedule before combining
-   memory and routing policies; only combine them after an isolated experiment
-   shows a measurable benefit.
+   success, evidence recall, and token usage. `policy_campaign` does not yet
+   execute this schedule, so a memory-evidence runner is still required before
+   combining memory and routing policies; only combine them after an isolated
+   experiment shows a measurable benefit.
 
 Each behavior change needs focused tests. Protocol changes also need
 serialization/schema and restore coverage. Automatic policy learning and
