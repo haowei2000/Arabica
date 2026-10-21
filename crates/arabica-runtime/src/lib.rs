@@ -10,6 +10,8 @@ mod context;
 mod context_report;
 mod run_evaluation;
 pub use run_evaluation::*;
+mod scoring;
+pub use scoring::*;
 mod evaluation;
 pub use evaluation::*;
 mod context_state;

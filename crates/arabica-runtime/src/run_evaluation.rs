@@ -325,14 +325,43 @@ pub enum AcceptanceCheck {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+fn default_criterion_weight() -> f64 {
+    1.0
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptanceCriterion {
     pub id: String,
     pub check: AcceptanceCheck,
+    #[serde(default = "default_criterion_weight")]
+    pub weight: f64,
+    #[serde(default)]
+    pub required: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+impl AcceptanceCriterion {
+    pub fn new(id: impl Into<String>, check: AcceptanceCheck) -> Self {
+        Self {
+            id: id.into(),
+            check,
+            weight: 1.0,
+            required: false,
+        }
+    }
+
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    pub fn with_weight(mut self, weight: f64) -> Self {
+        self.weight = weight;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptanceSpec {
     pub task_id: String,
@@ -346,12 +375,19 @@ impl AcceptanceSpec {
         if self.task_id.trim().is_empty() || self.version == 0 || self.criteria.len() > 128 {
             return Err(EvaluationError("invalid acceptance specification".into()));
         }
+        let mut total_weight = 0.0;
         for criterion in &self.criteria {
             if criterion.id.trim().is_empty() || !ids.insert(&criterion.id) {
                 return Err(EvaluationError(
                     "acceptance criterion IDs must be unique and non-empty".into(),
                 ));
             }
+            if criterion.weight < 0.0 || !criterion.weight.is_finite() {
+                return Err(EvaluationError(
+                    "acceptance criterion weight must be non-negative and finite".into(),
+                ));
+            }
+            total_weight += criterion.weight;
             match &criterion.check {
                 AcceptanceCheck::OutputRegex { pattern } => {
                     Regex::new(pattern).map_err(|_| {
@@ -371,6 +407,11 @@ impl AcceptanceSpec {
                 }
                 _ => {}
             }
+        }
+        if !self.criteria.is_empty() && total_weight <= 0.0 {
+            return Err(EvaluationError(
+                "total criterion weight must be strictly positive".into(),
+            ));
         }
         Ok(())
     }
@@ -732,12 +773,12 @@ mod tests {
         AcceptanceSpec {
             task_id: "task".into(),
             version: 1,
-            criteria: vec![AcceptanceCriterion {
-                id: "answer".into(),
-                check: AcceptanceCheck::OutputContains {
+            criteria: vec![AcceptanceCriterion::new(
+                "answer",
+                AcceptanceCheck::OutputContains {
                     value: "ready".into(),
                 },
-            }],
+            )],
         }
     }
 
@@ -856,12 +897,12 @@ mod tests {
         assert_eq!(pass.verified_success, Some(true));
         assert_eq!(pass.completion_bps, Some(10_000));
         let mut partial = spec.clone();
-        partial.criteria.push(AcceptanceCriterion {
-            id: "missing-tool".into(),
-            check: AcceptanceCheck::ToolSucceeded {
+        partial.criteria.push(AcceptanceCriterion::new(
+            "missing-tool",
+            AcceptanceCheck::ToolSucceeded {
                 name: "shell".into(),
             },
-        });
+        ));
         assert_eq!(
             scorer
                 .score(&completed(Some("ready".into())), &partial)

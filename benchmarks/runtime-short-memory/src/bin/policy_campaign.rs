@@ -455,12 +455,14 @@ mod tests {
             criteria: ["large.txt", "missing.txt", "link"]
                 .into_iter()
                 .enumerate()
-                .map(|(index, path)| arabica_runtime::AcceptanceCriterion {
-                    id: index.to_string(),
-                    check: AcceptanceCheck::ArtifactContains {
-                        path: path.into(),
-                        value: "x".into(),
-                    },
+                .map(|(index, path)| {
+                    arabica_runtime::AcceptanceCriterion::new(
+                        index.to_string(),
+                        AcceptanceCheck::ArtifactContains {
+                            path: path.into(),
+                            value: "x".into(),
+                        },
+                    )
                 })
                 .collect(),
         };
@@ -517,13 +519,13 @@ mod tests {
             acceptance: AcceptanceSpec {
                 task_id: "write".into(),
                 version: 1,
-                criteria: vec![arabica_runtime::AcceptanceCriterion {
-                    id: "file".into(),
-                    check: AcceptanceCheck::ArtifactContains {
+                criteria: vec![arabica_runtime::AcceptanceCriterion::new(
+                    "file",
+                    AcceptanceCheck::ArtifactContains {
                         path: "answer.txt".into(),
                         value: "ready".into(),
                     },
-                }],
+                )],
             },
         };
         let config = Campaign {
