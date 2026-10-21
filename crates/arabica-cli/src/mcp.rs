@@ -10,12 +10,36 @@ use arabica_runner::{
     RunnerEnvironment, RunnerError, RunnerOutput, ToolExecutionRequest, ToolExecutionResult,
     truncate_output,
 };
-use rmcp::model::CallToolRequestParams;
+use rmcp::model::{
+    CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation, ProtocolVersion,
+};
 use rmcp::service::RunningService;
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
-use rmcp::{RoleClient, ServiceExt};
+use rmcp::{ClientLifecycleMode, ClientServiceExt, RoleClient};
 
-type Client = RunningService<RoleClient, ()>;
+type Client = RunningService<RoleClient, ClientConfig>;
+
+// Allow the SDK's ten-second probe deadline plus fifteen seconds for a
+// silent legacy server to complete its fallback handshake.
+const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+
+fn client_config() -> ClientConfig {
+    // Advertise only implemented input capabilities. Tool execution and
+    // state-only MRTR continuations do not require optional capabilities.
+    ClientConfig::new(
+        ClientCapabilities::default(),
+        Implementation::new("arabica", env!("CARGO_PKG_VERSION")),
+    )
+}
+
+fn client_lifecycle() -> ClientLifecycleMode {
+    // The SDK owns discovery, per-request metadata, and transport-specific
+    // fallback. A modern protocol error must never trigger a legacy handshake.
+    ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+        legacy_version: Some(ProtocolVersion::LATEST_WITH_INITIALIZE),
+    }
+}
 
 #[derive(Debug)]
 struct RoutedTool {
@@ -73,20 +97,17 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
             let transport = TokioChildProcess::new(command).map_err(|error| {
                 format!("MCP server '{}' could not start: {error}", config.name)
             })?;
-            let client =
-                tokio::time::timeout(std::time::Duration::from_secs(15), ().serve(transport))
-                    .await
-                    .map_err(|_| format!("MCP server '{}' initialization timed out", config.name))?
-                    .map_err(|error| {
-                        format!(
-                            "MCP server '{}' initialization failed: {error}",
-                            config.name
-                        )
-                    })?;
+            let client = tokio::time::timeout(
+                CONNECTION_TIMEOUT,
+                client_config().serve_with_lifecycle(transport, client_lifecycle()),
+            )
+            .await
+            .map_err(|_| format!("MCP server '{}' connection timed out", config.name))?
+            .map_err(|error| format!("MCP server '{}' connection failed: {error}", config.name))?;
             (config.name, client)
         }
         McpServer::Http(config) => {
-            let mut headers = reqwest::header::HeaderMap::new();
+            let mut headers = HashMap::new();
             for header in &config.headers {
                 let key = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(
                     |_| {
@@ -96,6 +117,22 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
                         )
                     },
                 )?;
+                if matches!(
+                    key.as_str(),
+                    "accept"
+                        | "content-type"
+                        | "mcp-session-id"
+                        | "last-event-id"
+                        | "mcp-protocol-version"
+                        | "mcp-method"
+                        | "mcp-name"
+                ) || key.as_str().starts_with("mcp-param-")
+                {
+                    return Err(format!(
+                        "MCP server '{}' cannot override a protocol-owned HTTP header",
+                        config.name
+                    ));
+                }
                 let value =
                     reqwest::header::HeaderValue::from_str(&header.value).map_err(|_| {
                         format!(
@@ -105,26 +142,19 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
                     })?;
                 headers.insert(key, value);
             }
-            let http_client = reqwest::Client::builder()
-                .default_headers(headers)
-                .build()
-                .map_err(|error| {
-                    format!("MCP server '{}' HTTP client failed: {error}", config.name)
-                })?;
-            let transport = StreamableHttpClientTransport::with_client(
-                http_client,
-                rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str()),
+            // Keep the SDK's body-preserving, same-origin redirect policy so
+            // configured credentials cannot be forwarded to another origin.
+            let transport = StreamableHttpClientTransport::from_config(
+                rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
+                    .custom_headers(headers),
             );
-            let client =
-                tokio::time::timeout(std::time::Duration::from_secs(15), ().serve(transport))
-                    .await
-                    .map_err(|_| format!("MCP server '{}' initialization timed out", config.name))?
-                    .map_err(|error| {
-                        format!(
-                            "MCP server '{}' initialization failed: {error}",
-                            config.name
-                        )
-                    })?;
+            let client = tokio::time::timeout(
+                CONNECTION_TIMEOUT,
+                client_config().serve_with_lifecycle(transport, client_lifecycle()),
+            )
+            .await
+            .map_err(|_| format!("MCP server '{}' connection timed out", config.name))?
+            .map_err(|error| format!("MCP server '{}' connection failed: {error}", config.name))?;
             (config.name, client)
         }
         McpServer::Sse(config) => {
@@ -400,6 +430,11 @@ impl RunnerEnvironment for McpTools {
         Ok(false)
     }
 }
+
+#[cfg(test)]
+mod stateless_http_tests;
+#[cfg(test)]
+mod stateless_stdio_tests;
 
 #[cfg(test)]
 mod tests {

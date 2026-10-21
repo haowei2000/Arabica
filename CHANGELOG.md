@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Support stateless MCP 2026-07-28 over stdio and Streamable HTTP, with per-request client metadata, native protocol headers, and automatic legacy-server fallback.
+- Upgrade the official Rust MCP SDK to 3.6 and preserve same-origin HTTP redirects and protocol-owned headers when applying configured credentials.
+
 ## 0.8.2 — 2026-10-21
 
 - Fix SOE model and thinking selection with one native macOS Policy menu, preserving confirmed values and conversation scope while menus are open.
