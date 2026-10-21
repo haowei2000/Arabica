@@ -1,0 +1,531 @@
+{
+  "candidates": [
+    {
+      "label": "fixed_strong",
+      "policy_id": "fixed_strong"
+    },
+    {
+      "label": "fixed_inexpensive",
+      "policy_id": "fixed_inexpensive"
+    },
+    {
+      "label": "fixed_stage_blend",
+      "policy_id": "fixed_stage_blend"
+    },
+    {
+      "label": "state_aware_blend",
+      "policy_id": "state_aware_blend"
+    }
+  ],
+  "repetitions": 3,
+  "max_model_steps": 15,
+  "timeout_seconds": 120,
+  "seed": 42,
+  "tasks": [
+    {
+      "task_id": "file-op-config-update",
+      "category": "exact_file_operations",
+      "prompt": "Update app_config.toml: change port to 8080 and enabled to true. Do not modify any other files.",
+      "acceptance": {
+        "task_id": "file-op-config-update",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "exact-config",
+            "check": {
+              "type": "exact_file_content",
+              "path": "app_config.toml",
+              "expected": "port = 8080\nenabled = true\n"
+            },
+            "weight": 0.7,
+            "required": true
+          },
+          {
+            "id": "permitted-files",
+            "check": {
+              "type": "permitted_files",
+              "allowed_paths": [
+                "app_config.toml"
+              ]
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "app_config.toml": "port = 3000\nenabled = false\n",
+        "notes.txt": "Do not touch this file.\n"
+      },
+      "reference_cost": 0.05,
+      "reference_time_ms": 15000
+    },
+    {
+      "task_id": "file-op-version-bump",
+      "category": "exact_file_operations",
+      "prompt": "Bump version to 2.1.0 in version.txt and add '## 2.1.0' header at the top of changelog.md. No other files may be modified.",
+      "acceptance": {
+        "task_id": "file-op-version-bump",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "exact-version",
+            "check": {
+              "type": "exact_file_content",
+              "path": "version.txt",
+              "expected": "2.1.0\n"
+            },
+            "weight": 0.4,
+            "required": true
+          },
+          {
+            "id": "changelog-contains",
+            "check": {
+              "type": "artifact_contains",
+              "path": "changelog.md",
+              "value": "## 2.1.0\n"
+            },
+            "weight": 0.3,
+            "required": true
+          },
+          {
+            "id": "permitted-files",
+            "check": {
+              "type": "permitted_files",
+              "allowed_paths": [
+                "version.txt",
+                "changelog.md"
+              ]
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "changelog.md": "## 2.0.0\nInitial release\n",
+        "version.txt": "2.0.0\n"
+      },
+      "reference_cost": 0.06,
+      "reference_time_ms": 18000
+    },
+    {
+      "task_id": "file-op-clean-delete",
+      "category": "exact_file_operations",
+      "prompt": "In flags.env, delete the experimental lines EXPERIMENTAL_X and EXPERIMENTAL_Y, keeping only FEATURE_A=1 and FEATURE_B=1.",
+      "acceptance": {
+        "task_id": "file-op-clean-delete",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "exact-flags",
+            "check": {
+              "type": "exact_file_content",
+              "path": "flags.env",
+              "expected": "FEATURE_A=1\nFEATURE_B=1\n"
+            },
+            "weight": 0.7,
+            "required": true
+          },
+          {
+            "id": "permitted-files",
+            "check": {
+              "type": "permitted_files",
+              "allowed_paths": [
+                "flags.env"
+              ]
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "flags.env": "FEATURE_A=1\nEXPERIMENTAL_X=true\nFEATURE_B=1\nEXPERIMENTAL_Y=true\n"
+      },
+      "reference_cost": 0.04,
+      "reference_time_ms": 12000
+    },
+    {
+      "task_id": "structured-extract-users",
+      "category": "structured_extraction",
+      "prompt": "Parse access.log and extract all user login events into users.json matching required fields name, id, role.",
+      "acceptance": {
+        "task_id": "structured-extract-users",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "schema-valid",
+            "check": {
+              "type": "json_schema",
+              "path": "users.json",
+              "required_fields": [
+                "name",
+                "id",
+                "role"
+              ]
+            },
+            "weight": 0.5,
+            "required": true
+          },
+          {
+            "id": "alice-user",
+            "check": {
+              "type": "json_field",
+              "path": "users.json",
+              "pointer": "/0/name",
+              "expected": "alice"
+            },
+            "weight": 0.25,
+            "required": true
+          },
+          {
+            "id": "bob-role",
+            "check": {
+              "type": "json_field",
+              "path": "users.json",
+              "pointer": "/1/role",
+              "expected": "member"
+            },
+            "weight": 0.25,
+            "required": false
+          }
+        ]
+      },
+      "initial_files": {
+        "access.log": "2026-10-21 LOGIN user=alice id=101 role=admin\n2026-10-21 LOGIN user=bob id=102 role=member\n"
+      },
+      "reference_cost": 0.08,
+      "reference_time_ms": 20000
+    },
+    {
+      "task_id": "structured-metrics-summary",
+      "category": "structured_extraction",
+      "prompt": "Summarize data.csv into summary.json with fields total_records (3), mean_score (90.0), and status ('ok').",
+      "acceptance": {
+        "task_id": "structured-metrics-summary",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "summary-schema",
+            "check": {
+              "type": "json_schema",
+              "path": "summary.json",
+              "required_fields": [
+                "total_records",
+                "mean_score",
+                "status"
+              ]
+            },
+            "weight": 0.5,
+            "required": true
+          },
+          {
+            "id": "count-field",
+            "check": {
+              "type": "json_field",
+              "path": "summary.json",
+              "pointer": "/total_records",
+              "expected": 3
+            },
+            "weight": 0.25,
+            "required": true
+          },
+          {
+            "id": "mean-field",
+            "check": {
+              "type": "json_field",
+              "path": "summary.json",
+              "pointer": "/mean_score",
+              "expected": 90.0
+            },
+            "weight": 0.25,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "data.csv": "record_id,score\n1,80\n2,90\n3,100\n"
+      },
+      "reference_cost": 0.08,
+      "reference_time_ms": 22000
+    },
+    {
+      "task_id": "structured-dependency-manifest",
+      "category": "structured_extraction",
+      "prompt": "Inspect packages.txt and generate manifest.json with package_count (3) and status ('valid').",
+      "acceptance": {
+        "task_id": "structured-dependency-manifest",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "manifest-count",
+            "check": {
+              "type": "json_field",
+              "path": "manifest.json",
+              "pointer": "/package_count",
+              "expected": 3
+            },
+            "weight": 0.5,
+            "required": true
+          },
+          {
+            "id": "manifest-status",
+            "check": {
+              "type": "json_field",
+              "path": "manifest.json",
+              "pointer": "/status",
+              "expected": "valid"
+            },
+            "weight": 0.5,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "packages.txt": "tokio=1.0\nserde=1.0\naxum=0.7\n"
+      },
+      "reference_cost": 0.07,
+      "reference_time_ms": 20000
+    },
+    {
+      "task_id": "code-fix-off-by-one",
+      "category": "small_code_fixes",
+      "prompt": "Fix the boundary bug in calculate.py so range(len(items)) is used instead of items+1. Verify by running 'python3 test_calc.py'.",
+      "acceptance": {
+        "task_id": "code-fix-off-by-one",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "calc-test",
+            "check": {
+              "type": "controlled_test",
+              "id": "test_calc",
+              "command": "python3 test_calc.py",
+              "timeout_ms": 10000,
+              "output_limit_bytes": 4096
+            },
+            "weight": 0.7,
+            "required": true
+          },
+          {
+            "id": "permitted-files",
+            "check": {
+              "type": "permitted_files",
+              "allowed_paths": [
+                "calculate.py"
+              ]
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "calculate.py": "def total_sum(items):\n    s = 0\n    for i in range(len(items) + 1):\n        s += items[i]\n    return s\n",
+        "test_calc.py": "import sys\nfrom calculate import total_sum\nif total_sum([1, 2, 3]) != 6:\n    sys.exit(1)\nsys.exit(0)\n"
+      },
+      "reference_cost": 0.1,
+      "reference_time_ms": 25000
+    },
+    {
+      "task_id": "code-fix-null-deref",
+      "category": "small_code_fixes",
+      "prompt": "In auth.py, get_user_role(users, username) crashes on missing users. Return 'guest' if user is not found. Test with 'python3 test_auth.py'.",
+      "acceptance": {
+        "task_id": "code-fix-null-deref",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "auth-test",
+            "check": {
+              "type": "controlled_test",
+              "id": "test_auth",
+              "command": "python3 test_auth.py",
+              "timeout_ms": 10000,
+              "output_limit_bytes": 4096
+            },
+            "weight": 0.7,
+            "required": true
+          },
+          {
+            "id": "permitted-files",
+            "check": {
+              "type": "permitted_files",
+              "allowed_paths": [
+                "auth.py"
+              ]
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "auth.py": "def get_user_role(users, username):\n    return users[username]['role']\n",
+        "test_auth.py": "import sys\nfrom auth import get_user_role\nu = {'alice': {'role': 'admin'}}\nif get_user_role(u, 'alice') != 'admin' or get_user_role(u, 'bob') != 'guest':\n    sys.exit(1)\nsys.exit(0)\n"
+      },
+      "reference_cost": 0.1,
+      "reference_time_ms": 25000
+    },
+    {
+      "task_id": "code-fix-string-escape",
+      "category": "small_code_fixes",
+      "prompt": "Fix escape_quotes in parser.py to escape double quotes with a backslash. Verify with 'python3 test_parser.py'.",
+      "acceptance": {
+        "task_id": "code-fix-string-escape",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "parser-test",
+            "check": {
+              "type": "controlled_test",
+              "id": "test_parser",
+              "command": "python3 test_parser.py",
+              "timeout_ms": 10000,
+              "output_limit_bytes": 4096
+            },
+            "weight": 0.7,
+            "required": true
+          },
+          {
+            "id": "permitted-files",
+            "check": {
+              "type": "permitted_files",
+              "allowed_paths": [
+                "parser.py"
+              ]
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "parser.py": "def escape_quotes(s):\n    return s.replace('\"', '')\n",
+        "test_parser.py": "import sys\nfrom parser import escape_quotes\nif escape_quotes('say \"hello\"') != 'say \\\"hello\\\"':\n    sys.exit(1)\nsys.exit(0)\n"
+      },
+      "reference_cost": 0.1,
+      "reference_time_ms": 25000
+    },
+    {
+      "task_id": "multistep-recover-missing-dir",
+      "category": "multistep_work_and_recovery",
+      "prompt": "Export active records from input.raw into 'data/export/clean.txt' (format: one record per line). Ensure the 'data/export' directory is created if missing. Run 'python3 test_export.py' to verify.",
+      "acceptance": {
+        "task_id": "multistep-recover-missing-dir",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "export-test",
+            "check": {
+              "type": "controlled_test",
+              "id": "test_export",
+              "command": "python3 test_export.py",
+              "timeout_ms": 10000,
+              "output_limit_bytes": 4096
+            },
+            "weight": 0.6,
+            "required": true
+          },
+          {
+            "id": "clean-content",
+            "check": {
+              "type": "artifact_contains",
+              "path": "data/export/clean.txt",
+              "value": "record:1:active\nrecord:3:active"
+            },
+            "weight": 0.4,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "input.raw": "record:1:active\nrecord:2:inactive\nrecord:3:active\n",
+        "test_export.py": "import os, sys\nif not os.path.exists('data/export/clean.txt'):\n    sys.exit(1)\nwith open('data/export/clean.txt') as f:\n    lines = [l.strip() for l in f if l.strip()]\nif lines != ['record:1:active', 'record:3:active']:\n    sys.exit(1)\nsys.exit(0)\n"
+      },
+      "reference_cost": 0.15,
+      "reference_time_ms": 35000
+    },
+    {
+      "task_id": "multistep-build-and-package",
+      "category": "multistep_work_and_recovery",
+      "prompt": "Combine 'src/a.txt' and 'src/b.txt' into 'build/bundle.txt' sorted alphabetically, then write the sha256 hex digest of bundle.txt into 'build/checksum.txt'. Run 'python3 test_package.py'.",
+      "acceptance": {
+        "task_id": "multistep-build-and-package",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "package-test",
+            "check": {
+              "type": "controlled_test",
+              "id": "test_package",
+              "command": "python3 test_package.py",
+              "timeout_ms": 10000,
+              "output_limit_bytes": 4096
+            },
+            "weight": 0.7,
+            "required": true
+          },
+          {
+            "id": "bundle-artifact",
+            "check": {
+              "type": "artifact_contains",
+              "path": "build/bundle.txt",
+              "value": "ALPHA=1\nBETA=2\n"
+            },
+            "weight": 0.3,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "src/a.txt": "ALPHA=1\n",
+        "src/b.txt": "BETA=2\n",
+        "test_package.py": "import hashlib, os, sys\nif not os.path.exists('build/bundle.txt') or not os.path.exists('build/checksum.txt'):\n    sys.exit(1)\nwith open('build/bundle.txt', 'rb') as f:\n    h = hashlib.sha256(f.read()).hexdigest()\nwith open('build/checksum.txt') as f:\n    if f.read().strip() != h:\n        sys.exit(1)\nsys.exit(0)\n"
+      },
+      "reference_cost": 0.15,
+      "reference_time_ms": 35000
+    },
+    {
+      "task_id": "multistep-pipeline-self-correct",
+      "category": "multistep_work_and_recovery",
+      "prompt": "pipeline_config.json has 'mode': 'unsupported' which causes test_pipeline.py to fail. Update mode to 'fast' and retries to 5. Run 'python3 test_pipeline.py'.",
+      "acceptance": {
+        "task_id": "multistep-pipeline-self-correct",
+        "version": 1,
+        "criteria": [
+          {
+            "id": "pipeline-test",
+            "check": {
+              "type": "controlled_test",
+              "id": "test_pipeline",
+              "command": "python3 test_pipeline.py",
+              "timeout_ms": 10000,
+              "output_limit_bytes": 4096
+            },
+            "weight": 0.6,
+            "required": true
+          },
+          {
+            "id": "mode-field",
+            "check": {
+              "type": "json_field",
+              "path": "pipeline_config.json",
+              "pointer": "/mode",
+              "expected": "fast"
+            },
+            "weight": 0.4,
+            "required": true
+          }
+        ]
+      },
+      "initial_files": {
+        "pipeline_config.json": "{\n  \"mode\": \"unsupported\",\n  \"retries\": 3\n}\n",
+        "test_pipeline.py": "import json, sys\nwith open('pipeline_config.json') as f:\n    c = json.load(f)\nif c.get('mode') != 'fast' or c.get('retries') != 5:\n    sys.exit(1)\nsys.exit(0)\n"
+      },
+      "reference_cost": 0.12,
+      "reference_time_ms": 30000
+    }
+  ]
+}

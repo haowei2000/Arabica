@@ -1106,11 +1106,21 @@ async fn serve(
                         .meta(serde_json::Map::from_iter([
                             (
                                 "arabica.evaluation".into(),
-                                serde_json::json!({"schemaVersion":1,"get":"_arabica/evaluation/get","refresh":"_arabica/evaluation/refresh","asynchronous":true}),
+                                serde_json::json!({
+                                    "schemaVersion": 1,
+                                    "get": "_arabica/evaluation/get",
+                                    "refresh": "_arabica/evaluation/refresh",
+                                    "policyAction": "_arabica/evaluation/policy/action",
+                                    "asynchronous": true
+                                }),
                             ),
                             (
                                 "arabica.session".into(),
-                                serde_json::json!({"schemaVersion":1,"rename":session_metadata::RENAME_METHOD,"maxTitleLength":session_metadata::MAX_TITLE_LENGTH}),
+                                serde_json::json!({
+                                    "schemaVersion": 1,
+                                    "rename": session_metadata::RENAME_METHOD,
+                                    "maxTitleLength": session_metadata::MAX_TITLE_LENGTH
+                                }),
                             ),
                         ])),
                 )
@@ -1247,6 +1257,20 @@ async fn serve(
                             responder: Responder<serde_json::Value>,
                             _connection: ConnectionTo<Client>| {
                     match evaluation::query(&state, &request.session_id, true) {
+                        Ok(view) => responder.respond(view),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: evaluation::PolicyActionRequest,
+                            responder: Responder<serde_json::Value>,
+                            _connection: ConnectionTo<Client>| {
+                    match evaluation::policy_action(&state, &request).await {
                         Ok(view) => responder.respond(view),
                         Err(error) => responder.respond_with_error(error),
                     }

@@ -238,7 +238,7 @@ struct NativeSettingsView: View {
                     Divider()
                 }
                 if current == .policies {
-                    Button("Evaluation Candidates…") { showingCandidates = true }
+                    Button("Blend Policy Candidates…") { showingCandidates = true }
                     Divider()
                 }
                 Button("Open config.toml…") { NSWorkspace.shared.open(store.configURL) }

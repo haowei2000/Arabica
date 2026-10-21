@@ -21,9 +21,9 @@ struct NativePolicyCandidatesView: View {
                     .tag(record.id)
                 }
             }
-            .navigationTitle("Evaluation Candidates")
+            .navigationTitle("Blend Policy Candidates")
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
-            .accessibilityLabel("Evaluation candidates")
+            .accessibilityLabel("Blend policy candidates")
         } detail: {
             Group {
                 if let selected {
@@ -31,10 +31,10 @@ struct NativePolicyCandidatesView: View {
                 } else {
                     ContentUnavailableView(
                         "No Candidates", systemImage: "arrow.triangle.branch",
-                        description: Text("Candidates appear here after background evaluation proposes a policy."))
+                        description: Text("Candidates appear here after Blend tuning proposes a policy."))
                 }
             }
-            .navigationTitle(selected.map { "\($0.policy_id) · v\($0.version)" } ?? "Evaluation Candidates")
+            .navigationTitle(selected.map { "\($0.policy_id) · v\($0.version)" } ?? "Blend Policy Candidates")
             .safeAreaInset(edge: .bottom) {
                 if let error = evaluation.error {
                     Label(error, systemImage: "exclamationmark.circle")
@@ -50,12 +50,12 @@ struct NativePolicyCandidatesView: View {
                 Button {
                     Task { await evaluation.load(refresh: true) }
                 } label: {
-                    Label("Refresh Candidates", systemImage: "arrow.clockwise")
+                    Label("Refresh Policies", systemImage: "arrow.clockwise")
                 }
                 .disabled(!evaluation.supported || evaluation.isRequesting)
                 .help(
                     evaluation.supported
-                        ? "Refresh evaluation results" : "Connect a supported workspace to view evaluation results")
+                        ? "Refresh Blend policy candidates" : "Connect a supported workspace to view Blend policies")
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
