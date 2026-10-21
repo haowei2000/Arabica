@@ -399,6 +399,334 @@ fn read_user_config(home: &Path) -> Result<UserConfig, Box<dyn std::error::Error
     Ok(config)
 }
 
+/// Schema and semantic validation for a configuration edit. This deliberately
+/// does not resolve credentials, workspace overrides, saved policies, or hosts.
+pub(crate) struct SettingsValidationError {
+    pub path: Vec<String>,
+    pub message: &'static str,
+}
+
+pub(crate) fn validate_settings_document(
+    document: &toml::Value,
+) -> Result<(), SettingsValidationError> {
+    fn invalid(path: Vec<String>, message: &'static str) -> SettingsValidationError {
+        SettingsValidationError { path, message }
+    }
+    fn field(section: &str, name: &str, key: &str) -> Vec<String> {
+        vec![section.to_owned(), name.to_owned(), key.to_owned()]
+    }
+    fn http_url(value: &str) -> bool {
+        url::Url::parse(value)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+    }
+    let config: UserConfig = document.clone().try_into().map_err(|_| invalid(
+        Vec::new(),
+        "The configuration has an unsupported field, an incorrect field type, or a missing required field. Match the documented config.toml schema.",
+    ))?;
+    for (name, provider) in &config.providers {
+        let path = |key| field("providers", name, key);
+        if name.trim().is_empty() {
+            return Err(invalid(
+                vec!["providers".to_owned(), name.clone()],
+                "Provider IDs must not be empty.",
+            ));
+        }
+        if provider
+            .api_key
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(invalid(
+                path("api_key"),
+                "An API key must not be empty. Remove the field to use another credential source.",
+            ));
+        }
+        if provider
+            .api_key_env
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty() || value.contains(['=', '\0']))
+        {
+            return Err(invalid(
+                path("api_key_env"),
+                "Specify a non-empty environment variable name without equals signs or NUL characters.",
+            ));
+        }
+        let chatgpt = provider
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.eq_ignore_ascii_case("chatgpt"));
+        if provider.auth.is_some() && !chatgpt {
+            return Err(invalid(
+                path("auth"),
+                "The supported provider authentication mode is chatgpt. Remove auth to use an API key.",
+            ));
+        }
+        if chatgpt && (provider.api_key.is_some() || provider.api_key_env.is_some()) {
+            return Err(invalid(
+                path("auth"),
+                "ChatGPT authentication cannot be combined with API-key fields.",
+            ));
+        }
+        let api_type = provider
+            .api_type
+            .as_deref()
+            .map(str::parse::<ApiType>)
+            .transpose()
+            .map_err(|_| invalid(path("api_type"), "Select a supported provider API type."))?
+            .unwrap_or(if chatgpt {
+                ApiType::OpenAiResponses
+            } else {
+                ApiType::OpenAiChatCompletions
+            });
+        if chatgpt && api_type != ApiType::OpenAiResponses {
+            return Err(invalid(
+                path("api_type"),
+                "ChatGPT authentication requires the OpenAI Responses API.",
+            ));
+        }
+        if let Some(base_url) = &provider.base_url {
+            if !http_url(base_url) {
+                return Err(invalid(
+                    path("base_url"),
+                    "Use an absolute HTTP or HTTPS provider URL.",
+                ));
+            }
+            if chatgpt && base_url.trim_end_matches('/') != "https://api.openai.com/v1" {
+                return Err(invalid(
+                    path("base_url"),
+                    "ChatGPT authentication requires https://api.openai.com/v1.",
+                ));
+            }
+        }
+        if provider.max_tokens == Some(0) {
+            return Err(invalid(
+                path("max_tokens"),
+                "The token limit must be positive.",
+            ));
+        }
+        if provider.request_timeout_secs == Some(0) {
+            return Err(invalid(
+                path("request_timeout_secs"),
+                "The request timeout must be positive.",
+            ));
+        }
+        if provider.anthropic_cache_static_prefix == Some(true)
+            && api_type != ApiType::AnthropicMessages
+        {
+            return Err(invalid(
+                path("anthropic_cache_static_prefix"),
+                "Static prefix caching requires the Anthropic Messages API.",
+            ));
+        }
+        if provider.thinking.is_some() && provider.reasoning_effort.is_some() {
+            return Err(invalid(
+                path("thinking"),
+                "Configure either thinking or reasoning_effort, not both.",
+            ));
+        }
+        let mut configuration = ApiProviderConfig::new(
+            api_type,
+            "settings-validation",
+            "https://example.invalid",
+            "settings-validation",
+        );
+        for (key, value) in [
+            ("thinking", &provider.thinking),
+            ("reasoning_effort", &provider.reasoning_effort),
+        ] {
+            if let Some(value) = value {
+                set_thinking(&mut configuration, value).map_err(|_| {
+                    invalid(
+                        path(key),
+                        "Select a thinking level supported by this provider API type.",
+                    )
+                })?;
+            }
+        }
+    }
+    for (alias, model) in &config.models {
+        if alias.trim().is_empty() {
+            return Err(invalid(
+                vec!["models".to_owned(), alias.clone()],
+                "Model aliases must not be empty.",
+            ));
+        }
+        if !config.providers.contains_key(&model.provider) {
+            return Err(invalid(
+                field("models", alias, "provider"),
+                "Select an existing provider before saving this model.",
+            ));
+        }
+        if model.model_id.trim().is_empty() {
+            return Err(invalid(
+                field("models", alias, "model_id"),
+                "A model ID must not be empty.",
+            ));
+        }
+    }
+    if let Some(blend) = &config.blend {
+        let aliases = config
+            .models
+            .iter()
+            .map(|(alias, model)| (alias.clone(), model.model_id.clone()))
+            .collect();
+        let policies = configured_file_blend_policies(blend, &aliases).map_err(|_| invalid(
+            vec!["blend".to_owned()],
+            "Policies require existing model aliases, positive version and thresholds, and valid unique tool routes. Use either a single policy or named policies.",
+        ))?;
+        if blend
+            .default_policy
+            .as_ref()
+            .is_some_and(|id| !policies.contains_key(id))
+        {
+            return Err(invalid(
+                vec!["blend".to_owned(), "default_policy".to_owned()],
+                "Select an existing default policy.",
+            ));
+        }
+    }
+    let mut server_names = BTreeSet::new();
+    for (index, server) in config.mcp.iter().enumerate() {
+        let path = |key: &str| vec!["mcp".to_owned(), index.to_string(), key.to_owned()];
+        if server.name.trim().is_empty() || !server_names.insert(server.name.as_str()) {
+            return Err(invalid(
+                path("name"),
+                "MCP server names must be non-empty and unique.",
+            ));
+        }
+        match (&server.command, &server.url) {
+            (Some(command), None)
+                if Path::new(command).is_absolute() && !command.contains('\0') =>
+            {
+                if server
+                    .headers
+                    .as_ref()
+                    .is_some_and(|headers| !headers.is_empty())
+                {
+                    return Err(invalid(
+                        path("headers"),
+                        "HTTP headers apply only to MCP servers configured with a URL.",
+                    ));
+                }
+            }
+            (Some(_), None) => {
+                return Err(invalid(
+                    path("command"),
+                    "Use an absolute executable path for an MCP stdio server.",
+                ));
+            }
+            (None, Some(url)) if http_url(url) => {
+                if !server.args.is_empty() || server.env.as_ref().is_some_and(|env| !env.is_empty())
+                {
+                    return Err(invalid(
+                        path("url"),
+                        "Arguments and environment variables apply only to MCP stdio servers.",
+                    ));
+                }
+            }
+            (None, Some(_)) => {
+                return Err(invalid(
+                    path("url"),
+                    "Use an absolute HTTP or HTTPS MCP URL.",
+                ));
+            }
+            _ => {
+                return Err(invalid(
+                    path("command"),
+                    "Configure exactly one MCP transport: command or url.",
+                ));
+            }
+        }
+        if server.args.iter().any(|argument| argument.contains('\0')) {
+            return Err(invalid(
+                path("args"),
+                "MCP arguments must not contain NUL characters.",
+            ));
+        }
+        for (key, value) in server.env.iter().flatten() {
+            if key.is_empty() || key.contains(['=', '\0']) || value.contains('\0') {
+                let mut path = path("env");
+                path.push(key.clone());
+                return Err(invalid(
+                    path,
+                    "Environment names must be non-empty and contain no equals sign or NUL; values must contain no NUL.",
+                ));
+            }
+        }
+        for (key, value) in server.headers.iter().flatten() {
+            let mut field_path = path("headers");
+            field_path.push(key.clone());
+            let name = reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                .map_err(|_| invalid(field_path.clone(), "Specify a valid HTTP header name."))?;
+            reqwest::header::HeaderValue::from_str(value).map_err(|_| {
+                invalid(
+                    field_path.clone(),
+                    "The HTTP header value contains unsupported characters.",
+                )
+            })?;
+            if matches!(
+                name.as_str(),
+                "accept"
+                    | "content-type"
+                    | "mcp-session-id"
+                    | "last-event-id"
+                    | "mcp-protocol-version"
+                    | "mcp-method"
+                    | "mcp-name"
+            ) || name.as_str().starts_with("mcp-param-")
+            {
+                return Err(invalid(
+                    field_path,
+                    "Protocol-owned MCP headers are generated automatically and cannot be overridden.",
+                ));
+            }
+        }
+    }
+    for (index, root) in config.skills.roots.iter().enumerate() {
+        if root.as_os_str().is_empty() || root.to_string_lossy().contains('\0') {
+            return Err(invalid(
+                vec!["skills".to_owned(), "roots".to_owned(), index.to_string()],
+                "Specify a non-empty skills directory path without NUL characters.",
+            ));
+        }
+    }
+    if let Some(context) = &config.context {
+        context.validate().map_err(|_| invalid(vec!["context".to_owned()], "The context policy requires valid sets, references, a non-empty ID, and a positive version."))?;
+    }
+    if let Some(evaluation) = config.evaluation {
+        let evaluation: arabica_runtime::EvaluationConfig =
+            evaluation.try_into().map_err(|_| {
+                invalid(
+                    vec!["evaluation".to_owned()],
+                    "The evaluation configuration contains an unsupported field or field type.",
+                )
+            })?;
+        let registry =
+            arabica_runtime::EvaluationRegistry::builtins(&evaluation).map_err(|_| {
+                invalid(
+                    vec!["evaluation".to_owned()],
+                    "The evaluation configuration has invalid clustering bounds or strategies.",
+                )
+            })?;
+        let evidence = arabica_runtime::EvaluationEvidence::from_history(&[]);
+        registry
+            .context(&evaluation.context_strategy, &evidence)
+            .and_then(|_| {
+                registry
+                    .model(&evaluation.model_strategy, &evidence)
+                    .map(|_| ())
+            })
+            .map_err(|_| {
+                invalid(
+                    vec!["evaluation".to_owned()],
+                    "Select registered evaluation strategies.",
+                )
+            })?;
+    }
+    resolve_permission_policy(config.permissions.as_ref()).map_err(|_| invalid(vec!["permissions".to_owned()], "Permission rules require valid tool names, parameters, regex patterns, and allow, ask, or deny actions."))?;
+    Ok(())
+}
+
 pub fn user_config_key(home: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
     Ok(read_user_config(home)?
         .providers
@@ -511,6 +839,26 @@ fn configured_blend_policies(
     models: &BTreeMap<String, String>,
     home: &Path,
 ) -> Result<BTreeMap<String, BlendRoutingPolicy>, Box<dyn std::error::Error>> {
+    let mut policies = configured_file_blend_policies(blend, models)?;
+    if let Ok(records) = arabica_adapters::SqliteEvaluationStore::read_policy_versions(
+        &home.join("evaluation.sqlite3"),
+        None,
+    ) {
+        for record in records {
+            let policy = record.policy;
+            let key = format!("{}-v{}", record.policy_id, record.version);
+            if validate_blend_policy(&policy, models).is_ok() {
+                policies.entry(key).or_insert(policy);
+            }
+        }
+    }
+    Ok(policies)
+}
+
+fn configured_file_blend_policies(
+    blend: &UserBlend,
+    models: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, BlendRoutingPolicy>, Box<dyn std::error::Error>> {
     let named_policies = !blend.policies.is_empty();
     let mut policies = BTreeMap::new();
     if named_policies {
@@ -580,18 +928,6 @@ fn configured_blend_policies(
         policies.insert(id, policy);
     }
 
-    if let Ok(records) = arabica_adapters::SqliteEvaluationStore::read_policy_versions(
-        &home.join("evaluation.sqlite3"),
-        None,
-    ) {
-        for record in records {
-            let policy = record.policy;
-            let key = format!("{}-v{}", record.policy_id, record.version);
-            if validate_blend_policy(&policy, models).is_ok() {
-                policies.entry(key).or_insert(policy);
-            }
-        }
-    }
     Ok(policies)
 }
 

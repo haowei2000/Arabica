@@ -20,7 +20,17 @@ case "${ARABICA_ARCH:-$(uname -m)}" in
   x86_64) update_arch=x86_64 ;;
   *) echo 'Unsupported update architecture' >&2; exit 1 ;;
 esac
-swift_args=(-c "$profile")
+# Swift's compile and link drivers must agree on the selected SDK. Without
+# SDKROOT, the link driver can stamp the deployment target as the SDK version,
+# which keeps the app in the older system-appearance compatibility mode.
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+swift_args=(
+  -c "$profile" --sdk "$SDKROOT"
+  # Put the SDK on the actual clang link command as well. Environment-only
+  # SDKROOT changes do not invalidate Swift Build's cached link operation.
+  -Xswiftc -Xclang-linker -Xswiftc -isysroot
+  -Xswiftc -Xclang-linker -Xswiftc "$SDKROOT"
+)
 cargo_args=(-p arabica-cli)
 if [[ "$profile" == "release" ]]; then cargo_args+=(--release); fi
 agent_bin="$repo_root/target/$profile/arabica"

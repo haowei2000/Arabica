@@ -13,6 +13,12 @@ headless; the desktop package owns only presentation and process management.
 - An Arabica provider configuration in `~/.arabica/config.toml` or the
   supported environment variables (see the repository configuration guide)
 
+The current native appearance requires building with the latest macOS SDK.
+Desktop CI and release builds pin Xcode 27.1 (27A9275), with the macOS 27.0
+SDK, while retaining macOS 14 as the deployment target. Standard navigation,
+toolbars, lists, and forms follow the appearance of the system running the app.
+Building with an older SDK can retain the older system styling even on a new Mac.
+
 ## Build and run
 
 From this directory:
@@ -85,13 +91,19 @@ conversation window. Settings reconnects the most recently active conversation
 window; appearance preferences remain application-wide. Closing a conversation
 window stops its associated ACP process.
 Settings owns persistent provider, default model, and default policy choices
-in `$ARABICA_HOME/config.toml` (or `~/.arabica/config.toml` by default). Choose
-**Save Changes** to write connection and routing drafts; switching entries or
-reloading prompts you to save or discard outstanding changes. Appearance
-changes save automatically. Settings never displays a saved API key and writes the
-configuration with owner-only permissions. Multiple provider/model catalogs,
-policy routes, and MCP definitions remain available through the advanced
-config file opened from Settings. The composer's Policy menu includes session
+in `$ARABICA_HOME/config.toml` (or `~/.arabica/config.toml` by default). Category
+Native navigation leads to item lists and grouped forms for providers, models,
+policies, MCP servers, and skill directories. Valid edits save automatically.
+Saved credentials remain masked; replacing or removing a secret is explicit.
+Invalid edits stay in the form with an error, and external file changes are
+reported as a conflict instead of being overwritten. The shared Rust host
+validates edits and writes the file atomically with owner-only permissions,
+preserving comments and untouched advanced configuration.
+
+Appearance and typography changes also save automatically. Use **Reconnect**
+to apply connection changes to the active workspace after current activity
+finishes. **Advanced** opens the TOML file for settings outside the forms.
+The composer's Policy menu includes session
 modes when the host reports them; changing its controls saves workspace preferences
 without rewriting the provider defaults. The bundled runtime supports the
 current ChatGPT authentication configuration, including `auth = "chatgpt"`;

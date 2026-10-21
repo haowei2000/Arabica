@@ -885,6 +885,24 @@ final class ConfigEditorTests: XCTestCase {
         XCTAssertNil(ConfigEditor.thinkingValidationError(apiType: "anthropic_messages", thinking: ""))
     }
 
+    @MainActor
+    func testThinkingOptionsRecognizeRuntimeAPITypeAliasesAndNormalization() {
+        for apiType in ["open_ai_responses", "openai_responses", "responses", " \nReSpOnSeS\t"] {
+            XCTAssertEqual(
+                ConfigEditor.supportedThinkingValues(apiType: apiType),
+                ["low", "medium", "high", "xhigh", "max"])
+            XCTAssertNil(ConfigEditor.thinkingValidationError(apiType: apiType, thinking: "high"))
+        }
+        for apiType in [
+            "open_ai_chat_completions", "openai_chat_completions", "chat_completions", " CHAT_COMPLETIONS\n",
+        ] {
+            XCTAssertEqual(ConfigEditor.supportedThinkingValues(apiType: apiType), ["off", "on"])
+            XCTAssertNil(ConfigEditor.thinkingValidationError(apiType: apiType, thinking: "on"))
+            XCTAssertNotNil(ConfigEditor.thinkingValidationError(apiType: apiType, thinking: "high"))
+        }
+        XCTAssertEqual(ConfigEditor.supportedThinkingValues(apiType: "unknown_api"), ["off"])
+    }
+
     func testMCPServersAndSkillRootsParsing() {
         let toml = """
         [skills]

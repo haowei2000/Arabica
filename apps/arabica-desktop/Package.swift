@@ -12,7 +12,7 @@ let package = Package(
         .executableTarget(
             name: "ArabicaDesktop",
             dependencies: [.product(name: "Sparkle", package: "Sparkle")],
-            resources: [.copy("Resources/tool-icons")]
+            resources: [.copy("Resources/tool-icons"), .copy("Resources/arabica-icon.png")]
         ),
         .testTarget(name: "ArabicaDesktopTests", dependencies: ["ArabicaDesktop"]),
     ]

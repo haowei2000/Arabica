@@ -73,8 +73,11 @@ enum Commands {
     Acp,
     /// Start an interactive terminal session (also the default).
     Chat,
-    /// Show the resolved provider configuration without starting a session.
-    Config,
+    /// Show resolved configuration, or inspect and edit config.toml as JSON.
+    Config {
+        #[command(subcommand)]
+        action: Option<arabica_cli::settings::SettingsAction>,
+    },
     /// Manage saved API credentials.
     Auth {
         #[command(subcommand)]
@@ -151,6 +154,24 @@ async fn run(cli: Cli) -> i32 {
             arabica_cli::models::run(action).await
         };
     }
+    if let Some(Commands::Config {
+        action: Some(action),
+    }) = command
+    {
+        return if print_args.print.is_some() {
+            println!(
+                "{}",
+                serde_json::json!({"error": {
+                    "code": "invalid_request",
+                    "message": "The config subcommands cannot be combined with -p.",
+                    "path": []
+                }})
+            );
+            2
+        } else {
+            arabica_cli::settings::run(action)
+        };
+    }
 
     let resolved = match (|| {
         let home = arabica_adapters::default_arabica_home()?;
@@ -174,18 +195,21 @@ async fn run(cli: Cli) -> i32 {
             2
         }
         (Some(Commands::Acp), None) => run_acp(resolved).await,
-        (Some(Commands::Chat | Commands::Config), Some(_)) => {
+        (Some(Commands::Chat | Commands::Config { .. }), Some(_)) => {
             eprintln!("error: -p cannot be combined with this subcommand");
             2
         }
         (Some(Commands::Chat), None) => run_chat(resolved, print_args).await,
-        (Some(Commands::Config), None) => match describe_configuration(resolved) {
+        (Some(Commands::Config { action: None }), None) => match describe_configuration(resolved) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("error: {error}");
                 1
             }
         },
+        (Some(Commands::Config { action: Some(_) }), None) => {
+            unreachable!("structured config commands return early")
+        }
         (Some(Commands::Evaluations { .. }), _) => unreachable!("evaluations returns early"),
         (Some(Commands::Sessions { .. }), _) => {
             unreachable!("Commands::Sessions returns early above")
