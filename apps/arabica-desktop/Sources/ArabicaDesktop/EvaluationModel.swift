@@ -254,6 +254,14 @@ final class EvaluationModel: ObservableObject {
         await performPolicyAction(action: "activate", policyId: policyId, version: version)
     }
 
+    func quickApplyPolicy(policyId: String, version: UInt64) async {
+        await approvePolicy(policyId: policyId, version: version)
+        if error == nil {
+            await activatePolicy(policyId: policyId, version: version)
+            message = "Policy \(policyId) v\(version) activated for new sessions."
+        }
+    }
+
     func rollbackPolicy(policyId: String, targetVersion: UInt64? = nil) async {
         await performPolicyAction(action: "rollback", policyId: policyId, targetVersion: targetVersion)
     }

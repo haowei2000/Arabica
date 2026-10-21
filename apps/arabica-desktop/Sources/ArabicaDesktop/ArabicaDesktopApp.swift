@@ -417,6 +417,14 @@ struct DesktopView: View {
             .disabled(!model.isConnected || model.isConnecting || model.isCreatingSession)
             .help("New Conversation (Cmd+N)")
 
+            Button {
+                showEvaluation.toggle()
+            } label: {
+                Label("Blend", systemImage: "slider.horizontal.2.square")
+            }
+            .tint(showEvaluation ? .accentColor : nil)
+            .help("Toggle Blend Inspector (Cmd+Opt+I)")
+
             Menu {
                 if let used = model.usage["used"] as? Int,
                     let size = model.usage["size"] as? Int
@@ -429,7 +437,7 @@ struct DesktopView: View {
                     set: { sidebarState.showsArchived = $0; sidebarVisible = true }
                 ))
                 Divider()
-                Toggle("Show Evaluation Panel", isOn: $showEvaluation)
+                Toggle("Show Blend Inspector", isOn: $showEvaluation)
                     .keyboardShortcut("i", modifiers: [.command, .option])
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { theme.cycleMode() }

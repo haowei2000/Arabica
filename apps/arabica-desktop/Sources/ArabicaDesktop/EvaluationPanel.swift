@@ -1,9 +1,9 @@
 import SwiftUI
 
-enum EvaluationTab: String, CaseIterable, Identifiable {
-    case runAudit = "Run Audit"
-    case analytics = "Model & Context"
-    case lifecycle = "Policy Lifecycle"
+enum BlendTab: String, CaseIterable, Identifiable {
+    case runs = "Runs & Costs"
+    case analytics = "Observability"
+    case tuning = "Blend Tuning"
 
     var id: String { rawValue }
 }
@@ -11,20 +11,22 @@ enum EvaluationTab: String, CaseIterable, Identifiable {
 struct EvaluationPanel: View {
     @ObservedObject var model: EvaluationModel
     var isVisible: Bool
-    @State private var selectedTab: EvaluationTab = .runAudit
+    @State private var selectedTab: BlendTab = .runs
     @State private var confirmingRollbackPolicy: EvaluationSnapshot.PolicyRecord?
     @State private var confirmingAction: (action: String, policy: EvaluationSnapshot.PolicyRecord)?
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 headerView
 
                 if !model.supported {
-                    notice("Evaluation unavailable", "Reconnect with an Arabica agent that supports background evaluation.")
+                    notice("Blend unavailable", "Reconnect with an Arabica agent that supports background evaluation and dynamic routing.")
                 } else if model.sessionID == nil {
-                    notice("Choose a conversation", "Open a conversation to inspect its evaluation report.")
+                    notice("Choose a conversation", "Open a conversation to inspect its Blend routing, runs, and policy lifecycle.")
                 } else {
+                    quickOptimizerCard
+
                     controlsBar
 
                     if let message = model.message {
@@ -37,8 +39,8 @@ struct EvaluationPanel: View {
                         }
                     }
 
-                    Picker("Evaluation Section", selection: $selectedTab) {
-                        ForEach(EvaluationTab.allCases) { tab in
+                    Picker("Blend Section", selection: $selectedTab) {
+                        ForEach(BlendTab.allCases) { tab in
                             Text(tab.rawValue).tag(tab)
                         }
                     }
@@ -46,12 +48,12 @@ struct EvaluationPanel: View {
                     .padding(.vertical, 2)
 
                     switch selectedTab {
-                    case .runAudit:
-                        runAuditView
+                    case .runs:
+                        runsView
                     case .analytics:
                         analyticsView
-                    case .lifecycle:
-                        policyLifecycleView
+                    case .tuning:
+                        tuningView
                     }
 
                     if let date = model.queriedAt {
@@ -61,7 +63,7 @@ struct EvaluationPanel: View {
                 }
             }
             .font(.system(size: 12))
-            .padding(20)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
         }
@@ -70,7 +72,7 @@ struct EvaluationPanel: View {
             await model.poll()
         }
         .confirmationDialog(
-            "Rollback Policy",
+            "Rollback Blend Policy",
             isPresented: Binding(
                 get: { confirmingRollbackPolicy != nil },
                 set: { if !$0 { confirmingRollbackPolicy = nil } }
@@ -87,7 +89,7 @@ struct EvaluationPanel: View {
             Text("Rollback will reinstate version \(policy.version) as active for new sessions. Existing active runs remain unaffected.")
         }
         .confirmationDialog(
-            "Confirm Action",
+            "Confirm Blend Policy Action",
             isPresented: Binding(
                 get: { confirmingAction != nil },
                 set: { if !$0 { confirmingAction = nil } }
@@ -116,41 +118,149 @@ struct EvaluationPanel: View {
 
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Background evaluation").font(.headline)
-            Text("Decoupled scoring, acceptance checks, and policy lifecycle.")
+            HStack {
+                Label("Blend Routing & Tuning", systemImage: "slider.horizontal.2.square")
+                    .font(.headline)
+                Spacer()
+                if let active = activePolicy {
+                    statusBadge("v\(active.version) \(active.status)")
+                }
+            }
+            Text("Multi-model routing, run acceptance, and continuous policy optimization.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var activePolicy: EvaluationSnapshot.PolicyRecord? {
+        model.snapshot?.policies?.first(where: { $0.status.lowercased() == "active" })
+    }
+
+    private var pendingProposal: EvaluationSnapshot.PolicyRecord? {
+        model.snapshot?.policies?.first(where: { $0.status == "candidate" || $0.status == "evaluated" })
+    }
+
+    // MARK: - Quick Optimizer Card
+
+    @ViewBuilder
+    private var quickOptimizerCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let candidate = pendingProposal {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Optimization Recommended", systemImage: "sparkles")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.purple)
+                        Spacer()
+                        statusBadge(candidate.status)
+                    }
+
+                    if let prop = candidate.proposal {
+                        Text(prop.rationale)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+
+                        HStack(spacing: 8) {
+                            Text("Metric: \(humanReadableMetric(prop.evidence.metric))")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text("Observed: \(prop.evidence.observed_value)")
+                                .font(.system(size: 10, weight: .medium))
+                            if let tool = prop.evidence.tool_name {
+                                Text("Tool: \(tool)")
+                                    .font(.system(size: 10))
+                                    .padding(.horizontal, 4)
+                                    .background(Color.secondary.opacity(0.12))
+                                    .cornerRadius(3)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            Task {
+                                await model.quickApplyPolicy(policyId: candidate.policy_id, version: candidate.version)
+                            }
+                        } label: {
+                            Label("Quick Apply (v\(candidate.version))", systemImage: "bolt.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .controlSize(.small)
+                        .disabled(model.isRequesting)
+                        .help("Approve and activate this optimized policy for all upcoming sessions.")
+
+                        Button {
+                            selectedTab = .tuning
+                        } label: {
+                            Text("Review Details")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(12)
+                .background(Color.purple.opacity(0.08))
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.purple.opacity(0.2), lineWidth: 1)
+                )
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Active Blend: \(activePolicy?.policy_id ?? "default") · v\(activePolicy?.version ?? 1)")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(activePolicy?.policy.default_model ?? "Standard Model")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await model.proposePolicy() }
+                    } label: {
+                        Label("Propose Tuning", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(model.isRequesting)
+                    .help("Analyze execution failures and propose an optimized Blend routing policy.")
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.06))
+                .cornerRadius(8)
+            }
         }
     }
 
     private var controlsBar: some View {
         HStack {
             Button { Task { await model.load(refresh: true) } } label: {
-                Label("Request refresh", systemImage: "arrow.clockwise")
+                Label("Refresh Status", systemImage: "arrow.clockwise")
             }
+            .controlSize(.small)
             .disabled(model.isRequesting)
-            .help("Queue background evaluation; your conversation keeps running.")
+            .help("Refresh Blend routing metrics and run verification status.")
             Spacer()
             if model.isRequesting {
-                ProgressView().controlSize(.small).accessibilityLabel("Reading evaluation status")
+                ProgressView().controlSize(.small).accessibilityLabel("Updating Blend status")
             }
         }
     }
 
-    // MARK: - Tab 1: Run Audit
+    // MARK: - Tab 1: Runs & Costs
 
     @ViewBuilder
-    private var runAuditView: some View {
+    private var runsView: some View {
         if let report = model.snapshot?.report {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Latest available report").font(.subheadline.weight(.semibold))
-                LabeledContent("Through event sequence", value: "\(report.checkpoint.sequence)")
-                Text("Cached results update asynchronously after runs complete.")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Run verification & telemetry").font(.subheadline.weight(.semibold))
+                Text("Verification checks, execution times, and tool calls per run.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             if let runs = report.runs, !runs.isEmpty {
                 Divider()
-                Text("Run outcomes & acceptance").font(.subheadline.weight(.semibold))
                 ForEach(runs.reversed()) { run in
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 8) {
@@ -232,14 +342,14 @@ struct EvaluationPanel: View {
                     }
                 }
             } else {
-                notice("No runs evaluated yet", "Complete a run to see scored acceptance and timing.")
+                notice("No runs evaluated yet", "Complete a run to see scored acceptance, costs, and timings.")
             }
         } else {
-            notice("No report yet", "Finish a run, then request a refresh. The agent continues operating while evaluation is pending.")
+            notice("No report yet", "Complete an interaction turn to view telemetry. The agent continues operating while background processing finishes.")
         }
     }
 
-    // MARK: - Tab 2: Model & Context Analytics
+    // MARK: - Tab 2: Observability
 
     @ViewBuilder
     private var analyticsView: some View {
@@ -247,17 +357,17 @@ struct EvaluationPanel: View {
             result(report.context, context: true)
             Divider()
             result(report.model, context: false)
-            Text("Model and context statistics describe empirical associations; task acceptance is scored separately.")
+            Text("Model and context statistics describe empirical token usage; task acceptance is scored separately.")
                 .font(.caption).foregroundStyle(.secondary)
         } else {
-            notice("No analytics yet", "Analytics will appear here after runs complete.")
+            notice("No observability data yet", "Observability metrics will appear here after runs complete.")
         }
 
         if let worker = model.snapshot?.worker_status {
             Divider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("Worker totals").font(.subheadline.weight(.semibold))
-                Text("Across all conversations in this agent process.").font(.caption).foregroundStyle(.secondary)
+                Text("Background Worker Health").font(.subheadline.weight(.semibold))
+                Text("Asynchronous scoring queue status.").font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Completed evaluations", value: "\(worker.completed)")
                 LabeledContent("Failed evaluations", value: "\(worker.failed)")
                 LabeledContent("Notifications dropped", value: "\(worker.dropped)")
@@ -265,33 +375,32 @@ struct EvaluationPanel: View {
         }
     }
 
-    // MARK: - Tab 3: Policy Lifecycle
+    // MARK: - Tab 3: Blend Tuning
 
     @ViewBuilder
-    private var policyLifecycleView: some View {
+    private var tuningView: some View {
         let policies = model.snapshot?.policies ?? []
-        let activePolicy = policies.first(where: { $0.status.lowercased() == "active" })
 
         if let active = activePolicy {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Active Policy").font(.subheadline.weight(.semibold))
+                        Text("Active Blend Policy").font(.subheadline.weight(.semibold))
                         Text("\(active.policy_id) v\(active.version)")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(.primary)
                     }
                     Spacer()
-                    Text("ACTIVE")
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.green.opacity(0.15))
-                        .foregroundStyle(Color.green)
-                        .clipShape(Capsule())
+                    statusBadge("ACTIVE")
                 }
 
                 LabeledContent("Default model", value: active.policy.default_model)
+                if let err = active.policy.after_tool_error {
+                    LabeledContent("After tool error", value: err)
+                }
+                if let succ = active.policy.after_tool_success {
+                    LabeledContent("After tool success", value: succ)
+                }
                 if let rec = active.policy.recovery_model {
                     LabeledContent("Recovery model", value: rec)
                 }
@@ -300,6 +409,12 @@ struct EvaluationPanel: View {
                 }
                 if let dwell = active.policy.minimum_model_dwell_steps {
                     LabeledContent("Minimum dwell", value: "\(dwell) steps")
+                }
+                if let routes = active.policy.tool_routes, !routes.isEmpty {
+                    Text("Tool Routes:").font(.caption.weight(.medium))
+                    ForEach(routes) { r in
+                        Text("  • \(r.id): -> \(r.model)").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
                 if let actAt = active.activated_at {
                     LabeledContent("Activated at", value: actAt)
@@ -324,12 +439,12 @@ struct EvaluationPanel: View {
         }
 
         HStack {
-            Text("All policy versions (\(policies.count))").font(.subheadline.weight(.semibold))
+            Text("Policy Versions (\(policies.count))").font(.subheadline.weight(.semibold))
             Spacer()
             Button {
                 Task { await model.proposePolicy() }
             } label: {
-                Label("Propose candidates", systemImage: "sparkles")
+                Label("Propose Tuning", systemImage: "sparkles")
             }
             .controlSize(.small)
             .disabled(model.isRequesting)
@@ -368,10 +483,13 @@ struct EvaluationPanel: View {
                         if let prop = p.proposal {
                             Divider().padding(.vertical, 2)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("Proposal evidence").font(.caption.weight(.semibold))
+                                Text("Proposal rationale & evidence").font(.caption.weight(.semibold))
                                 Text(prop.rationale).font(.system(size: 11)).foregroundStyle(.primary)
-                                Text("Metric: \(prop.evidence.metric) (observed: \(prop.evidence.observed_value), threshold: \(prop.evidence.threshold))")
+                                Text("Metric: \(humanReadableMetric(prop.evidence.metric)) (observed: \(prop.evidence.observed_value), threshold: \(prop.evidence.threshold))")
                                     .font(.system(size: 10)).foregroundStyle(.secondary)
+                                if let tool = prop.evidence.tool_name {
+                                    Text("Affected tool: \(tool)").font(.system(size: 10)).foregroundStyle(.secondary)
+                                }
                             }
                         }
 
@@ -382,10 +500,19 @@ struct EvaluationPanel: View {
                         // Lifecycle Action Buttons
                         HStack(spacing: 8) {
                             if p.status == "candidate" || p.status == "evaluated" {
-                                Button("Approve for promotion") {
-                                    confirmingAction = (action: "approve", policy: p)
+                                Button("Quick Apply") {
+                                    Task {
+                                        await model.quickApplyPolicy(policyId: p.policy_id, version: p.version)
+                                    }
                                 }
                                 .buttonStyle(.borderedProminent)
+                                .tint(.purple)
+                                .controlSize(.small)
+
+                                Button("Approve") {
+                                    confirmingAction = (action: "approve", policy: p)
+                                }
+                                .buttonStyle(.bordered)
                                 .tint(.orange)
                                 .controlSize(.small)
 
@@ -421,6 +548,21 @@ struct EvaluationPanel: View {
                     }
                 }
             }
+        }
+    }
+
+    private func humanReadableMetric(_ metric: String) -> String {
+        switch metric {
+        case "complex_category_failure_rate":
+            return "Failure Rate in Complex Tasks"
+        case "tool_failure_rate":
+            return "Tool Failure Rate"
+        case "no_progress_steps":
+            return "Steps Without Progress"
+        case "dwell_oscillation":
+            return "Model Oscillation"
+        default:
+            return metric.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 
@@ -463,7 +605,7 @@ struct EvaluationPanel: View {
 
     private func result(_ result: EvaluationSnapshot.Result, context: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(context ? "Context evaluation" : "Model evaluation").font(.subheadline.weight(.semibold))
+            Text(context ? "Context token efficiency" : "Model selection distribution").font(.subheadline.weight(.semibold))
             LabeledContent("Strategy", value: "\(result.plugin.id) · v\(result.plugin.version)")
             ForEach(Array(result.data.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
                 Text(diagnostic.explanation).font(.caption).foregroundStyle(.secondary)

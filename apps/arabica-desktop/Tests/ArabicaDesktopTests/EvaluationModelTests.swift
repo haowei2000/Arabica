@@ -212,5 +212,10 @@ final class EvaluationModelTests: XCTestCase {
         XCTAssertEqual(dispatchedParams.last?["action"] as? String, "propose")
         XCTAssertEqual(dispatchedParams.last?["policyId"] as? String, "default")
         XCTAssertEqual(model.message, "Policy propose completed.")
+
+        await model.quickApplyPolicy(policyId: "default", version: 3)
+        XCTAssertEqual(dispatchedParams[dispatchedParams.count - 2]["action"] as? String, "approve")
+        XCTAssertEqual(dispatchedParams.last?["action"] as? String, "activate")
+        XCTAssertEqual(model.message, "Policy default v3 activated for new sessions.")
     }
 }
