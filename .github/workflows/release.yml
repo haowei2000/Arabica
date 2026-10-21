@@ -113,14 +113,17 @@ jobs:
     name: macOS desktop (${{ matrix.arch }})
     needs: validate
     runs-on: ${{ matrix.os }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: aarch64
-            os: macos-15
+            # The ARM64 public-preview runner also cross-compiles the Intel app.
+            os: xcode-27
           - arch: x86_64
-            os: macos-15
+            os: xcode-27
     steps:
       - uses: actions/checkout@v6
         with:
@@ -134,6 +137,8 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: release-tools
+      - name: Verify released Xcode and macOS SDK
+        run: bash "$GITHUB_WORKSPACE/release-tools/apps/arabica-desktop/scripts/verify-toolchain.sh"
       - name: Install icon renderer
         run: brew install librsvg
       - name: Build desktop app
@@ -143,6 +148,9 @@ jobs:
           ARABICA_ARCH: ${{ matrix.arch }}
           ARABICA_APP_ROOT: ${{ github.workspace }}/apps/arabica-desktop
         run: bash "$GITHUB_WORKSPACE/release-tools/apps/arabica-desktop/scripts/package.sh" release
+      - name: Verify linked desktop SDK and deployment target
+        working-directory: apps/arabica-desktop
+        run: bash "$GITHUB_WORKSPACE/release-tools/apps/arabica-desktop/scripts/verify-toolchain.sh" bundle dist/Arabica.app "${{ matrix.arch }}"
       - name: Sign, notarize, and archive desktop app
         working-directory: apps/arabica-desktop
         env:

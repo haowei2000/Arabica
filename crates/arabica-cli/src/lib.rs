@@ -23,6 +23,7 @@ pub mod mcp;
 pub mod models;
 pub mod print;
 pub mod sessions;
+pub mod settings;
 pub mod skills;
 pub mod tui;
 pub mod update;

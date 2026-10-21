@@ -24,6 +24,7 @@ enum Palette {
 
 @main
 struct ArabicaDesktopApp: App {
+    @NSApplicationDelegateAdaptor(NativeSettingsApplicationDelegate.self) private var applicationDelegate
     @StateObject private var windows: DesktopWindowRegistry
     @StateObject private var updater: AppUpdater
     @ObservedObject private var theme = ThemeManager.shared
@@ -87,11 +88,13 @@ struct ArabicaDesktopApp: App {
         }
         Settings {
             DesktopSettingsWindowView(windows: windows)
+                .environmentObject(applicationDelegate)
                 .environmentObject(updater)
                 .environmentObject(theme)
-                .frame(minWidth: 660, idealWidth: 760, minHeight: 620, idealHeight: 700)
+                .frame(minWidth: 900, idealWidth: 1080, minHeight: 680, idealHeight: 760)
                 .preferredColorScheme(theme.colorScheme)
         }
+        .windowToolbarStyle(.automatic)
     }
 }
 
@@ -1613,211 +1616,7 @@ private struct PermissionView: View {
 }
 
 struct SettingsView: View {
-    @EnvironmentObject var model: DesktopModel
-    @EnvironmentObject var updater: AppUpdater
-    @StateObject private var config = ConfigEditor()
-    @State private var selectedTab: SettingsTab = .config
-
-    private enum SettingsTab: String, CaseIterable, Identifiable {
-        case config = "Models"
-        case appearance = "Appearance"
-        case policy = "Routing"
-        case context = "Tools & Skills"
-        case updates = "Updates"
-
-        var id: String { rawValue }
-        var icon: String {
-            switch self {
-            case .config: return "gearshape"
-            case .appearance: return "paintpalette"
-            case .policy: return "point.3.filled.connected.trianglepath.dotted"
-            case .context: return "square.stack.3d.up"
-            case .updates: return "arrow.down.circle"
-            }
-        }
-
-        var title: String {
-            switch self {
-            case .config: return "Models & Providers"
-            case .appearance: return "Appearance"
-            case .policy: return "Model Routing"
-            case .context: return "Tools & Skills"
-            case .updates: return "Software Updates"
-            }
-        }
-
-        var detail: String {
-            switch self {
-            case .config: return "Manage provider connections and the models available to Arabica."
-            case .appearance: return "Theme and typography changes are saved automatically."
-            case .policy: return "Review routing policies and choose the default for future connections."
-            case .context: return "View configured capabilities. Edit config.toml to change tools and skill roots."
-            case .updates: return "Manage automatic checks and installation for packaged Arabica releases."
-            }
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Settings Tab", selection: $selectedTab) {
-                ForEach(SettingsTab.allCases) { tab in
-                    Label(tab.rawValue, systemImage: tab.icon).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
-
-            Divider().background(Palette.rule)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(selectedTab.title)
-                    .font(AppFont.sans(18, weight: .semibold))
-                    .foregroundStyle(Palette.ink)
-                Text(selectedTab.detail)
-                    .font(AppFont.sans(12))
-                    .foregroundStyle(Palette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
-
-            Group {
-                switch selectedTab {
-                case .config:
-                    ConfigPageView(config: config, workspaceName: model.workspace?.lastPathComponent)
-                case .appearance:
-                    AppearancePageView()
-                case .policy:
-                    PolicyPageView(config: config, evaluation: model.evaluation)
-                case .context:
-                    ContextPageView(config: config)
-                case .updates:
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text(
-                            "Arabica \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")"
-                        )
-                        .foregroundStyle(Palette.muted)
-                        Toggle(
-                            "Automatically check for updates",
-                            isOn: Binding(
-                                get: { updater.automaticallyChecksForUpdates },
-                                set: { updater.setAutomaticChecks($0) }
-                            ))
-                        Toggle(
-                            "Download updates and install when quitting",
-                            isOn: Binding(
-                                get: { updater.automaticallyDownloadsUpdates },
-                                set: { updater.setAutomaticDownloads($0) }
-                            )
-                        )
-                        .disabled(!updater.automaticallyChecksForUpdates)
-                        Button("Check for Updates…") { updater.checkForUpdates() }
-                            .disabled(!updater.canCheckForUpdates)
-                        if updater.waitingForRuns {
-                            Text("The update will restart Arabica after activity in all conversation windows finishes.")
-                                .foregroundStyle(Palette.muted)
-                        }
-                        if !updater.isAvailable {
-                            Text("Updates are available in packaged Arabica releases.")
-                                .foregroundStyle(Palette.muted)
-                        }
-                        Spacer()
-                    }
-                    .padding(24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .disabled(!updater.isAvailable)
-                }
-            }
-
-            Divider().background(Palette.rule)
-
-            VStack(alignment: .leading, spacing: 10) {
-                if !config.status.isEmpty,
-                    config.statusKind != .success || !config.hasUnsavedChanges
-                {
-                    HStack(alignment: .top, spacing: 7) {
-                        Image(
-                            systemName: config.statusKind == .error
-                                ? "exclamationmark.triangle.fill"
-                                : config.statusKind == .success ? "checkmark.circle.fill" : "info.circle"
-                        )
-                        .foregroundStyle(config.statusKind == .error ? Color.orange : Palette.accent)
-                        Text(config.status)
-                            .foregroundStyle(config.statusKind == .error ? Color.orange : Palette.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                        if config.statusKind == .success, let workspace = model.workspace {
-                            Spacer(minLength: 4)
-                            Button("Reconnect") { Task { await model.reconnectWorkspace(workspace) } }
-                                .disabled(model.hasActivityPreventingRelaunch)
-                                .help(
-                                    model.hasActivityPreventingRelaunch
-                                        ? "Wait for current activity and approvals to finish before reconnecting"
-                                        : "Reconnect this workspace to apply the saved configuration")
-                        }
-                    }
-                    .font(AppFont.sans(11))
-                    .accessibilityElement(children: .combine)
-                }
-
-                HStack(spacing: 10) {
-                    if config.hasUnsavedChanges {
-                        Label("Unsaved configuration changes", systemImage: "circle.fill")
-                            .font(AppFont.sans(11))
-                            .foregroundStyle(Palette.muted)
-                    } else if selectedTab == .appearance {
-                        Label("Saved automatically", systemImage: "checkmark.circle")
-                            .font(AppFont.sans(11))
-                            .foregroundStyle(Palette.muted)
-                    }
-                    Spacer(minLength: 8)
-                    if selectedTab != .appearance && selectedTab != .updates {
-                        Button("Edit config.toml…") { config.openConfigFile() }
-                            .help(config.configURL.path)
-                        Button("Reload…") { config.requestReload() }
-                            .help("Read configuration from disk and refresh discovered skills")
-                    }
-                    if selectedTab == .config || selectedTab == .policy || config.hasUnsavedChanges {
-                        Button("Save Changes") { config.save() }
-                            .buttonStyle(.borderedProminent)
-                            .keyboardShortcut("s", modifiers: .command)
-                            .disabled(
-                                config.isSaving || config.isChatGPTAuthRunning || config.isSyncingModels
-                                    || !config.hasUnsavedChanges
-                            )
-                            .help(
-                                config.isChatGPTAuthRunning || config.isSyncingModels
-                                    ? "Wait for the account or model operation to finish before saving."
-                                    : "Save this configuration draft.")
-                    }
-                }
-                .font(AppFont.sans(12))
-            }
-        }
-        .frame(minWidth: 660, idealWidth: 760, minHeight: 620, idealHeight: 700)
-        .background(Palette.canvas)
-        .background(SettingsWindowGuard(config: config))
-        .confirmationDialog(
-            "Save configuration changes?",
-            isPresented: Binding(
-                get: { config.pendingAction != nil },
-                set: { if !$0 { config.pendingAction = nil } }
-            ), titleVisibility: .visible, presenting: config.pendingAction
-        ) { action in
-            Button("Save Changes and Continue") { config.saveAndContinue(action) }
-            Button("Discard Changes", role: .destructive) { config.discardAndContinue(action) }
-            Button("Cancel", role: .cancel) { config.pendingAction = nil }
-        } message: { _ in
-            Text(
-                "Switching entries or reloading will replace the current draft. Save it or discard it before continuing."
-            )
-        }
-    }
+    var body: some View { NativeSettingsView() }
 }
 
 // MARK: - 1. Config Page

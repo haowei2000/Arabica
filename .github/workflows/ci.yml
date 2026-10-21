@@ -32,9 +32,17 @@ jobs:
         run: test -z "$(git ls-files '*.py')"
   macos-desktop:
     name: Native macOS client
-    runs-on: macos-15
+    # GitHub's Xcode 27 image is currently an ARM64 public-preview runner.
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
+      - name: Verify released Xcode and macOS SDK
+        run: |
+          bash scripts/verify-toolchain.sh
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+        working-directory: apps/arabica-desktop
       - uses: dtolnay/rust-toolchain@stable
       - run: swift test
         working-directory: apps/arabica-desktop
@@ -42,4 +50,7 @@ jobs:
         working-directory: apps/arabica-desktop
       - run: brew install librsvg
       - run: bash scripts/package.sh debug
+        working-directory: apps/arabica-desktop
+      - name: Verify linked desktop SDK and deployment target
+        run: bash scripts/verify-toolchain.sh bundle dist/Arabica.app arm64
         working-directory: apps/arabica-desktop

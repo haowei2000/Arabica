@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Adopt native split navigation and system toolbars in Settings, and build desktop artifacts with Xcode 27.1 / macOS 27.0 SDK to enable the current system appearance while supporting macOS 14 and Intel Macs.
+- Replace desktop settings overview cards with category navigation, item lists, and editable native forms, backed by validated automatic configuration saving.
+- Preserve existing credentials, comments, and advanced settings while detecting conflicting external edits and retaining invalid form drafts.
 - Support stateless MCP 2026-07-28 over stdio and Streamable HTTP, with per-request client metadata, native protocol headers, and automatic legacy-server fallback.
 - Upgrade the official Rust MCP SDK to 3.6 and preserve same-origin HTTP redirects and protocol-owned headers when applying configured credentials.
 

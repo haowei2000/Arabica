@@ -622,10 +622,10 @@ final class ConfigEditor: ObservableObject {
     }
 
     static func supportedThinkingValues(apiType: String) -> [String] {
-        switch apiType {
-        case "open_ai_chat_completions":
+        switch apiType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "open_ai_chat_completions", "openai_chat_completions", "chat_completions":
             return ["off", "on"]
-        case "open_ai_responses":
+        case "open_ai_responses", "openai_responses", "responses":
             return ["low", "medium", "high", "xhigh", "max"]
         default:
             return ["off"]
