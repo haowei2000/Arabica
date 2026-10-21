@@ -5,11 +5,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use arabica_protocol::{RunId, SessionId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AcceptanceCriterion, AcceptanceSpec, AcceptanceStatus, EvaluationError, RunAcceptance,
-    RunEvidenceSnapshot,
+    AcceptanceCriterion, AcceptanceSpec, AcceptanceStatus, ArtifactEvidence, EvaluationError,
+    RunAcceptance, RunEvidenceSnapshot,
 };
 
 /// Resource budget limits for a task trial.
@@ -74,25 +75,7 @@ impl TaskSpec {
                 ));
             }
             total_weight += criterion.weight;
-            match &criterion.check {
-                crate::AcceptanceCheck::OutputRegex { pattern } => {
-                    regex::Regex::new(pattern).map_err(|_| {
-                        EvaluationError("invalid acceptance regular expression".into())
-                    })?;
-                }
-                crate::AcceptanceCheck::ArtifactContains { path, value }
-                    if path.trim().is_empty() || value.is_empty() =>
-                {
-                    return Err(EvaluationError("empty artifact criterion".into()));
-                }
-                crate::AcceptanceCheck::OutputContains { value } if value.is_empty() => {
-                    return Err(EvaluationError("empty output acceptance marker".into()));
-                }
-                crate::AcceptanceCheck::ToolSucceeded { name } if name.trim().is_empty() => {
-                    return Err(EvaluationError("empty acceptance tool name".into()));
-                }
-                _ => {}
-            }
+            criterion.check.validate()?;
         }
         if !self.criteria.is_empty() && total_weight <= 0.0 {
             return Err(EvaluationError(
@@ -626,6 +609,427 @@ pub fn score_run_evaluation(
     )
 }
 
+fn default_tool_health_weight() -> f64 {
+    0.40
+}
+
+fn default_require_clean_terminal_tools() -> bool {
+    true
+}
+
+fn default_gate_timeout_ms() -> u64 {
+    30_000
+}
+
+fn default_gate_output_limit() -> usize {
+    64 * 1024
+}
+
+/// Configuration for real live interactive session evaluation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveSessionConfig {
+    pub session_id: SessionId,
+    #[serde(default)]
+    pub budgets: TaskResourceBudget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_gate: Option<WorkspaceGateConfig>,
+    /// Weight applied to tool health in quality score (0.0 .. 1.0, default 0.40).
+    #[serde(default = "default_tool_health_weight")]
+    pub tool_health_weight: f64,
+    /// If true, a session ending on an unrecovered failed tool call forces zero quality.
+    #[serde(default = "default_require_clean_terminal_tools")]
+    pub require_clean_terminal_tools: bool,
+}
+
+impl LiveSessionConfig {
+    pub fn new(session_id: SessionId) -> Self {
+        Self {
+            session_id,
+            budgets: TaskResourceBudget::default(),
+            workspace_gate: None,
+            tool_health_weight: default_tool_health_weight(),
+            require_clean_terminal_tools: default_require_clean_terminal_tools(),
+        }
+    }
+
+    pub fn with_workspace_gate(mut self, gate: WorkspaceGateConfig) -> Self {
+        self.workspace_gate = Some(gate);
+        self
+    }
+
+    pub fn with_budgets(mut self, budgets: TaskResourceBudget) -> Self {
+        self.budgets = budgets;
+        self
+    }
+}
+
+/// Configuration for workspace integrity and quality gates on real projects.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceGateConfig {
+    /// Command to verify workspace compile/syntax (e.g. "cargo check").
+    pub check_command: String,
+    /// Optional command to run existing project tests for regressions (e.g. "cargo test").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_command: Option<String>,
+    /// Optional whitelist of permitted modified files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permitted_paths: Option<Vec<String>>,
+    /// Command timeout in milliseconds (default 30_000).
+    #[serde(default = "default_gate_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Bounded stdout/stderr capture in bytes (default 64 KiB).
+    #[serde(default = "default_gate_output_limit")]
+    pub output_limit_bytes: usize,
+}
+
+impl WorkspaceGateConfig {
+    pub fn new(check_command: impl Into<String>) -> Self {
+        Self {
+            check_command: check_command.into(),
+            test_command: None,
+            permitted_paths: None,
+            timeout_ms: default_gate_timeout_ms(),
+            output_limit_bytes: default_gate_output_limit(),
+        }
+    }
+}
+
+/// Result of evaluating real workspace integrity gates.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceGateResult {
+    pub check_passed: bool,
+    pub tests_passed: Option<bool>,
+    pub permitted_files_passed: Option<bool>,
+    pub overall_passed: bool,
+    pub failure_reasons: Vec<String>,
+}
+
+/// Configuration for historical offline trace rescoring.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalTraceConfig {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<RunId>,
+}
+
+/// Unified evaluation mode distinguishing live sessions, workspace gates, preset benchmarks, and historical audits.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum EvaluationMode {
+    /// Mode 1: Live interactive session evaluated via trajectory health and efficiency.
+    LiveSession(LiveSessionConfig),
+    /// Mode 2: Real workspace integrity gate verification.
+    WorkspaceGate(WorkspaceGateConfig),
+    /// Mode 3: Preset benchmark task evaluation with explicit criteria.
+    PresetTask(TaskSpec),
+    /// Mode 4: Historical session trace offline rescoring and audit.
+    HistoricalTrace(HistoricalTraceConfig),
+}
+
+/// Execute workspace integrity checks on a real project workspace.
+pub fn execute_workspace_gate(
+    root: &std::path::Path,
+    config: &WorkspaceGateConfig,
+    modified_paths: Option<&[String]>,
+) -> WorkspaceGateResult {
+    let mut failure_reasons = Vec::new();
+
+    // 1. Check command (e.g. cargo check)
+    let check_evidence = crate::execute_controlled_test(
+        root,
+        &config.check_command,
+        config.timeout_ms,
+        config.output_limit_bytes,
+    );
+    let check_passed = match &check_evidence {
+        ArtifactEvidence::TestResult {
+            exit_code,
+            passed,
+            error,
+            ..
+        } => {
+            if let Some(err) = error {
+                failure_reasons.push(format!("workspace check execution failed: {err}"));
+                false
+            } else if *passed && *exit_code == Some(0) {
+                true
+            } else {
+                failure_reasons.push(format!("workspace check failed: exit code {:?}", exit_code));
+                false
+            }
+        }
+        _ => false,
+    };
+
+    // 2. Optional regression test command (e.g. cargo test)
+    let mut tests_passed = None;
+    if let Some(test_cmd) = &config.test_command {
+        let test_evidence = crate::execute_controlled_test(
+            root,
+            test_cmd,
+            config.timeout_ms,
+            config.output_limit_bytes,
+        );
+        let passed = match &test_evidence {
+            ArtifactEvidence::TestResult {
+                exit_code,
+                passed,
+                error,
+                ..
+            } => {
+                if let Some(err) = error {
+                    failure_reasons
+                        .push(format!("workspace regression test execution failed: {err}"));
+                    false
+                } else if *passed && *exit_code == Some(0) {
+                    true
+                } else {
+                    failure_reasons.push(format!(
+                        "workspace regression tests failed: exit code {:?}",
+                        exit_code
+                    ));
+                    false
+                }
+            }
+            _ => false,
+        };
+        tests_passed = Some(passed);
+    }
+
+    // 3. Optional permitted paths
+    let mut permitted_passed = None;
+    if let (Some(allowed), Some(modified)) = (&config.permitted_paths, modified_paths) {
+        let allowed_set: std::collections::BTreeSet<&str> =
+            allowed.iter().map(|s| s.as_str()).collect();
+        let mut violations = Vec::new();
+        for path in modified {
+            if !allowed_set.contains(path.as_str()) {
+                violations.push(path.clone());
+            }
+        }
+        if !violations.is_empty() {
+            failure_reasons.push(format!(
+                "unpermitted files modified: {}",
+                violations.join(", ")
+            ));
+            permitted_passed = Some(false);
+        } else {
+            permitted_passed = Some(true);
+        }
+    }
+
+    let overall_passed =
+        check_passed && tests_passed.unwrap_or(true) && permitted_passed.unwrap_or(true);
+
+    WorkspaceGateResult {
+        check_passed,
+        tests_passed,
+        permitted_files_passed: permitted_passed,
+        overall_passed,
+        failure_reasons,
+    }
+}
+
+/// Evaluate a real running session from its evidence snapshot and live configuration.
+pub fn evaluate_live_session(
+    config: &LiveSessionConfig,
+    profile: &ScoringProfile,
+    checker_version: u64,
+    snapshot: &RunEvidenceSnapshot,
+    actual_cost: Option<f64>,
+    workspace_gate_result: Option<&WorkspaceGateResult>,
+) -> Result<TaskScore, EvaluationError> {
+    profile.validate()?;
+    config.budgets.validate()?;
+
+    if snapshot.session_id != config.session_id {
+        return Err(EvaluationError(format!(
+            "session_id mismatch: expected '{}', got '{}'",
+            config.session_id, snapshot.session_id
+        )));
+    }
+
+    if actual_cost.is_some_and(|c| c < 0.0 || !c.is_finite()) {
+        return Err(EvaluationError(
+            "actual_cost must be non-negative and finite".into(),
+        ));
+    }
+
+    let evaluation_identity = EvaluationIdentity::new(
+        checker_version,
+        format!("live_session:{}", config.session_id),
+        profile.fingerprint(),
+    );
+
+    let mut failure_reasons = Vec::new();
+    let evidence_ids = vec![snapshot.fingerprint.clone()];
+
+    // 1. Terminal Outcome: Must be "completed"
+    let terminal_completed = snapshot.terminal_status == "completed";
+    if !terminal_completed {
+        failure_reasons.push(format!(
+            "session ended with non-completed terminal status: '{}'",
+            snapshot.terminal_status
+        ));
+    }
+
+    // 2. Tool Health Analysis
+    let total_tools = snapshot.tools.len();
+    let errored_tools = snapshot
+        .tools
+        .iter()
+        .filter(|t| t.is_error == Some(true))
+        .count();
+    let incomplete_tools = snapshot.timing.incomplete_tool_calls;
+
+    let tool_success_ratio = if total_tools > 0 {
+        (total_tools.saturating_sub(errored_tools)) as f64 / total_tools as f64
+    } else {
+        1.0
+    };
+
+    let last_tool_failed = snapshot
+        .tools
+        .last()
+        .and_then(|t| t.is_error)
+        .unwrap_or(false);
+
+    let mut tool_fatal_failure = false;
+    if config.require_clean_terminal_tools && last_tool_failed {
+        tool_fatal_failure = true;
+        failure_reasons.push("session ended with an unrecovered tool error".into());
+    }
+    if incomplete_tools > 0 {
+        failure_reasons.push(format!("{incomplete_tools} tool calls remained incomplete"));
+    }
+
+    // 3. Workspace Gate Analysis
+    let mut gate_passed = true;
+    if let Some(gate) = workspace_gate_result
+        && !gate.overall_passed
+    {
+        gate_passed = false;
+        failure_reasons.extend(gate.failure_reasons.clone());
+    }
+
+    // 4. Budget Checks
+    let mut budget_exceeded = false;
+    if config
+        .budgets
+        .max_cost
+        .is_some_and(|max| actual_cost.is_some_and(|actual| actual > max))
+    {
+        let actual = actual_cost.unwrap();
+        let max = config.budgets.max_cost.unwrap();
+        budget_exceeded = true;
+        failure_reasons.push(format!(
+            "declared cost budget exceeded: {actual:.4} > {max:.4}"
+        ));
+    }
+    if config
+        .budgets
+        .max_active_time_ms
+        .is_some_and(|max| snapshot.timing.active_ms.is_some_and(|actual| actual > max))
+    {
+        let actual = snapshot.timing.active_ms.unwrap();
+        let max = config.budgets.max_active_time_ms.unwrap();
+        budget_exceeded = true;
+        failure_reasons.push(format!(
+            "declared active time budget exceeded: {actual}ms > {max}ms"
+        ));
+    }
+    if config
+        .budgets
+        .max_model_steps
+        .is_some_and(|max| max < snapshot.timing.model_calls)
+    {
+        budget_exceeded = true;
+        failure_reasons.push(format!(
+            "declared model steps budget exceeded: {} > {}",
+            snapshot.timing.model_calls,
+            config.budgets.max_model_steps.unwrap()
+        ));
+    }
+
+    // 5. Efficiency Components
+    let cost_efficiency = actual_cost.map(|cost| 1.0 / (1.0 + cost / profile.reference_cost));
+    let time_efficiency = snapshot
+        .timing
+        .active_ms
+        .map(|time| 1.0 / (1.0 + (time as f64) / (profile.reference_time_ms as f64)));
+
+    // 6. Hard Failures Zero Score
+    if !terminal_completed || tool_fatal_failure || !gate_passed || budget_exceeded {
+        return Ok(TaskScore {
+            status: TaskScoreStatus::Completed,
+            quality: Some(0.0),
+            cost_efficiency,
+            time_efficiency,
+            total: Some(0.0),
+            required_passed: Some(false),
+            budget_exceeded,
+            evidence_ids,
+            evaluation_identity,
+            failure_reason: Some(failure_reasons.join("; ")),
+        });
+    }
+
+    // 7. Quality Calculation for successful session:
+    // Base completion = 1.0
+    // Tool health penalty applied according to tool_health_weight
+    let quality = 1.0 - (config.tool_health_weight * (1.0 - tool_success_ratio));
+    let quality = quality.clamp(0.0, 1.0);
+
+    // 8. Completeness of Accounting Data
+    let all_evidence_available = actual_cost.is_some() && snapshot.timing.active_ms.is_some();
+
+    if !all_evidence_available {
+        let mut missing = Vec::new();
+        if actual_cost.is_none() {
+            missing.push("actual cost accounting missing");
+        }
+        if snapshot.timing.active_ms.is_none() {
+            missing.push("active time accounting missing");
+        }
+        return Ok(TaskScore {
+            status: TaskScoreStatus::IncompleteEvidence,
+            quality: Some(quality),
+            cost_efficiency,
+            time_efficiency,
+            total: None,
+            required_passed: Some(true),
+            budget_exceeded: false,
+            evidence_ids,
+            evaluation_identity,
+            failure_reason: Some(format!("incomplete scoring data: {}", missing.join("; "))),
+        });
+    }
+
+    let e_cost = cost_efficiency.expect("cost efficiency available");
+    let e_time = time_efficiency.expect("time efficiency available");
+
+    let efficiency_multiplier =
+        profile.weights.quality + profile.weights.cost * e_cost + profile.weights.time * e_time;
+    let score = 100.0 * quality * efficiency_multiplier;
+
+    Ok(TaskScore {
+        status: TaskScoreStatus::Completed,
+        quality: Some(quality),
+        cost_efficiency,
+        time_efficiency,
+        total: Some(score.clamp(0.0, 100.0)),
+        required_passed: Some(true),
+        budget_exceeded: false,
+        evidence_ids,
+        evaluation_identity,
+        failure_reason: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,5 +1440,221 @@ mod tests {
             );
             previous_score = score;
         }
+    }
+
+    fn sample_snapshot(
+        session_id: SessionId,
+        terminal_status: &str,
+        tools: Vec<crate::ObservedTool>,
+        active_ms: Option<u64>,
+    ) -> RunEvidenceSnapshot {
+        use arabica_protocol::{
+            CommandId, Event, EventEnvelope, EventId, EventMetadata, RunId, WorkspaceId,
+        };
+
+        let event = |sequence: u64, ms: u64, ev: Event| {
+            EventEnvelope::new(
+                EventMetadata {
+                    event_id: EventId::new(format!("ev-{sequence}")),
+                    command_id: CommandId::new("cmd"),
+                    workspace_id: WorkspaceId::new("ws1"),
+                    session_id: session_id.clone(),
+                    run_id: Some(RunId::new("run1")),
+                    sequence,
+                    occurred_at_ms: ms,
+                },
+                ev,
+            )
+        };
+
+        let mut snap = crate::run_evidence_snapshots(&[
+            event(0, 0, Event::RunStarted),
+            event(
+                1,
+                50,
+                match terminal_status {
+                    "completed" => Event::RunCompleted {
+                        output: Some("done".into()),
+                    },
+                    "failed" => Event::RunFailed {
+                        message: "fatal error".into(),
+                    },
+                    _ => Event::RunCancelled,
+                },
+            ),
+        ])
+        .pop()
+        .unwrap();
+
+        snap.terminal_status = terminal_status.into();
+        snap.timing.active_ms = active_ms;
+        snap.tools = tools;
+        snap
+    }
+
+    #[test]
+    fn live_session_clean_run_yields_full_quality() {
+        use crate::ObservedTool;
+        use arabica_protocol::SessionId;
+
+        let session_id = SessionId::new("live_sess_1");
+        let config = LiveSessionConfig::new(session_id.clone());
+        let profile = sample_profile();
+
+        let tools = vec![
+            ObservedTool {
+                call_id: "c1".into(),
+                name: "read_file".into(),
+                is_error: Some(false),
+                runner_outcome: None,
+            },
+            ObservedTool {
+                call_id: "c2".into(),
+                name: "write_file".into(),
+                is_error: Some(false),
+                runner_outcome: None,
+            },
+        ];
+        let snapshot = sample_snapshot(session_id, "completed", tools, Some(2000));
+
+        // actual == reference (0.50 cost, 2000 active ms) -> E_cost = 0.5, E_time = 0.5
+        // multiplier = 0.70 + 0.20*0.5 + 0.10*0.5 = 0.85
+        // Quality = 1.0 -> Score = 85.0
+        let score =
+            evaluate_live_session(&config, &profile, 1, &snapshot, Some(0.50), None).unwrap();
+        assert_eq!(score.status, TaskScoreStatus::Completed);
+        assert_eq!(score.quality, Some(1.0));
+        assert!((score.total.unwrap() - 85.0).abs() < 1e-9);
+        assert_eq!(score.required_passed, Some(true));
+        assert!(!score.budget_exceeded);
+    }
+
+    #[test]
+    fn live_session_penalizes_errored_tools_proportionally() {
+        use crate::ObservedTool;
+        use arabica_protocol::SessionId;
+
+        let session_id = SessionId::new("live_sess_2");
+        let mut config = LiveSessionConfig::new(session_id.clone());
+        config.require_clean_terminal_tools = false;
+        config.tool_health_weight = 0.40;
+        let profile = sample_profile();
+
+        let tools = vec![
+            ObservedTool {
+                call_id: "c1".into(),
+                name: "shell".into(),
+                is_error: Some(true), // 1 of 2 tools errored
+                runner_outcome: None,
+            },
+            ObservedTool {
+                call_id: "c2".into(),
+                name: "shell".into(),
+                is_error: Some(false),
+                runner_outcome: None,
+            },
+        ];
+        let snapshot = sample_snapshot(session_id, "completed", tools, Some(0));
+
+        // Tool success ratio: 1/2 = 0.5.
+        // Quality = 1.0 - (0.40 * (1 - 0.5)) = 1.0 - 0.20 = 0.80
+        // Cost = 0, Time = 0 -> multiplier = 1.0
+        // Score = 100 * 0.80 * 1.0 = 80.0
+        let score =
+            evaluate_live_session(&config, &profile, 1, &snapshot, Some(0.0), None).unwrap();
+        assert_eq!(score.status, TaskScoreStatus::Completed);
+        assert!((score.quality.unwrap() - 0.80).abs() < 1e-9);
+        assert!((score.total.unwrap() - 80.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn live_session_fails_when_terminated_with_unrecovered_error() {
+        use crate::ObservedTool;
+        use arabica_protocol::SessionId;
+
+        let session_id = SessionId::new("live_sess_3");
+        let config = LiveSessionConfig::new(session_id.clone());
+        let profile = sample_profile();
+
+        let tools = vec![ObservedTool {
+            call_id: "c1".into(),
+            name: "shell".into(),
+            is_error: Some(true), // Last tool failed and unrecovered!
+            runner_outcome: None,
+        }];
+        let snapshot = sample_snapshot(session_id, "completed", tools, Some(100));
+
+        let score =
+            evaluate_live_session(&config, &profile, 1, &snapshot, Some(0.0), None).unwrap();
+        assert_eq!(score.status, TaskScoreStatus::Completed);
+        assert_eq!(score.quality, Some(0.0));
+        assert_eq!(score.total, Some(0.0));
+        assert!(
+            score
+                .failure_reason
+                .unwrap()
+                .contains("unrecovered tool error")
+        );
+    }
+
+    #[test]
+    fn live_session_fails_when_workspace_gate_fails() {
+        use arabica_protocol::SessionId;
+
+        let session_id = SessionId::new("live_sess_4");
+        let config = LiveSessionConfig::new(session_id.clone());
+        let profile = sample_profile();
+
+        let snapshot = sample_snapshot(session_id, "completed", vec![], Some(100));
+
+        let gate_res = WorkspaceGateResult {
+            check_passed: false,
+            tests_passed: None,
+            permitted_files_passed: None,
+            overall_passed: false,
+            failure_reasons: vec!["cargo check compilation error: undefined variable foo".into()],
+        };
+
+        let score =
+            evaluate_live_session(&config, &profile, 1, &snapshot, Some(0.01), Some(&gate_res))
+                .unwrap();
+        assert_eq!(score.status, TaskScoreStatus::Completed);
+        assert_eq!(score.quality, Some(0.0));
+        assert_eq!(score.total, Some(0.0));
+        assert!(
+            score
+                .failure_reason
+                .unwrap()
+                .contains("cargo check compilation error")
+        );
+    }
+
+    #[test]
+    fn workspace_gate_execution_checks_and_catches_unpermitted_files() {
+        let temp_dir = std::env::temp_dir();
+        let config = WorkspaceGateConfig {
+            check_command: "echo 'build ok'".into(),
+            test_command: Some("exit 0".into()),
+            permitted_paths: Some(vec!["src/lib.rs".into()]),
+            timeout_ms: 5000,
+            output_limit_bytes: 4096,
+        };
+
+        // Allowed path modified -> passes
+        let res = execute_workspace_gate(&temp_dir, &config, Some(&["src/lib.rs".into()]));
+        assert!(res.overall_passed);
+        assert!(res.check_passed);
+        assert_eq!(res.tests_passed, Some(true));
+        assert_eq!(res.permitted_files_passed, Some(true));
+
+        // Unpermitted path modified -> fails gate!
+        let res = execute_workspace_gate(&temp_dir, &config, Some(&["tests/test.rs".into()]));
+        assert!(!res.overall_passed);
+        assert_eq!(res.permitted_files_passed, Some(false));
+        assert!(
+            res.failure_reasons
+                .join(" ")
+                .contains("unpermitted files modified")
+        );
     }
 }

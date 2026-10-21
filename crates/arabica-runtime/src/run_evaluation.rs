@@ -66,7 +66,20 @@ pub struct RunEvidenceSnapshot {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ArtifactEvidence {
-    Captured { content: String },
+    Captured {
+        content: String,
+    },
+    TestResult {
+        exit_code: Option<i32>,
+        passed: bool,
+        output: String,
+        output_truncated: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    ModifiedFiles {
+        paths: Vec<String>,
+    },
     Missing,
     Unavailable,
 }
@@ -84,6 +97,10 @@ impl RunEvidenceSnapshot {
                 path.len()
                     + match artifact {
                         ArtifactEvidence::Captured { content } => content.len(),
+                        ArtifactEvidence::TestResult { output, .. } => output.len(),
+                        ArtifactEvidence::ModifiedFiles { paths } => {
+                            paths.iter().map(|p| p.len()).sum::<usize>()
+                        }
                         _ => 0,
                     }
             })
@@ -306,12 +323,45 @@ pub enum AcceptanceStatus {
     NotApplicable,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+fn default_test_timeout_ms() -> u64 {
+    30_000
+}
+
+fn default_test_output_limit() -> usize {
+    64 * 1024
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AcceptanceCheck {
     ArtifactContains {
         path: String,
         value: String,
+    },
+    ExactFileContent {
+        path: String,
+        expected: String,
+    },
+    JsonField {
+        path: String,
+        #[serde(default)]
+        pointer: String,
+        expected: serde_json::Value,
+    },
+    JsonSchema {
+        path: String,
+        required_fields: Vec<String>,
+    },
+    PermittedFiles {
+        allowed_paths: Vec<String>,
+    },
+    ControlledTest {
+        id: String,
+        command: String,
+        #[serde(default = "default_test_timeout_ms")]
+        timeout_ms: u64,
+        #[serde(default = "default_test_output_limit")]
+        output_limit_bytes: usize,
     },
     OutputContains {
         value: String,
@@ -323,6 +373,75 @@ pub enum AcceptanceCheck {
     ToolSucceeded {
         name: String,
     },
+}
+
+impl AcceptanceCheck {
+    pub fn validate(&self) -> Result<(), EvaluationError> {
+        match self {
+            AcceptanceCheck::OutputRegex { pattern } => {
+                Regex::new(pattern)
+                    .map_err(|_| EvaluationError("invalid acceptance regular expression".into()))?;
+            }
+            AcceptanceCheck::ArtifactContains { path, value } => {
+                if path.trim().is_empty() || value.is_empty() {
+                    return Err(EvaluationError("empty artifact criterion".into()));
+                }
+            }
+            AcceptanceCheck::ExactFileContent { path, .. } => {
+                if path.trim().is_empty() {
+                    return Err(EvaluationError("empty exact file criterion path".into()));
+                }
+            }
+            AcceptanceCheck::JsonField { path, .. } => {
+                if path.trim().is_empty() {
+                    return Err(EvaluationError("empty json field criterion path".into()));
+                }
+            }
+            AcceptanceCheck::JsonSchema {
+                path,
+                required_fields,
+            } => {
+                if path.trim().is_empty() || required_fields.is_empty() {
+                    return Err(EvaluationError("empty json schema criterion".into()));
+                }
+                if required_fields.iter().any(|field| field.trim().is_empty()) {
+                    return Err(EvaluationError("empty field name in json schema".into()));
+                }
+            }
+            AcceptanceCheck::PermittedFiles { allowed_paths } => {
+                if allowed_paths.is_empty() || allowed_paths.iter().any(|p| p.trim().is_empty()) {
+                    return Err(EvaluationError("invalid permitted files list".into()));
+                }
+            }
+            AcceptanceCheck::ControlledTest {
+                id,
+                command,
+                timeout_ms,
+                output_limit_bytes,
+            } => {
+                if id.trim().is_empty()
+                    || command.trim().is_empty()
+                    || *timeout_ms == 0
+                    || *output_limit_bytes == 0
+                {
+                    return Err(EvaluationError(
+                        "invalid controlled test specification".into(),
+                    ));
+                }
+            }
+            AcceptanceCheck::OutputContains { value } => {
+                if value.is_empty() {
+                    return Err(EvaluationError("empty output acceptance marker".into()));
+                }
+            }
+            AcceptanceCheck::ToolSucceeded { name } => {
+                if name.trim().is_empty() {
+                    return Err(EvaluationError("empty acceptance tool name".into()));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn default_criterion_weight() -> f64 {
@@ -388,25 +507,7 @@ impl AcceptanceSpec {
                 ));
             }
             total_weight += criterion.weight;
-            match &criterion.check {
-                AcceptanceCheck::OutputRegex { pattern } => {
-                    Regex::new(pattern).map_err(|_| {
-                        EvaluationError("invalid acceptance regular expression".into())
-                    })?;
-                }
-                AcceptanceCheck::ArtifactContains { path, value }
-                    if path.trim().is_empty() || value.is_empty() =>
-                {
-                    return Err(EvaluationError("empty artifact criterion".into()));
-                }
-                AcceptanceCheck::OutputContains { value } if value.is_empty() => {
-                    return Err(EvaluationError("empty output acceptance marker".into()));
-                }
-                AcceptanceCheck::ToolSucceeded { name } if name.trim().is_empty() => {
-                    return Err(EvaluationError("empty acceptance tool name".into()));
-                }
-                _ => {}
-            }
+            criterion.check.validate()?;
         }
         if !self.criteria.is_empty() && total_weight <= 0.0 {
             return Err(EvaluationError(
@@ -448,6 +549,101 @@ pub trait RunAcceptanceScorer: std::fmt::Debug + Send + Sync {
     ) -> Result<RunAcceptance, EvaluationError>;
 }
 
+/// Execute a controlled test command in an isolated, bounded environment.
+///
+/// Gives checkers separate timeouts and bounded output capture.
+/// Distinguishes failed test assertions (non-zero exit code) from evaluator faults (timeout, spawn failure).
+pub fn execute_controlled_test(
+    root: &std::path::Path,
+    command: &str,
+    timeout_ms: u64,
+    output_limit_bytes: usize,
+) -> ArtifactEvidence {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut child = match Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            return ArtifactEvidence::TestResult {
+                exit_code: None,
+                passed: false,
+                output: String::new(),
+                output_truncated: false,
+                error: Some(format!("failed to spawn test command: {err}")),
+            };
+        }
+    };
+
+    let start = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return ArtifactEvidence::TestResult {
+                        exit_code: None,
+                        passed: false,
+                        output: String::new(),
+                        output_truncated: false,
+                        error: Some(format!("test execution timed out after {timeout_ms}ms")),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return ArtifactEvidence::TestResult {
+                    exit_code: None,
+                    passed: false,
+                    output: String::new(),
+                    output_truncated: false,
+                    error: Some(format!("failed to wait for test process: {err}")),
+                };
+            }
+        }
+    };
+
+    let mut combined_output = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        let _ = stdout
+            .take((output_limit_bytes + 1) as u64)
+            .read_to_end(&mut combined_output);
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let remaining = (output_limit_bytes + 1).saturating_sub(combined_output.len()) as u64;
+        let _ = stderr.take(remaining).read_to_end(&mut combined_output);
+    }
+
+    let output_truncated = combined_output.len() > output_limit_bytes;
+    if output_truncated {
+        combined_output.truncate(output_limit_bytes);
+    }
+    let output = String::from_utf8_lossy(&combined_output).to_string();
+    let exit_code = status.code();
+    let passed = status.success();
+
+    ArtifactEvidence::TestResult {
+        exit_code,
+        passed,
+        output,
+        output_truncated,
+        error: None,
+    }
+}
+
 #[derive(Debug)]
 pub struct EvidenceAcceptanceScorer;
 impl RunAcceptanceScorer for EvidenceAcceptanceScorer {
@@ -475,9 +671,116 @@ impl RunAcceptanceScorer for EvidenceAcceptanceScorer {
                             ArtifactEvidence::Captured { content } => Some(content.contains(value)),
                             ArtifactEvidence::Missing => Some(false),
                             ArtifactEvidence::Unavailable => None,
+                            _ => None,
                         }),
                     "artifact_snapshot",
                 ),
+                AcceptanceCheck::ExactFileContent { path, expected } => (
+                    snapshot
+                        .artifacts
+                        .get(path)
+                        .and_then(|artifact| match artifact {
+                            ArtifactEvidence::Captured { content } => Some(content == expected),
+                            ArtifactEvidence::Missing => Some(false),
+                            ArtifactEvidence::Unavailable => None,
+                            _ => None,
+                        }),
+                    "exact_file_content",
+                ),
+                AcceptanceCheck::JsonField {
+                    path,
+                    pointer,
+                    expected,
+                } => (
+                    snapshot
+                        .artifacts
+                        .get(path)
+                        .and_then(|artifact| match artifact {
+                            ArtifactEvidence::Captured { content } => {
+                                match serde_json::from_str::<serde_json::Value>(content) {
+                                    Ok(val) => {
+                                        let actual = if pointer.is_empty() {
+                                            Some(&val)
+                                        } else {
+                                            val.pointer(pointer)
+                                        };
+                                        Some(actual == Some(expected))
+                                    }
+                                    Err(_) => Some(false),
+                                }
+                            }
+                            ArtifactEvidence::Missing => Some(false),
+                            ArtifactEvidence::Unavailable => None,
+                            _ => None,
+                        }),
+                    "json_field_assertion",
+                ),
+                AcceptanceCheck::JsonSchema {
+                    path,
+                    required_fields,
+                } => (
+                    snapshot
+                        .artifacts
+                        .get(path)
+                        .and_then(|artifact| match artifact {
+                            ArtifactEvidence::Captured { content } => {
+                                match serde_json::from_str::<serde_json::Value>(content) {
+                                    Ok(serde_json::Value::Object(map)) => Some(
+                                        required_fields.iter().all(|field| map.contains_key(field)),
+                                    ),
+                                    _ => Some(false),
+                                }
+                            }
+                            ArtifactEvidence::Missing => Some(false),
+                            ArtifactEvidence::Unavailable => None,
+                            _ => None,
+                        }),
+                    "json_schema_assertion",
+                ),
+                AcceptanceCheck::PermittedFiles { allowed_paths } => (
+                    snapshot.artifacts.get("__modified_files__").and_then(
+                        |artifact| match artifact {
+                            ArtifactEvidence::ModifiedFiles { paths } => {
+                                let allowed: BTreeSet<&str> =
+                                    allowed_paths.iter().map(|p| p.as_str()).collect();
+                                Some(paths.iter().all(|path| allowed.contains(path.as_str())))
+                            }
+                            ArtifactEvidence::Unavailable => None,
+                            _ => None,
+                        },
+                    ),
+                    "permitted_files_assertion",
+                ),
+                AcceptanceCheck::ControlledTest { id, .. } => {
+                    let key = format!("__test__:{id}");
+                    (
+                        snapshot
+                            .artifacts
+                            .get(&key)
+                            .and_then(|artifact| match artifact {
+                                ArtifactEvidence::TestResult {
+                                    exit_code,
+                                    passed,
+                                    error,
+                                    ..
+                                } => {
+                                    if error.is_some() {
+                                        // Evaluator execution fault: cannot execute test
+                                        None
+                                    } else if *passed && *exit_code == Some(0) {
+                                        Some(true)
+                                    } else {
+                                        // Test assertions failed (non-zero exit code)
+                                        Some(false)
+                                    }
+                                }
+                                ArtifactEvidence::Missing => Some(false),
+                                ArtifactEvidence::Unavailable => None,
+                                _ => None,
+                            }),
+                        "controlled_test_execution",
+                    )
+                }
                 AcceptanceCheck::OutputContains { value } => (
                     snapshot
                         .final_output
@@ -1009,5 +1312,317 @@ mod tests {
         mixed = trials.clone();
         mixed.push(trials[0].clone());
         assert!(compare_policy_trials(&mixed).is_err());
+    }
+
+    #[test]
+    fn exact_file_content_matches_only_exact_content_and_rejects_partial() {
+        let scorer = EvidenceAcceptanceScorer;
+        let spec = AcceptanceSpec {
+            task_id: "exact_task".into(),
+            version: 1,
+            criteria: vec![AcceptanceCriterion::new(
+                "exact_file",
+                AcceptanceCheck::ExactFileContent {
+                    path: "config.json".into(),
+                    expected: "{\"mode\":\"prod\"}".into(),
+                },
+            )],
+        };
+
+        // Exact match passes
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "config.json".into(),
+            ArtifactEvidence::Captured {
+                content: "{\"mode\":\"prod\"}".into(),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Pass);
+
+        // Substring / partial match fails (unlike ArtifactContains!)
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "config.json".into(),
+            ArtifactEvidence::Captured {
+                content: "{\"mode\":\"prod\",\"extra\":true}".into(),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Fail);
+
+        // Missing file fails
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert("config.json".into(), ArtifactEvidence::Missing);
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Fail);
+
+        // Unavailable file is unknown
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert("config.json".into(), ArtifactEvidence::Unavailable);
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Unknown);
+    }
+
+    #[test]
+    fn json_field_and_schema_assertions() {
+        let scorer = EvidenceAcceptanceScorer;
+        let spec = AcceptanceSpec {
+            task_id: "json_task".into(),
+            version: 1,
+            criteria: vec![
+                AcceptanceCriterion::new(
+                    "status_check",
+                    AcceptanceCheck::JsonField {
+                        path: "out.json".into(),
+                        pointer: "/status".into(),
+                        expected: serde_json::json!("success"),
+                    },
+                ),
+                AcceptanceCriterion::new(
+                    "schema_check",
+                    AcceptanceCheck::JsonSchema {
+                        path: "out.json".into(),
+                        required_fields: vec!["status".into(), "count".into()],
+                    },
+                ),
+            ],
+        };
+
+        // Valid JSON with correct fields passes both
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "out.json".into(),
+            ArtifactEvidence::Captured {
+                content: r#"{"status":"success","count":42}"#.into(),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Pass);
+        assert_eq!(acc.results[1].status, AcceptanceStatus::Pass);
+
+        // Wrong field value fails field check, passes schema
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "out.json".into(),
+            ArtifactEvidence::Captured {
+                content: r#"{"status":"failed","count":42}"#.into(),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Fail);
+        assert_eq!(acc.results[1].status, AcceptanceStatus::Pass);
+
+        // Missing schema field fails schema
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "out.json".into(),
+            ArtifactEvidence::Captured {
+                content: r#"{"status":"success"}"#.into(),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Pass);
+        assert_eq!(acc.results[1].status, AcceptanceStatus::Fail);
+
+        // Malformed JSON syntax fails assertion
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "out.json".into(),
+            ArtifactEvidence::Captured {
+                content: "not json at all".into(),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Fail);
+        assert_eq!(acc.results[1].status, AcceptanceStatus::Fail);
+    }
+
+    #[test]
+    fn permitted_files_rejects_unauthorized_changes() {
+        let scorer = EvidenceAcceptanceScorer;
+        let spec = AcceptanceSpec {
+            task_id: "permit_task".into(),
+            version: 1,
+            criteria: vec![AcceptanceCriterion::new(
+                "whitelist",
+                AcceptanceCheck::PermittedFiles {
+                    allowed_paths: vec!["src/main.rs".into(), "Cargo.toml".into()],
+                },
+            )],
+        };
+
+        // Allowed modifications pass
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "__modified_files__".into(),
+            ArtifactEvidence::ModifiedFiles {
+                paths: vec!["src/main.rs".into()],
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Pass);
+
+        // Modifying test files or unauthorized files fails!
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "__modified_files__".into(),
+            ArtifactEvidence::ModifiedFiles {
+                paths: vec!["src/main.rs".into(), "tests/acceptance_test.rs".into()],
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Fail);
+    }
+
+    #[test]
+    fn controlled_test_execution_distinguishes_assertion_failure_from_evaluator_fault() {
+        let scorer = EvidenceAcceptanceScorer;
+        let spec = AcceptanceSpec {
+            task_id: "test_task".into(),
+            version: 1,
+            criteria: vec![AcceptanceCriterion::new(
+                "unit_test",
+                AcceptanceCheck::ControlledTest {
+                    id: "t1".into(),
+                    command: "cargo test".into(),
+                    timeout_ms: 5000,
+                    output_limit_bytes: 4096,
+                },
+            )],
+        };
+
+        // Test ran and passed (exit code 0)
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "__test__:t1".into(),
+            ArtifactEvidence::TestResult {
+                exit_code: Some(0),
+                passed: true,
+                output: "test result: ok".into(),
+                output_truncated: false,
+                error: None,
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Pass);
+
+        // Test ran and failed assertions (exit code 1) -> Task failure
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "__test__:t1".into(),
+            ArtifactEvidence::TestResult {
+                exit_code: Some(1),
+                passed: false,
+                output: "assertion failed: left == right".into(),
+                output_truncated: false,
+                error: None,
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Fail);
+
+        // Checker could not execute / timed out -> Evaluator fault -> Status is Unknown!
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert(
+            "__test__:t1".into(),
+            ArtifactEvidence::TestResult {
+                exit_code: None,
+                passed: false,
+                output: String::new(),
+                output_truncated: false,
+                error: Some("test execution timed out after 5000ms".into()),
+            },
+        );
+        let snap = completed(Some("done".into()))
+            .with_artifacts(artifacts)
+            .unwrap();
+        let acc = scorer.score(&snap, &spec).unwrap();
+        assert_eq!(acc.results[0].status, AcceptanceStatus::Unknown);
+    }
+
+    #[test]
+    fn execute_controlled_test_runner_bounded_and_isolated() {
+        let temp_dir = std::env::temp_dir();
+
+        // Successful command
+        let res = execute_controlled_test(&temp_dir, "echo 'hello world'", 5000, 1024);
+        match res {
+            ArtifactEvidence::TestResult {
+                exit_code,
+                passed,
+                output,
+                error,
+                ..
+            } => {
+                assert_eq!(exit_code, Some(0));
+                assert!(passed);
+                assert!(output.contains("hello world"));
+                assert!(error.is_none());
+            }
+            _ => panic!("unexpected evidence type"),
+        }
+
+        // Failing command
+        let res = execute_controlled_test(&temp_dir, "exit 42", 5000, 1024);
+        match res {
+            ArtifactEvidence::TestResult {
+                exit_code,
+                passed,
+                error,
+                ..
+            } => {
+                assert_eq!(exit_code, Some(42));
+                assert!(!passed);
+                assert!(error.is_none());
+            }
+            _ => panic!("unexpected evidence type"),
+        }
+
+        // Timing out command
+        let res = execute_controlled_test(&temp_dir, "sleep 2", 100, 1024);
+        match res {
+            ArtifactEvidence::TestResult { passed, error, .. } => {
+                assert!(!passed);
+                assert!(error.unwrap().contains("timed out"));
+            }
+            _ => panic!("unexpected evidence type"),
+        }
     }
 }

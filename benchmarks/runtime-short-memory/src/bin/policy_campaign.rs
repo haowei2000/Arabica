@@ -101,8 +101,19 @@ impl Campaign {
                 return Err("campaign fixture exceeds bounds".into());
             }
             for criterion in &task.acceptance.criteria {
-                if let AcceptanceCheck::ArtifactContains { path, .. } = &criterion.check {
-                    relative_path(path)?;
+                match &criterion.check {
+                    AcceptanceCheck::ArtifactContains { path, .. }
+                    | AcceptanceCheck::ExactFileContent { path, .. }
+                    | AcceptanceCheck::JsonField { path, .. }
+                    | AcceptanceCheck::JsonSchema { path, .. } => {
+                        relative_path(path)?;
+                    }
+                    AcceptanceCheck::PermittedFiles { allowed_paths } => {
+                        for path in allowed_paths {
+                            relative_path(path)?;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -110,17 +121,92 @@ impl Campaign {
     }
 }
 
+fn scan_modified_files(
+    root: &Path,
+    initial_files: &BTreeMap<String, String>,
+) -> Result<Vec<String>> {
+    let mut modified = BTreeSet::new();
+    let mut stack = vec![PathBuf::new()];
+
+    while let Some(rel_dir) = stack.pop() {
+        let current_dir = if rel_dir.as_os_str().is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(&rel_dir)
+        };
+
+        let entries = match std::fs::read_dir(&current_dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            let name = entry.file_name();
+            let name_str = match name.to_str() {
+                Some(s) => s,
+                None => continue,
+            };
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let rel_path = if rel_dir.as_os_str().is_empty() {
+                PathBuf::from(name_str)
+            } else {
+                rel_dir.join(name_str)
+            };
+
+            if file_type.is_dir() {
+                stack.push(rel_path);
+            } else if file_type.is_file() {
+                let rel_str = rel_path.to_string_lossy().to_string();
+                match initial_files.get(&rel_str) {
+                    Some(initial_content) => {
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            if content != *initial_content {
+                                modified.insert(rel_str);
+                            }
+                        } else {
+                            modified.insert(rel_str);
+                        }
+                    }
+                    None => {
+                        modified.insert(rel_str);
+                    }
+                }
+            }
+        }
+    }
+
+    for initial_path in initial_files.keys() {
+        if !root.join(initial_path).exists() {
+            modified.insert(initial_path.clone());
+        }
+    }
+
+    Ok(modified.into_iter().collect())
+}
+
 // Capture only explicitly requested files. Reject symlinks at every component
 // and bound reads; task failures and unavailable evidence remain distinct.
 fn capture_artifacts(
     root: &Path,
     spec: &AcceptanceSpec,
+    initial_files: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, ArtifactEvidence>> {
     let mut artifacts = BTreeMap::new();
     let mut remaining = 64 * 1024_usize;
+
     for criterion in &spec.criteria {
-        let AcceptanceCheck::ArtifactContains { path, .. } = &criterion.check else {
-            continue;
+        let path = match &criterion.check {
+            AcceptanceCheck::ArtifactContains { path, .. }
+            | AcceptanceCheck::ExactFileContent { path, .. }
+            | AcceptanceCheck::JsonField { path, .. }
+            | AcceptanceCheck::JsonSchema { path, .. } => path,
+            _ => continue,
         };
         if artifacts.contains_key(path) {
             continue;
@@ -183,6 +269,39 @@ fn capture_artifacts(
         );
         artifacts.insert(path.clone(), evidence);
     }
+
+    if spec
+        .criteria
+        .iter()
+        .any(|c| matches!(c.check, AcceptanceCheck::PermittedFiles { .. }))
+    {
+        let modified = scan_modified_files(root, initial_files)?;
+        artifacts.insert(
+            "__modified_files__".into(),
+            ArtifactEvidence::ModifiedFiles { paths: modified },
+        );
+    }
+
+    for criterion in &spec.criteria {
+        if let AcceptanceCheck::ControlledTest {
+            id,
+            command,
+            timeout_ms,
+            output_limit_bytes,
+        } = &criterion.check
+        {
+            let key = format!("__test__:{id}");
+            artifacts.entry(key).or_insert_with(|| {
+                arabica_runtime::execute_controlled_test(
+                    root,
+                    command,
+                    *timeout_ms,
+                    *output_limit_bytes,
+                )
+            });
+        }
+    }
+
     Ok(artifacts)
 }
 
@@ -271,7 +390,11 @@ async fn execute_trial(
     let mut snapshot = run_evidence_snapshots(&stored.events)
         .pop()
         .ok_or("trial produced no terminal evidence")?
-        .with_artifacts(capture_artifacts(root, &task.acceptance)?)?;
+        .with_artifacts(capture_artifacts(
+            root,
+            &task.acceptance,
+            &task.initial_files,
+        )?)?;
     use sha2::{Digest, Sha256};
     snapshot.fixture_fingerprint = Some(hex::encode(Sha256::digest(serde_json::to_vec(&(
         &task.initial_files,
@@ -466,7 +589,7 @@ mod tests {
                 })
                 .collect(),
         };
-        let captured = capture_artifacts(&root, &spec).unwrap();
+        let captured = capture_artifacts(&root, &spec, &BTreeMap::new()).unwrap();
         assert_eq!(captured["large.txt"], ArtifactEvidence::Unavailable);
         assert_eq!(captured["missing.txt"], ArtifactEvidence::Missing);
         #[cfg(unix)]
