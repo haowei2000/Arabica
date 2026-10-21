@@ -12,6 +12,8 @@ mod run_evaluation;
 pub use run_evaluation::*;
 mod scoring;
 pub use scoring::*;
+mod accounting;
+pub use accounting::*;
 mod evaluation;
 pub use evaluation::*;
 mod context_state;

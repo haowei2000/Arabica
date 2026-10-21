@@ -5,9 +5,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use arabica_protocol::{RunId, SessionId};
+use arabica_protocol::{EventEnvelope, RunId, SessionId};
 use serde::{Deserialize, Serialize};
 
+use crate::accounting::{PriceCard, RunCostAccounting, account_run_cost_and_time};
 use crate::{
     AcceptanceCriterion, AcceptanceSpec, AcceptanceStatus, ArtifactEvidence, EvaluationError,
     RunAcceptance, RunEvidenceSnapshot,
@@ -640,6 +641,9 @@ pub struct LiveSessionConfig {
     /// If true, a session ending on an unrecovered failed tool call forces zero quality.
     #[serde(default = "default_require_clean_terminal_tools")]
     pub require_clean_terminal_tools: bool,
+    /// Optional price card for automatic cost accounting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_card: Option<PriceCard>,
 }
 
 impl LiveSessionConfig {
@@ -650,6 +654,7 @@ impl LiveSessionConfig {
             workspace_gate: None,
             tool_health_weight: default_tool_health_weight(),
             require_clean_terminal_tools: default_require_clean_terminal_tools(),
+            price_card: None,
         }
     }
 
@@ -660,6 +665,11 @@ impl LiveSessionConfig {
 
     pub fn with_budgets(mut self, budgets: TaskResourceBudget) -> Self {
         self.budgets = budgets;
+        self
+    }
+
+    pub fn with_price_card(mut self, card: PriceCard) -> Self {
+        self.price_card = Some(card);
         self
     }
 }
@@ -1028,6 +1038,42 @@ pub fn evaluate_live_session(
         evaluation_identity,
         failure_reason: None,
     })
+}
+
+/// Fully evaluate a live session directly from its event history, including
+/// automatic snapshot extraction and price-card cost accounting.
+pub fn evaluate_live_session_from_history(
+    config: &LiveSessionConfig,
+    profile: &ScoringProfile,
+    checker_version: u64,
+    history: &[EventEnvelope],
+    workspace_gate_result: Option<&WorkspaceGateResult>,
+) -> Result<(TaskScore, Option<RunCostAccounting>), EvaluationError> {
+    let mut snapshots = crate::run_evidence_snapshots(history);
+    let snapshot = snapshots.pop().ok_or_else(|| {
+        EvaluationError("history does not contain any terminal run snapshot".into())
+    })?;
+
+    let accounting = match &config.price_card {
+        Some(card) => Some(
+            account_run_cost_and_time(history, Some(&snapshot.run_id), card)
+                .map_err(|e| EvaluationError(e.0))?,
+        ),
+        None => None,
+    };
+
+    let actual_cost = accounting.as_ref().and_then(|a| a.total_agent_cost);
+
+    let score = evaluate_live_session(
+        config,
+        profile,
+        checker_version,
+        &snapshot,
+        actual_cost,
+        workspace_gate_result,
+    )?;
+
+    Ok((score, accounting))
 }
 
 #[cfg(test)]
@@ -1656,5 +1702,94 @@ mod tests {
                 .join(" ")
                 .contains("unpermitted files modified")
         );
+    }
+
+    #[test]
+    fn live_session_evaluation_from_history_computes_price_and_score() {
+        use arabica_model::RuntimeUsage;
+        use arabica_protocol::{
+            CommandId, Event, EventEnvelope, EventId, EventMetadata, ModelCallOutcome, RunId,
+            WorkspaceId,
+        };
+
+        let session_id = SessionId::new("sess-live-pricing");
+        let event = |sequence: u64, ms: u64, ev: Event| {
+            EventEnvelope::new(
+                EventMetadata {
+                    event_id: EventId::new(format!("ev-{sequence}")),
+                    command_id: CommandId::new("cmd"),
+                    workspace_id: WorkspaceId::new("ws1"),
+                    session_id: session_id.clone(),
+                    run_id: Some(RunId::new("run1")),
+                    sequence,
+                    occurred_at_ms: ms,
+                },
+                ev,
+            )
+        };
+
+        let price_card = crate::accounting::PriceCard::new("test-card", "USD")
+            .with_model("gpt-4o", crate::accounting::ModelPriceRule::new(2.5, 10.0));
+
+        let config = LiveSessionConfig::new(session_id.clone()).with_price_card(price_card);
+        let profile = sample_profile();
+
+        let history = vec![
+            event(0, 0, Event::RunStarted),
+            event(
+                1,
+                50,
+                Event::ModelRouteSelected {
+                    model_step: 0,
+                    decision_id: "dec-1".into(),
+                    policy_id: "p".into(),
+                    policy_version: 1,
+                    policy_fingerprint: "f".into(),
+                    model_registry_snapshot: "s".into(),
+                    model_alias: Some("gpt-4o".into()),
+                    reason: "main execution".into(),
+                },
+            ),
+            event(
+                2,
+                150,
+                Event::ModelCallObserved {
+                    model_step: 0,
+                    decision_id: "dec-1".into(),
+                    elapsed_ms: 100,
+                    provider_succeeded: true,
+                    outcome: ModelCallOutcome::Succeeded,
+                    usage: Some(RuntimeUsage {
+                        input_tokens: 100_000,
+                        output_tokens: 10_000,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                        reasoning_output_tokens: 0,
+                    }),
+                },
+            ),
+            event(
+                3,
+                200,
+                Event::RunCompleted {
+                    output: Some("completed response".into()),
+                },
+            ),
+        ];
+
+        let (score, accounting) =
+            evaluate_live_session_from_history(&config, &profile, 1, &history, None).unwrap();
+
+        assert_eq!(score.status, TaskScoreStatus::Completed);
+        assert_eq!(score.quality, Some(1.0));
+        assert!(score.cost_efficiency.is_some());
+        assert!(score.total.is_some());
+
+        assert!(accounting.is_some());
+        let acc = accounting.unwrap();
+        assert!(acc.coverage.is_complete);
+        // Cost: 100k in * 2.5/1M + 10k out * 10/1M = 0.25 + 0.10 = 0.35
+        let agent_cost = acc.total_agent_cost.unwrap();
+        assert!((agent_cost - 0.35).abs() < 1e-9);
     }
 }
