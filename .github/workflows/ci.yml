@@ -32,11 +32,13 @@ jobs:
         run: test -z "$(git ls-files '*.py')"
   macos-desktop:
     name: Native macOS client
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: swift test
+        working-directory: apps/arabica-desktop
+      - run: swift build -c release
         working-directory: apps/arabica-desktop
       - run: brew install librsvg
       - run: bash scripts/package.sh debug

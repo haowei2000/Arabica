@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.8.0 — 2026-10-20
+## 0.8.1 — 2026-10-21
+
+- Fix Markdown table sizing compilation with the release Swift toolchain and validate optimized desktop builds in CI.
 
 - Rebuild the macOS sidebar as a native folder and conversation tree with compact rows, persistent expansion, keyboard navigation, and contextual actions.
 - Group sidebar, search, and workspace controls in the native title bar and add independent conversation windows with shared library state.
