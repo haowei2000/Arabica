@@ -140,7 +140,7 @@ final class WindowConfiguratorView: NSView {
 
     func updateWindowAppearance() {
         guard let window = self.window else { return }
-        window.titleVisibility = .hidden
+        window.titleVisibility = .visible
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
 
@@ -212,18 +212,21 @@ struct DesktopView: View {
                 .help("Open Workspace (Cmd+O)")
 
                 workspaceChooser
-            }
-            if windowWidth >= 760 {
-                ToolbarItem(placement: .principal) {
-                    workspaceBreadcrumb
-                }
+
+                Image(
+                    systemName: model.isConnecting
+                        ? "arrow.triangle.2.circlepath"
+                        : (model.isConnected ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(model.isConnected ? Color.green : (model.errorText != nil ? Color.red : Color.orange))
+                .help(connectionStatus)
+                .accessibilityLabel(connectionStatus)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 buttonSection
             }
         }
-        .toolbarBackground(Palette.canvas, for: .windowToolbar)
-        .toolbarBackground(.visible, for: .windowToolbar)
         .sheet(item: Binding(get: { model.permission }, set: model.dismissPermission)) { prompt in
             PermissionView(prompt: prompt) { option in model.resolvePermission(option) }
                 .frame(minWidth: 500)
@@ -370,28 +373,6 @@ struct DesktopView: View {
         .help("Choose Workspace: \(model.workspace?.path ?? "None")")
     }
 
-    private var workspaceBreadcrumb: some View {
-        HStack(spacing: 7) {
-            let currentTitle =
-                model.sessions.first(where: { $0.id == model.selectedSessionID })?.title ?? "New Conversation"
-            Text(currentTitle)
-                .font(AppFont.sans(12.5, weight: .semibold))
-                .foregroundStyle(Palette.ink)
-                .lineLimit(1)
-                .help(currentTitle)
-            Image(
-                systemName: model.isConnecting
-                    ? "arrow.triangle.2.circlepath"
-                    : (model.isConnected ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-            )
-            .font(AppFont.sans(11))
-            .foregroundStyle(model.isConnected ? Color.green : (model.errorText != nil ? Color.red : Color.orange))
-            .accessibilityLabel(connectionStatus)
-            .help(connectionStatus)
-        }
-        .frame(maxWidth: 240)
-    }
-
     private var connectionStatus: String {
         if model.isConnecting { return "Connecting to agent…" }
         if model.isConnected { return "Agent connected" }
@@ -462,8 +443,7 @@ struct DesktopView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
+        ContentUnavailableView {
             if let image = ArabicaBrandAsset.image {
                 Image(nsImage: image)
                     .resizable()
@@ -472,6 +452,8 @@ struct DesktopView: View {
                     .scaledToFit()
                     .frame(width: 48, height: 48)
                     .accessibilityLabel("Arabica")
+            } else {
+                Image(systemName: "bubble.left.and.bubble.right")
             }
 
             Text(
@@ -479,19 +461,15 @@ struct DesktopView: View {
                     ? "Connecting to workspace…"
                     : (model.workspace == nil ? "Open a workspace to begin" : "How can I help you today?")
             )
-            .font(AppFont.sans(22, weight: .semibold))
-            .foregroundStyle(Palette.ink)
-
+            .font(.title2.weight(.semibold))
+        } description: {
             Text(
                 model.workspace == nil
                     ? "Select a workspace folder to start working with Arabica."
                     : "Ask a question, generate code, inspect files, or run tests."
             )
-            .font(AppFont.sans(13))
-            .foregroundStyle(Palette.muted)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: 380)
-
+            .font(.subheadline)
+        } actions: {
             Button(model.workspace == nil ? "Open Workspace" : (model.isConnected ? "New Conversation" : "Reconnect")) {
                 if let workspace = model.workspace, !model.isConnected {
                     Task { await model.openWorkspace(workspace) }
@@ -502,15 +480,10 @@ struct DesktopView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .tint(Palette.ink)
-            .foregroundStyle(Palette.canvas)
-            .font(AppFont.sans(13, weight: .medium))
+            .controlSize(.regular)
             .disabled(model.isConnecting || model.isCreatingSession)
-            .padding(.top, 6)
-
-            Spacer()
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 28)
     }
 }
@@ -1631,709 +1604,4 @@ private struct PermissionView: View {
 
 struct SettingsView: View {
     var body: some View { NativeSettingsView() }
-}
-
-// MARK: - 1. Config Page
-
-private struct ConfigPageView: View {
-    @ObservedObject var config: ConfigEditor
-    let workspaceName: String?
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Provider Section
-                SettingSection(
-                    title: "Provider Connection",
-                    subtitle: "Changes stay in this draft until you choose Save Changes."
-                ) {
-                    SettingRow(label: "Provider", description: "Configured provider instance name") {
-                        HStack(spacing: 8) {
-                            Picker(
-                                "Provider",
-                                selection: Binding(
-                                    get: { config.providerName },
-                                    set: { config.selectProvider($0) }
-                                )
-                            ) {
-                                ForEach(
-                                    config.providerOptions.isEmpty ? [config.providerName] : config.providerOptions,
-                                    id: \.self
-                                ) { Text($0).tag($0) }
-                            }
-                            .labelsHidden()
-                            .frame(width: 140)
-                            Button("Add Provider", systemImage: "plus") { config.addProvider() }
-                                .font(AppFont.sans(11))
-                                .disabled(!config.canAddEntries)
-                                .help(
-                                    config.canAddEntries
-                                        ? "Create a provider and its first model"
-                                        : "Save the first provider and model before adding another")
-                        }
-                    }
-                    Divider().background(Palette.rule)
-
-                    SettingRow(label: "Authentication", description: "Use an API key or sign in with a ChatGPT account")
-                    {
-                        Picker(
-                            "Authentication",
-                            selection: Binding(
-                                get: { config.authMode },
-                                set: { config.selectAuthMode($0) }
-                            )
-                        ) {
-                            Text("API Key").tag("api_key")
-                            Text("ChatGPT Login").tag("chatgpt")
-                        }
-                        .labelsHidden()
-                        .frame(width: 180)
-                    }
-                    Divider().background(Palette.rule)
-
-                    SettingRow(label: "API Protocol", description: "Payload format used to talk to the provider") {
-                        Picker(
-                            "API Protocol", selection: Binding(get: { config.apiType }, set: { config.setAPIType($0) })
-                        ) {
-                            let types = ["open_ai_responses", "open_ai_chat_completions", "anthropic_messages"]
-                            if !types.contains(config.apiType) { Text(config.apiType).tag(config.apiType) }
-                            Text("OpenAI Responses").tag("open_ai_responses")
-                            Text("OpenAI Chat Completions").tag("open_ai_chat_completions")
-                            Text("Anthropic Messages").tag("anthropic_messages")
-                        }
-                        .labelsHidden()
-                        .frame(width: 220)
-                        .disabled(config.authMode == "chatgpt")
-                    }
-                    Divider().background(Palette.rule)
-
-                    SettingRow(label: "Base URL", description: "Target endpoint root URL") {
-                        TextField("https://api.openai.com/v1", text: $config.baseURL)
-                            .accessibilityLabel("Base URL")
-                            .font(AppFont.code(12))
-                            .frame(width: 240)
-                            .disabled(config.authMode == "chatgpt")
-                    }
-                    Divider().background(Palette.rule)
-
-                    if config.authMode == "chatgpt" {
-                        SettingRow(
-                            label: "ChatGPT Account",
-                            description: "OAuth credentials are stored in your local Arabica home"
-                        ) {
-                            HStack(spacing: 10) {
-                                Image(
-                                    systemName: config.chatGPTConnected ? "checkmark.circle.fill" : "person.crop.circle"
-                                )
-                                .foregroundStyle(config.chatGPTConnected ? Color.green : Palette.muted)
-                                Text(config.chatGPTConnected ? "Connected" : "Not connected")
-                                    .font(AppFont.sans(12))
-                                Button(config.chatGPTAuthButtonTitle) {
-                                    if config.chatGPTConnected {
-                                        config.disconnectChatGPT()
-                                    } else {
-                                        config.connectChatGPT()
-                                    }
-                                }
-                                .disabled(!config.canChangeChatGPTConnection)
-                                .help(config.chatGPTAuthHelp)
-                            }
-                        }
-                    } else {
-                        SettingRow(
-                            label: "API Key Variable",
-                            description: "Recommended: name of the environment variable containing your key"
-                        ) {
-                            TextField("ARABICA_PROVIDER_PRIMARY_API_KEY", text: $config.apiKeyEnv)
-                                .accessibilityLabel("API Key Variable")
-                                .font(AppFont.code(11))
-                                .frame(width: 240)
-                        }
-                        Divider().background(Palette.rule)
-
-                        SettingRow(
-                            label: "API Key",
-                            description: "Optional fallback stored in config.toml with owner-only file access"
-                        ) {
-                            HStack(spacing: 8) {
-                                SecureField(
-                                    config.hasSavedKey && !config.clearSavedKey ? "•••••••••••• (Saved)" : "sk-...",
-                                    text: $config.apiKey
-                                )
-                                .accessibilityLabel("API Key")
-                                .font(AppFont.code(12))
-                                .frame(width: 170)
-                                if config.hasSavedKey {
-                                    Toggle("Remove saved key", isOn: $config.clearSavedKey)
-                                        .font(AppFont.sans(11))
-                                }
-                            }
-                        }
-                    }
-                    Divider().background(Palette.rule)
-
-                    SettingRow(label: "Reasoning Effort", description: "Thinking / reasoning token budget level") {
-                        Picker("Reasoning Effort", selection: $config.thinking) {
-                            Text("Default").tag("")
-                            let values = ConfigEditor.supportedThinkingValues(apiType: config.apiType)
-                            if !config.thinking.isEmpty, !values.contains(config.thinking) {
-                                Text("\(config.thinking) (unsupported)").tag(config.thinking)
-                            }
-                            ForEach(values, id: \.self) { Text($0).tag($0) }
-                        }
-                        .labelsHidden()
-                        .frame(width: 140)
-                    }
-                }
-
-                // Model Aliases Section
-                SettingSection(
-                    title: "Models for \(config.providerName)",
-                    subtitle: "Choose a model alias, then set the provider's exact model ID."
-                ) {
-                    SettingRow(label: "Alias", description: "Routing alias mapped to this model") {
-                        HStack(spacing: 8) {
-                            Picker(
-                                "Model Alias",
-                                selection: Binding(
-                                    get: { config.modelAlias },
-                                    set: { config.selectModel($0) }
-                                )
-                            ) {
-                                if config.modelAlias.isEmpty { Text("No models").tag("") }
-                                ForEach(config.modelsForSelectedProvider, id: \.self) { Text($0).tag($0) }
-                            }
-                            .labelsHidden()
-                            .frame(width: 140)
-                            Button("Add Model", systemImage: "plus") { config.addModel() }
-                                .font(AppFont.sans(11))
-                                .disabled(!config.canAddEntries)
-                        }
-                    }
-                    Divider().background(Palette.rule)
-                    SettingRow(label: "Model ID", description: "Exact model identifier accepted by this provider") {
-                        TextField("Enter a model ID", text: $config.modelID)
-                            .accessibilityLabel("Model ID")
-                            .font(AppFont.code(12))
-                            .frame(width: 240)
-                            .disabled(config.modelAlias.isEmpty)
-                    }
-                    Divider().background(Palette.rule)
-
-                    SettingRow(
-                        label: "Discover Models",
-                        description: "Fetch available models from this provider and register them"
-                    ) {
-                        Button {
-                            config.syncModels()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if config.isSyncingModels {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                }
-                                Text(config.isSyncingModels ? "Syncing…" : "Sync Provider Models")
-                            }
-                        }
-                        .font(AppFont.sans(11))
-                        .disabled(
-                            config.isSyncingModels || config.isChatGPTAuthRunning || config.providerName.isEmpty
-                                || config.hasUnsavedChanges
-                        )
-                        .help(
-                            config.hasUnsavedChanges
-                                ? "Save Changes or discard your draft before syncing provider models."
-                                : "Discover and register models from the selected provider.")
-                    }
-                }
-
-                // Desktop Context Section
-                SettingSection(title: "Client & Workspace Context") {
-                    SettingRow(label: "Agent Process", description: "Active agent protocol process host") {
-                        Text("Bundled ACP").font(AppFont.code(12)).foregroundStyle(Palette.ink)
-                    }
-                    Divider().background(Palette.rule)
-                    SettingRow(label: "Current Workspace", description: "Directory root selected in the main window") {
-                        Text(workspaceName ?? "None selected").font(AppFont.code(12)).foregroundStyle(Palette.muted)
-                    }
-                }
-            }
-            .padding(20)
-        }
-        .textFieldStyle(.roundedBorder)
-    }
-}
-
-// MARK: - 2. Policy Page (Configured & Evolved Policies with Flow Breakdown)
-
-private struct PolicyPageView: View {
-    @ObservedObject var config: ConfigEditor
-    @ObservedObject var evaluation: EvaluationModel
-
-    @State private var policyCategory: PolicyCategory = .configured
-    @State private var selectedPolicyID: String = ""
-
-    private enum PolicyCategory: String, CaseIterable, Identifiable {
-        case configured = "Configured Policies"
-        case candidate = "Evolved Candidates"
-        var id: String { rawValue }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Category & Policy Selector Header
-            VStack(spacing: 12) {
-                Picker("Policy Category", selection: $policyCategory) {
-                    ForEach(PolicyCategory.allCases) { cat in
-                        Text(cat.rawValue).tag(cat)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                HStack(spacing: 10) {
-                    Text("Select Policy:")
-                        .font(AppFont.sans(12, weight: .medium))
-                        .foregroundStyle(Palette.ink)
-                    Picker("Policy", selection: $selectedPolicyID) {
-                        if policyCategory == .configured {
-                            if config.configuredPolicies.isEmpty { Text("No configured policies").tag("") }
-                            ForEach(config.configuredPolicies) { item in
-                                Text(item.id + (item.id == config.defaultPolicy ? " (Default)" : "")).tag(item.id)
-                            }
-                        } else {
-                            let records = evaluation.snapshot?.policies ?? []
-                            if !records.isEmpty {
-                                ForEach(records) { record in
-                                    Text("\(record.policy_id) v\(record.version) [\(record.status)]").tag(record.id)
-                                }
-                            } else {
-                                Text("No candidates available").tag("")
-                            }
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-
-                    if policyCategory == .configured, !selectedPolicyID.isEmpty {
-                        Button(selectedPolicyID == config.defaultPolicy ? "Default Policy" : "Use as Default") {
-                            config.selectPolicy(selectedPolicyID)
-                        }
-                        .font(AppFont.sans(11))
-                        .disabled(selectedPolicyID == config.defaultPolicy)
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(Palette.raised.opacity(0.4))
-
-            Divider().background(Palette.rule)
-
-            // Policy Details & Route Distribution Flow
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if policyCategory == .configured {
-                        if let policy = config.configuredPolicies.first(where: { $0.id == selectedPolicyID })
-                            ?? config.configuredPolicies.first
-                        {
-                            configuredPolicyDetailView(policy)
-                        } else {
-                            emptyPolicyPlaceholder("No configured policies found in config.toml.")
-                        }
-                    } else {
-                        let records = evaluation.snapshot?.policies ?? []
-                        if let record = records.first(where: { $0.id == selectedPolicyID }) ?? records.first {
-                            candidatePolicyDetailView(record)
-                        } else {
-                            emptyPolicyPlaceholder(
-                                "No evolved candidates have been produced by background evaluation yet.")
-                        }
-                    }
-                }
-                .padding(20)
-            }
-        }
-        .onAppear { synchronizeSelection() }
-        .onChange(of: policyCategory) { _, _ in synchronizeSelection() }
-        .onChange(of: config.configuredPolicies.map(\.id)) { _, _ in synchronizeSelection() }
-        .onChange(of: evaluation.snapshot?.policies?.map(\.id)) { _, _ in synchronizeSelection() }
-    }
-
-    private func synchronizeSelection() {
-        let options =
-            policyCategory == .configured
-            ? config.configuredPolicies.map(\.id)
-            : evaluation.snapshot?.policies?.map(\.id) ?? []
-        guard !options.contains(selectedPolicyID) else { return }
-        selectedPolicyID =
-            policyCategory == .configured && options.contains(config.defaultPolicy)
-            ? config.defaultPolicy : options.first ?? ""
-    }
-
-    @ViewBuilder
-    private func configuredPolicyDetailView(_ policy: ConfiguredPolicyItem) -> some View {
-        SettingSection(
-            title: "Policy: \(policy.id)",
-            subtitle: "Routing allocation and state transition flow for this baseline policy"
-        ) {
-            SettingRow(label: "Policy ID", description: "Table key in [blend.policies.<id>]") {
-                Text(policy.id).font(AppFont.code(12, weight: .semibold)).foregroundStyle(Palette.ink)
-            }
-            if let ver = policy.version {
-                Divider().background(Palette.rule)
-                SettingRow(label: "Version", description: "Configured version tag") {
-                    Text("v\(ver)").font(AppFont.code(12)).foregroundStyle(Palette.muted)
-                }
-            }
-        }
-
-        // Routing Allocation Breakdown Flow
-        SettingSection(
-            title: "Routing Allocation & Transitions",
-            subtitle: "Model dispatch targets for initial requests and lifecycle execution events"
-        ) {
-            VStack(spacing: 8) {
-                FlowRouteStepRow(
-                    icon: "target",
-                    iconColor: .green,
-                    title: "Initial / Default Model",
-                    targetModel: policy.defaultModel,
-                    detail: "Dispatched at the start of each conversation turn"
-                )
-                Divider().background(Palette.rule)
-                FlowRouteStepRow(
-                    icon: "checkmark.circle.fill",
-                    iconColor: .blue,
-                    title: "After Tool Success",
-                    targetModel: policy.afterToolSuccess,
-                    detail: "Transitions immediately when a tool call finishes successfully"
-                )
-                Divider().background(Palette.rule)
-                FlowRouteStepRow(
-                    icon: "exclamationmark.triangle.fill",
-                    iconColor: .orange,
-                    title: "After Tool Error",
-                    targetModel: policy.afterToolError,
-                    detail: "Switches to stronger reasoning model when a tool encounters an error"
-                )
-                Divider().background(Palette.rule)
-                FlowRouteStepRow(
-                    icon: "arrow.counterclockwise.circle.fill",
-                    iconColor: .purple,
-                    title: "Stall Recovery Model",
-                    targetModel: policy.recoveryModel,
-                    detail: "Intervenes if the conversation makes no forward progress"
-                )
-                if let planning = policy.planningModel {
-                    Divider().background(Palette.rule)
-                    FlowRouteStepRow(
-                        icon: "map.fill",
-                        iconColor: .teal,
-                        title: "Planning Model",
-                        targetModel: planning,
-                        detail: "Dedicated model assigned for multi-step execution plans"
-                    )
-                }
-            }
-            .padding(12)
-        }
-
-        // Safeguards & Thresholds
-        SettingSection(
-            title: "Stability Safeguards",
-            subtitle: "Hysteresis step controls to prevent model thrashing"
-        ) {
-            SettingRow(
-                label: "Minimum Model Dwell Steps",
-                description: "Consecutive steps a model must retain before switching"
-            ) {
-                Text("\(policy.dwellSteps ?? 1) steps").font(AppFont.code(12)).foregroundStyle(Palette.ink)
-            }
-            Divider().background(Palette.rule)
-            SettingRow(
-                label: "Stall Recovery Trigger", description: "Unproductive steps before recovery model takes over"
-            ) {
-                Text("\(policy.stallThreshold ?? 2) steps").font(AppFont.code(12)).foregroundStyle(Palette.ink)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func candidatePolicyDetailView(_ record: EvaluationSnapshot.PolicyRecord) -> some View {
-        SettingSection(
-            title: "\(record.policy_id) (v\(record.version))",
-            subtitle: "Evolved candidate proposed by background evaluation engine"
-        ) {
-            SettingRow(label: "Lifecycle Status", description: "Evaluation candidate state") {
-                Text(record.status.uppercased())
-                    .font(AppFont.code(11, weight: .bold))
-                    .foregroundStyle(record.status == "accepted" ? Color.green : Color.orange)
-            }
-            Divider().background(Palette.rule)
-            SettingRow(label: "Evolution Reason", description: "Trigger condition detected during trajectory analysis")
-            {
-                Text(record.reason)
-                    .font(AppFont.sans(11))
-                    .foregroundStyle(Palette.muted)
-                    .multilineTextAlignment(.trailing)
-            }
-        }
-
-        // Flow breakdown
-        SettingSection(
-            title: "Candidate Routing Flow",
-            subtitle: "Model routing parameters evolved for this candidate version"
-        ) {
-            VStack(spacing: 8) {
-                FlowRouteStepRow(
-                    icon: "target",
-                    iconColor: .green,
-                    title: "Initial / Default Model",
-                    targetModel: record.policy.default_model,
-                    detail: "Candidate primary model"
-                )
-                Divider().background(Palette.rule)
-                FlowRouteStepRow(
-                    icon: "checkmark.circle.fill",
-                    iconColor: .blue,
-                    title: "After Tool Success",
-                    targetModel: record.policy.after_tool_success,
-                    detail: "Candidate post-tool success model"
-                )
-                Divider().background(Palette.rule)
-                FlowRouteStepRow(
-                    icon: "exclamationmark.triangle.fill",
-                    iconColor: .orange,
-                    title: "After Tool Error",
-                    targetModel: record.policy.after_tool_error,
-                    detail: "Candidate error recovery model"
-                )
-                Divider().background(Palette.rule)
-                FlowRouteStepRow(
-                    icon: "arrow.counterclockwise.circle.fill",
-                    iconColor: .purple,
-                    title: "Stall Recovery Model",
-                    targetModel: record.policy.recovery_model,
-                    detail: "Candidate stall intervention model"
-                )
-            }
-            .padding(12)
-        }
-
-        SettingSection(title: "Candidate Stability Settings") {
-            SettingRow(label: "Minimum Model Dwell Steps", description: "Dwell steps threshold") {
-                Text("\(record.policy.minimum_model_dwell_steps ?? 1) steps").font(AppFont.code(12)).foregroundStyle(
-                    Palette.ink)
-            }
-            Divider().background(Palette.rule)
-            SettingRow(label: "Stall Recovery Trigger", description: "No-progress threshold") {
-                Text("\(record.policy.recovery_after_no_progress_steps ?? 2) steps").font(AppFont.code(12))
-                    .foregroundStyle(Palette.ink)
-            }
-        }
-    }
-
-    private func emptyPolicyPlaceholder(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "point.3.filled.connected.trianglepath.dotted")
-                .font(.system(size: 34))
-                .foregroundStyle(Palette.muted.opacity(0.5))
-            Text(message)
-                .font(AppFont.sans(12))
-                .foregroundStyle(Palette.muted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(36)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.raised))
-    }
-}
-
-// MARK: - 3. Context Page (Tool - Skill - MCP)
-
-private struct ContextPageView: View {
-    @ObservedObject var config: ConfigEditor
-    @State private var subtab: ContextSubtab = .mcp
-
-    private enum ContextSubtab: String, CaseIterable, Identifiable {
-        case tools = "Built-in Tools"
-        case skills = "Skills"
-        case mcp = "MCP Servers"
-        var id: String { rawValue }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Context Category", selection: $subtab) {
-                ForEach(ContextSubtab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Palette.raised.opacity(0.4))
-
-            Divider().background(Palette.rule)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    switch subtab {
-                    case .tools:
-                        toolsSection
-                    case .skills:
-                        skillsSection
-                    case .mcp:
-                        mcpSection
-                    }
-                }
-                .padding(20)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var toolsSection: some View {
-        SettingSection(
-            title: "Native Execution Tools",
-            subtitle: "System capabilities managed directly by the Structure runtime runner"
-        ) {
-            SettingRow(label: "Filesystem Execution", description: "read_file, write_file, edit_file, list_dir, grep") {
-                Text("Built in").font(AppFont.code(11)).foregroundStyle(Palette.muted)
-            }
-            Divider().background(Palette.rule)
-            SettingRow(label: "Terminal & Subprocess", description: "Persistent interactive bash sessions with PTY") {
-                Text("Runtime managed").font(AppFont.code(11)).foregroundStyle(Palette.muted)
-            }
-            Divider().background(Palette.rule)
-            SettingRow(label: "Session Short Memory", description: "Prefix cache, bounded short-memory projection & GC")
-            {
-                Text("Runtime managed").font(AppFont.code(11)).foregroundStyle(Palette.muted)
-            }
-            Divider().background(Palette.rule)
-            SettingRow(label: "Context Unfold Engine", description: "Lazy discovery of folded tool directories") {
-                Text("Runtime managed").font(AppFont.code(11)).foregroundStyle(Palette.muted)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var skillsSection: some View {
-        // Configured Roots
-        SettingSection(
-            title: "Skill Roots",
-            subtitle: "Configured directory paths scanned for SKILL.md bundles"
-        ) {
-            if config.skillRoots.isEmpty {
-                SettingRow(
-                    label: "No Roots Configured", description: "Add `[skills] roots = [\"skills\"]` to config.toml"
-                ) {
-                    Text("None").font(AppFont.sans(11)).foregroundStyle(Palette.muted)
-                }
-            } else {
-                ForEach(config.skillRoots) { root in
-                    SettingRow(label: root.rawPath, description: root.resolvedURL.path) {
-                        if root.exists {
-                            Button("Reveal in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([root.resolvedURL])
-                            }
-                            .font(AppFont.sans(11))
-                        } else {
-                            Text("Missing").font(AppFont.sans(11)).foregroundStyle(Color.orange)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Discovered Skills
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Discovered Skills (\(config.discoveredSkills.count))")
-                .font(AppFont.sans(13, weight: .semibold))
-                .foregroundStyle(Palette.ink)
-
-            if config.discoveredSkills.isEmpty {
-                SettingCard {
-                    Text("No skills detected in configured roots. Create folders containing a `SKILL.md` file.")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-            } else {
-                ForEach(config.discoveredSkills) { skill in
-                    SettingCard(title: skill.name, badge: "SKILL", badgeColor: .purple) {
-                        if !skill.description.isEmpty {
-                            Text(skill.description)
-                                .font(AppFont.sans(11))
-                                .foregroundStyle(Palette.muted)
-                        }
-                        HStack {
-                            Text(skill.directoryURL.path)
-                                .font(AppFont.code(10))
-                                .foregroundStyle(Palette.muted.opacity(0.8))
-                                .lineLimit(1)
-                            Spacer()
-                            Button("Open") {
-                                NSWorkspace.shared.activateFileViewerSelecting([skill.directoryURL])
-                            }
-                            .font(AppFont.sans(11))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var mcpSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Configured MCP Servers (\(config.mcpServers.count))")
-                .font(AppFont.sans(13, weight: .semibold))
-                .foregroundStyle(Palette.ink)
-
-            if config.mcpServers.isEmpty {
-                SettingCard {
-                    Text("No MCP servers configured. Add `[[mcp]]` tables to config.toml.")
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                }
-            } else {
-                ForEach(config.mcpServers) { server in
-                    SettingCard(
-                        title: server.name,
-                        badge: server.transportType.uppercased(),
-                        badgeColor: server.transportType == "stdio" ? .blue : .green
-                    ) {
-                        if let cmd = server.command {
-                            SettingRow(label: "Command", description: "Executable with CLI arguments") {
-                                Text(([cmd] + server.args).joined(separator: " "))
-                                    .font(AppFont.code(11))
-                                    .foregroundStyle(Palette.ink)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        if let url = server.url {
-                            SettingRow(label: "Endpoint", description: "HTTP SSE endpoint") {
-                                Text(url)
-                                    .font(AppFont.code(11))
-                                    .foregroundStyle(Palette.ink)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        if !server.envKeys.isEmpty {
-                            SettingRow(
-                                label: "Environment Variables",
-                                description: "Configured variable names; values are hidden"
-                            ) {
-                                Text(server.envKeys.joined(separator: ", "))
-                                    .font(AppFont.code(10))
-                                    .foregroundStyle(Palette.muted)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

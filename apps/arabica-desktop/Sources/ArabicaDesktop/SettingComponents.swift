@@ -1,89 +1,7 @@
+import AppKit
 import SwiftUI
 
-struct SettingsWindowGuard: NSViewRepresentable {
-    @ObservedObject var config: ConfigEditor
-
-    func makeCoordinator() -> Coordinator { Coordinator(config: config) }
-
-    func makeNSView(context: Context) -> SettingsWindowGuardView {
-        let view = SettingsWindowGuardView()
-        let coordinator = context.coordinator
-        view.windowChanged = { [weak coordinator] window in coordinator?.attach(to: window) }
-        return view
-    }
-
-    func updateNSView(_ nsView: SettingsWindowGuardView, context: Context) {
-        context.coordinator.attach(to: nsView.window)
-    }
-
-    static func dismantleNSView(_ nsView: SettingsWindowGuardView, coordinator: Coordinator) {
-        coordinator.attach(to: nil)
-    }
-
-    final class Coordinator: NSObject, NSWindowDelegate {
-        private let config: ConfigEditor
-        private weak var window: NSWindow?
-        private weak var previousDelegate: NSWindowDelegate?
-        private var closePromptIsVisible = false
-
-        init(config: ConfigEditor) { self.config = config }
-
-        @MainActor
-        func attach(to newWindow: NSWindow?) {
-            if window !== newWindow {
-                if window?.delegate === self { window?.delegate = previousDelegate }
-                window = newWindow
-                previousDelegate = newWindow?.delegate
-            }
-            guard let window else { return }
-            if window.delegate !== self {
-                previousDelegate = window.delegate
-                window.delegate = self
-            }
-            window.isDocumentEdited = config.hasUnsavedChanges
-        }
-
-        func windowShouldClose(_ sender: NSWindow) -> Bool {
-            guard config.hasUnsavedChanges else {
-                return previousDelegate?.windowShouldClose?(sender) ?? true
-            }
-            guard !closePromptIsVisible else { return false }
-            closePromptIsVisible = true
-            let alert = NSAlert()
-            alert.messageText = "Save configuration changes?"
-            alert.informativeText = "Save your changes before closing Settings, or discard them to keep the configuration on disk."
-            alert.addButton(withTitle: "Save Changes")
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: "Discard Changes")
-            alert.beginSheetModal(for: sender) { [weak self, weak sender] response in
-                guard let self else { return }
-                self.closePromptIsVisible = false
-                switch response {
-                case .alertFirstButtonReturn:
-                    guard self.config.save() else { return }
-                case .alertThirdButtonReturn:
-                    self.config.reload()
-                default:
-                    return
-                }
-                sender?.isDocumentEdited = false
-                // Let the sheet detach before closing without reentering the close guard.
-                DispatchQueue.main.async { [weak sender] in
-                    sender?.close()
-                }
-            }
-            return false
-        }
-
-        override func responds(to selector: Selector!) -> Bool {
-            super.responds(to: selector) || previousDelegate?.responds(to: selector) == true
-        }
-
-        override func forwardingTarget(for selector: Selector!) -> Any? {
-            previousDelegate?.responds(to: selector) == true ? previousDelegate : super.forwardingTarget(for: selector)
-        }
-    }
-}
+// MARK: - Window Guard View
 
 final class SettingsWindowGuardView: NSView {
     var windowChanged: ((NSWindow?) -> Void)?
@@ -94,153 +12,6 @@ final class SettingsWindowGuardView: NSView {
     }
 }
 
-// MARK: - Setting Section Container
-
-struct SettingSection<Content: View>: View {
-    let title: String
-    var subtitle: String?
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(AppFont.sans(13, weight: .semibold))
-                    .foregroundStyle(Palette.ink)
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(AppFont.sans(11))
-                        .foregroundStyle(Palette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            VStack(spacing: 1) {
-                content
-            }
-            .background(RoundedRectangle(cornerRadius: 8).fill(Palette.raised))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
-        }
-    }
-}
-
-// MARK: - Setting Row
-
-struct SettingRow<Trailing: View>: View {
-    let label: String
-    var description: String?
-    @ViewBuilder let trailing: Trailing
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(AppFont.sans(12, weight: .medium))
-                    .foregroundStyle(Palette.ink)
-                if let description, !description.isEmpty {
-                    Text(description)
-                        .font(AppFont.sans(10))
-                        .foregroundStyle(Palette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 16)
-            trailing
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-}
-
-// MARK: - Setting Card
-
-struct SettingCard<Content: View>: View {
-    var title: String?
-    var badge: String?
-    var badgeColor: Color = .blue
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if title != nil || badge != nil {
-                HStack(alignment: .center) {
-                    if let title {
-                        Text(title)
-                            .font(AppFont.code(13, weight: .semibold))
-                            .foregroundStyle(Palette.ink)
-                    }
-                    Spacer()
-                    if let badge {
-                        Text(badge)
-                            .font(AppFont.code(10, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(badgeColor.opacity(0.18)))
-                            .foregroundStyle(badgeColor)
-                    }
-                }
-            }
-            content
-        }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.raised))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
-    }
-}
-
-// MARK: - Flow Route Step Row
-
-struct FlowRouteStepRow: View {
-    let icon: String
-    let iconColor: Color
-    let title: String
-    let targetModel: String?
-    var detail: String?
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(iconColor)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(AppFont.sans(11, weight: .medium))
-                    .foregroundStyle(Palette.ink)
-                if let detail {
-                    Text(detail)
-                        .font(AppFont.sans(10))
-                        .foregroundStyle(Palette.muted)
-                }
-            }
-            Spacer()
-            if let targetModel, !targetModel.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Palette.muted)
-                    Text(targetModel)
-                        .font(AppFont.code(11, weight: .semibold))
-                        .foregroundStyle(Palette.ink)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Palette.codeBg))
-                }
-            } else {
-                Text("Default / None")
-                    .font(AppFont.sans(10))
-                    .foregroundStyle(Palette.muted.opacity(0.7))
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-// MARK: - Palette & Font Reference Helpers
-
-extension Palette {
-    static var cardBorder: Color { ThemeManager.shared.currentColors.rule }
-}
-
 // MARK: - Appearance Page View
 
 struct AppearancePageView: View {
@@ -248,267 +19,221 @@ struct AppearancePageView: View {
     @State private var themeToDelete: ThemeDefinition?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // 1. Theme Presets & Custom Themes
-                SettingSection(title: "Themes", subtitle: "Select a built-in theme or create your own custom palette") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        // Theme cards grid
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 10)], spacing: 10) {
-                            ForEach(theme.allThemes) { item in
-                                let isSelected = theme.activeThemeID == item.id
-                                Button {
-                                    theme.selectTheme(item)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack(spacing: 5) {
-                                            Circle().fill(Color(hex: item.canvasHex)).frame(width: 14, height: 14)
-                                                .overlay(Circle().stroke(Palette.rule, lineWidth: 1))
-                                            Circle().fill(Color(hex: item.sidebarHex)).frame(width: 14, height: 14)
-                                                .overlay(Circle().stroke(Palette.rule, lineWidth: 1))
-                                            Circle().fill(Color(hex: item.accentHex)).frame(width: 14, height: 14)
-                                            Spacer()
-                                            if isSelected {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .font(.system(size: 12))
-                                                    .foregroundStyle(Palette.accent)
-                                            }
-                                        }
-
-                                        Text(item.name)
-                                            .font(AppFont.sans(11.5, weight: isSelected ? .semibold : .medium))
-                                            .foregroundStyle(isSelected ? Palette.ink : Palette.muted)
-                                            .lineLimit(1)
-
-                                        HStack(spacing: 4) {
-                                            Text(item.isDark ? "Dark" : "Light")
-                                                .font(AppFont.sans(9.5))
-                                                .foregroundStyle(Palette.subtle)
-                                            if item.isCustom {
-                                                Text("• Custom")
-                                                    .font(AppFont.sans(9.5))
-                                                    .foregroundStyle(Palette.accent)
-                                            }
+        Form {
+            Section("Themes") {
+                VStack(alignment: .leading, spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 10)], spacing: 10) {
+                        ForEach(theme.allThemes) { item in
+                            let isSelected = theme.activeThemeID == item.id
+                            Button {
+                                theme.selectTheme(item)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 5) {
+                                        Circle().fill(Color(hex: item.canvasHex)).frame(width: 14, height: 14)
+                                            .overlay(Circle().stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+                                        Circle().fill(Color(hex: item.sidebarHex)).frame(width: 14, height: 14)
+                                            .overlay(Circle().stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+                                        Circle().fill(Color(hex: item.accentHex)).frame(width: 14, height: 14)
+                                        Spacer()
+                                        if isSelected {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(Color.accentColor)
                                         }
                                     }
-                                    .padding(10)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(isSelected ? Palette.raised : Palette.card, in: RoundedRectangle(cornerRadius: 8))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(isSelected ? Palette.accent : Palette.rule, lineWidth: isSelected ? 1.5 : 1)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(item.name)
-                                .accessibilityAddTraits(isSelected ? .isSelected : [])
-                            }
-                        }
 
-                        // Action: Create Custom Theme
-                        HStack(spacing: 10) {
-                            Button {
-                                let created = theme.createCustomTheme(name: "Custom Theme \(theme.customThemes.count + 1)")
-                                theme.selectTheme(created)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "plus.circle.fill")
-                                    Text("New Custom Theme")
+                                    Text(item.name)
+                                        .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
+                                        .foregroundStyle(isSelected ? .primary : .secondary)
+                                        .lineLimit(1)
+
+                                    HStack(spacing: 4) {
+                                        Text(item.isDark ? "Dark" : "Light")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                        if item.isCustom {
+                                            Text("• Custom")
+                                                .font(.caption2)
+                                                .foregroundStyle(Color.accentColor)
+                                        }
+                                    }
                                 }
-                                .font(AppFont.sans(11.5, weight: .medium))
-                                .foregroundStyle(Palette.accent)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    isSelected
+                                        ? Color.accentColor.opacity(0.12)
+                                        : Color(nsColor: .controlBackgroundColor),
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(
+                                            isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                                            lineWidth: isSelected ? 1.5 : 1
+                                        )
+                                )
                             }
                             .buttonStyle(.plain)
-
-                            Spacer()
-
-                            Picker("Mode", selection: $theme.mode) {
-                                ForEach(ThemeMode.allCases) { mode in
-                                    Label(mode.rawValue, systemImage: mode.icon).tag(mode)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 200)
-                        }
-                        .padding(.top, 4)
-                    }
-                    .padding(14)
-                }
-
-                // 2. Custom Theme Editor (Active only when editing a custom theme)
-                if theme.activeTheme.isCustom {
-                    customThemeEditorSection
-                }
-
-                // 3. Tool Icons Style
-                SettingSection(title: "Tool Icons", subtitle: "Icon pack and visual rendering for agent tool calls") {
-                    SettingRow(label: "Icon Style", description: "Switch between Oli vector icons, Apple SF Symbols, or custom glyph styles") {
-                        Picker("Icon Style", selection: $theme.iconStyle) {
-                            ForEach(ToolIconStyle.allCases) { style in
-                                Text(style.rawValue).tag(style)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 180)
-                    }
-                }
-
-                // 4. Typography (Normal, Event, Message, Code)
-                SettingSection(title: "Typography", subtitle: "Independent font families for Normal, Event, Message, and Code with custom font input") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        FontCategorySettingRow(
-                            title: "Normal Font",
-                            subtitle: "Sidebar, navigation, buttons, titles & UI chrome",
-                            placeholder: "e.g. System, SF Pro, Inter",
-                            fontName: $theme.fontNormal,
-                            presets: ["System", "SF Pro", "Inter", "Helvetica Neue", "System Rounded"],
-                            sampleFont: AppFont.normal(12),
-                            sampleText: "Arabica Workspace • Project Navigation & Controls"
-                        )
-
-                        Divider().overlay(Palette.rule)
-
-                        FontCategorySettingRow(
-                            title: "Event Font",
-                            subtitle: "Tool executions, process events, thought & plan status",
-                            placeholder: "e.g. System, JetBrains Mono, Fira Code",
-                            fontName: $theme.fontEvent,
-                            presets: ["System", "JetBrains Mono", "Fira Code", "SF Pro", "Menlo"],
-                            sampleFont: AppFont.event(12),
-                            sampleText: "[Tool] Execute: cargo test --workspace (Running…)"
-                        )
-
-                        Divider().overlay(Palette.rule)
-
-                        FontCategorySettingRow(
-                            title: "Message Font",
-                            subtitle: "Composer input draft & conversation markdown dialog",
-                            placeholder: "e.g. System, Georgia, Inter, SF Pro",
-                            fontName: $theme.fontMessage,
-                            presets: ["System", "Inter", "Georgia", "New York (Serif)", "SF Pro"],
-                            sampleFont: AppFont.message(12.5),
-                            sampleText: "How can I help you design and build your project today?"
-                        )
-
-                        Divider().overlay(Palette.rule)
-
-                        FontCategorySettingRow(
-                            title: "Code Font",
-                            subtitle: "Code blocks, file paths, terminal output & diff blocks",
-                            placeholder: "e.g. System Monospaced, JetBrains Mono",
-                            fontName: $theme.fontCode,
-                            presets: ["System Monospaced", "JetBrains Mono", "Fira Code", "Menlo", "Courier New", "Source Code Pro"],
-                            sampleFont: AppFont.code(12),
-                            sampleText: "struct Agent<T: Runner> { let runtime: T }"
-                        )
-
-                        Divider().overlay(Palette.rule)
-
-                        SettingRow(label: "Font Size Adjust", description: "Fine-tune UI font scale (\(theme.fontSizeDelta >= 0 ? "+\(Int(theme.fontSizeDelta))" : "\(Int(theme.fontSizeDelta))") pt)") {
-                            HStack(spacing: 8) {
-                                Button {
-                                    if theme.fontSizeDelta > -3 { theme.fontSizeDelta -= 1 }
-                                } label: {
-                                    Image(systemName: "minus")
-                                        .font(.system(size: 11, weight: .semibold))
-                                }
-                                .buttonStyle(.plain)
-                                .frame(width: 24, height: 24)
-                                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
-
-                                Text("\(theme.fontSizeDelta >= 0 ? "+" : "")\(Int(theme.fontSizeDelta))")
-                                    .font(AppFont.code(12))
-                                    .frame(width: 28)
-
-                                Button {
-                                    if theme.fontSizeDelta < 4 { theme.fontSizeDelta += 1 }
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 11, weight: .semibold))
-                                }
-                                .buttonStyle(.plain)
-                                .frame(width: 24, height: 24)
-                                .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
-                            }
+                            .accessibilityLabel(item.name)
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
                         }
                     }
-                }
 
-                // 5. Live Preview Card
-                SettingSection(title: "Live Preview", subtitle: "Instant preview of active theme colors, fonts, and tool icons") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        // User message preview (Message Font)
-                        HStack {
-                            Spacer()
-                            Text("Let's test theme colors and fonts!")
-                                .font(AppFont.message(13))
-                                .foregroundStyle(Palette.ink)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(Palette.userBubble, in: RoundedRectangle(cornerRadius: 12))
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.rule, lineWidth: 1))
+                    HStack(spacing: 12) {
+                        Button {
+                            let created = theme.createCustomTheme(name: "Custom Theme \(theme.customThemes.count + 1)")
+                            theme.selectTheme(created)
+                        } label: {
+                            Label("New Custom Theme", systemImage: "plus")
                         }
 
-                        // Assistant preview (Message Font)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Arabica assistant responding in **\(theme.activeTheme.name)** with custom 4-way typography.")
-                                .font(AppFont.message(13))
-                                .foregroundStyle(Palette.ink)
+                        Spacer()
 
-                            // Tool Card preview (Event Font + Code Font)
-                            HStack(spacing: 8) {
-                                ToolIconView(kind: "read", title: "read file", size: 13)
-                                Text("Read file")
-                                    .font(AppFont.event(12, weight: .medium))
-                                    .foregroundStyle(Palette.ink)
-                                Text("src/theme.rs")
-                                    .font(AppFont.code(11.5))
-                                    .foregroundStyle(Palette.muted)
-                                Spacer()
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(AppFont.normal(11))
-                                    .foregroundStyle(Color.green.opacity(0.85))
+                        Picker("Mode", selection: $theme.mode) {
+                            ForEach(ThemeMode.allCases) { mode in
+                                Label(mode.rawValue, systemImage: mode.icon).tag(mode)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
-
-                            // Sidebar sample preview (Normal Font)
-                            HStack(spacing: 8) {
-                                Image(systemName: "folder")
-                                    .font(AppFont.normal(11))
-                                    .foregroundStyle(Palette.ink.opacity(0.85))
-                                Text("Sidebar Sample")
-                                    .font(AppFont.normal(11.5, weight: .medium))
-                                    .foregroundStyle(Palette.ink)
-                                Spacer()
-                                Text("Selected")
-                                    .font(AppFont.code(10))
-                                    .foregroundStyle(Palette.accent)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Palette.selectionBg, in: RoundedRectangle(cornerRadius: 4))
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Palette.sidebar, in: RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule, lineWidth: 1))
                         }
-                        .padding(.top, 4)
+                        .pickerStyle(.segmented)
+                        .frame(width: 220)
                     }
-                    .padding(14)
+                    .padding(.top, 4)
                 }
             }
-            .padding(20)
+
+            if theme.activeTheme.isCustom {
+                customThemeEditorSection
+            }
+
+            Section("Tool Icons") {
+                Picker("Icon Style", selection: $theme.iconStyle) {
+                    ForEach(ToolIconStyle.allCases) { style in
+                        Text(style.rawValue).tag(style)
+                    }
+                }
+            }
+
+            Section("Typography") {
+                fontFamilyRow(
+                    title: "Normal Font",
+                    subtitle: "Sidebar, navigation, buttons, titles & UI chrome",
+                    fontName: $theme.fontNormal,
+                    presets: ["System", "SF Pro", "Inter", "Helvetica Neue", "System Rounded"]
+                )
+
+                fontFamilyRow(
+                    title: "Event Font",
+                    subtitle: "Tool executions, process events, thought & plan status",
+                    fontName: $theme.fontEvent,
+                    presets: ["System", "JetBrains Mono", "Fira Code", "SF Pro", "Menlo"]
+                )
+
+                fontFamilyRow(
+                    title: "Message Font",
+                    subtitle: "Composer input draft & conversation markdown dialog",
+                    fontName: $theme.fontMessage,
+                    presets: ["System", "Inter", "Georgia", "New York (Serif)", "SF Pro"]
+                )
+
+                fontFamilyRow(
+                    title: "Code Font",
+                    subtitle: "Code blocks, file paths, terminal output & diff blocks",
+                    fontName: $theme.fontCode,
+                    presets: ["System Monospaced", "JetBrains Mono", "Fira Code", "Menlo", "Courier New", "Source Code Pro"]
+                )
+
+                LabeledContent("Font Size Adjust") {
+                    HStack(spacing: 8) {
+                        Button {
+                            if theme.fontSizeDelta > -3 { theme.fontSizeDelta -= 1 }
+                        } label: {
+                            Image(systemName: "minus")
+                        }
+                        .disabled(theme.fontSizeDelta <= -3)
+
+                        Text("\(theme.fontSizeDelta >= 0 ? "+" : "")\(Int(theme.fontSizeDelta)) pt")
+                            .font(.system(.body, design: .monospaced))
+                            .frame(width: 50)
+
+                        Button {
+                            if theme.fontSizeDelta < 4 { theme.fontSizeDelta += 1 }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .disabled(theme.fontSizeDelta >= 4)
+                    }
+                }
+            }
+
+            Section("Live Preview") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Spacer()
+                        Text("Let's test theme colors and fonts!")
+                            .font(AppFont.message(13))
+                            .foregroundStyle(Palette.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Palette.userBubble, in: RoundedRectangle(cornerRadius: 10))
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Arabica assistant responding in **\(theme.activeTheme.name)**.")
+                            .font(AppFont.message(13))
+                            .foregroundStyle(Palette.ink)
+
+                        HStack(spacing: 8) {
+                            ToolIconView(kind: "read", title: "read file", size: 13)
+                            Text("Read file")
+                                .font(AppFont.event(12, weight: .medium))
+                                .foregroundStyle(Palette.ink)
+                            Text("src/theme.rs")
+                                .font(AppFont.code(11.5))
+                                .foregroundStyle(Palette.muted)
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.green)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Palette.raised, in: RoundedRectangle(cornerRadius: 8))
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder")
+                                .font(AppFont.normal(11))
+                                .foregroundStyle(Palette.ink.opacity(0.85))
+                            Text("Sidebar Sample")
+                                .font(AppFont.normal(11.5, weight: .medium))
+                                .foregroundStyle(Palette.ink)
+                            Spacer()
+                            Text("Selected")
+                                .font(AppFont.code(10))
+                                .foregroundStyle(Palette.accent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Palette.selectionBg, in: RoundedRectangle(cornerRadius: 4))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Palette.sidebar, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                .padding(.vertical, 4)
+            }
         }
-        .confirmationDialog("Delete custom theme?", isPresented: Binding(
-            get: { themeToDelete != nil },
-            set: { if !$0 { themeToDelete = nil } }
-        ), titleVisibility: .visible, presenting: themeToDelete) { item in
+        .formStyle(.grouped)
+        .confirmationDialog(
+            "Delete Custom Theme?",
+            isPresented: Binding(
+                get: { themeToDelete != nil },
+                set: { if !$0 { themeToDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: themeToDelete
+        ) { item in
             Button("Delete \(item.name)", role: .destructive) {
                 theme.deleteCustomTheme(id: item.id)
                 themeToDelete = nil
@@ -519,207 +244,125 @@ struct AppearancePageView: View {
         }
     }
 
-    // MARK: - Custom Theme Editor Section
-
-    private var customThemeEditorSection: some View {
-        SettingSection(title: "Customize Theme: \(theme.activeTheme.name)", subtitle: "Modify colors, base appearance, and palette values") {
-            VStack(spacing: 1) {
-                // Name Row
-                SettingRow(label: "Theme Name", description: "Display name for this custom theme") {
-                    TextField("Theme Name", text: Binding(
-                        get: { theme.activeTheme.name },
-                        set: {
-                            var t = theme.activeTheme
-                            t.name = $0
-                            theme.updateCustomTheme(t)
-                        }
-                    ))
+    @ViewBuilder
+    private func fontFamilyRow(
+        title: String,
+        subtitle: String,
+        fontName: Binding<String>,
+        presets: [String]
+    ) -> some View {
+        LabeledContent {
+            HStack(spacing: 8) {
+                TextField("Font Family", text: fontName)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                }
-
-                // Appearance Base
-                SettingRow(label: "Appearance Base", description: "Base styling for traffic lights and menus") {
-                    Picker("Base Mode", selection: Binding(
-                        get: { theme.activeTheme.isDark },
-                        set: {
-                            var t = theme.activeTheme
-                            t.isDark = $0
-                            theme.updateCustomTheme(t)
-                        }
-                    )) {
-                        Text("Dark").tag(true)
-                        Text("Light").tag(false)
+                    .frame(width: 150)
+                Menu {
+                    ForEach(presets, id: \.self) { preset in
+                        Button(preset) { fontName.wrappedValue = preset }
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 160)
+                } label: {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
                 }
-
-                // Color: Canvas Background
-                SettingRow(label: "Canvas Background", description: "Main chat background color") {
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: theme.activeTheme.canvasHex) },
-                        set: {
-                            var t = theme.activeTheme
-                            t.canvasHex = $0.toHex()
-                            theme.updateCustomTheme(t)
-                        }
-                    ), supportsOpacity: false)
-                }
-
-                // Color: Sidebar Background
-                SettingRow(label: "Sidebar Background", description: "Project list sidebar background") {
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: theme.activeTheme.sidebarHex) },
-                        set: {
-                            var t = theme.activeTheme
-                            t.sidebarHex = $0.toHex()
-                            theme.updateCustomTheme(t)
-                        }
-                    ), supportsOpacity: false)
-                }
-
-                // Color: Card Background
-                SettingRow(label: "Card / Input Background", description: "Background for cards and composer") {
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: theme.activeTheme.cardHex) },
-                        set: {
-                            var t = theme.activeTheme
-                            t.cardHex = $0.toHex()
-                            t.composerBgHex = $0.toHex()
-                            theme.updateCustomTheme(t)
-                        }
-                    ), supportsOpacity: false)
-                }
-
-                // Color: Text (Ink)
-                SettingRow(label: "Primary Text (Ink)", description: "Main text and headings") {
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: theme.activeTheme.inkHex) },
-                        set: {
-                            var t = theme.activeTheme
-                            t.inkHex = $0.toHex()
-                            theme.updateCustomTheme(t)
-                        }
-                    ), supportsOpacity: false)
-                }
-
-                // Color: Accent Color
-                SettingRow(label: "Accent Color", description: "Primary brand accent and highlights") {
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: theme.activeTheme.accentHex) },
-                        set: {
-                            var t = theme.activeTheme
-                            t.accentHex = $0.toHex()
-                            theme.updateCustomTheme(t)
-                        }
-                    ), supportsOpacity: false)
-                }
-
-                // Color: User Bubble
-                SettingRow(label: "User Bubble Color", description: "Background for user prompt bubble") {
-                    ColorPicker("", selection: Binding(
-                        get: { Color(hex: theme.activeTheme.userBubbleHex) },
-                        set: {
-                            var t = theme.activeTheme
-                            t.userBubbleHex = $0.toHex()
-                            theme.updateCustomTheme(t)
-                        }
-                    ), supportsOpacity: false)
-                }
-
-                // Delete Theme Row
-                SettingRow(label: "Delete Theme", description: "Permanently delete this custom theme") {
-                    Button(role: .destructive) {
-                        themeToDelete = theme.activeTheme
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                            .foregroundStyle(.red)
-                    }
-                    .buttonStyle(.plain)
-                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }
-}
 
-// MARK: - Font Category Setting Row
-
-private struct FontCategorySettingRow: View {
-    let title: String
-    let subtitle: String
-    let placeholder: String
-    @Binding var fontName: String
-    let presets: [String]
-    let sampleFont: Font
-    let sampleText: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(AppFont.normal(12.5, weight: .semibold))
-                        .foregroundStyle(Palette.ink)
-                    Text(subtitle)
-                        .font(AppFont.normal(10.5))
-                        .foregroundStyle(Palette.muted)
-                }
-
-                Spacer()
-
-                Menu {
-                    ForEach(presets, id: \.self) { p in
-                        Button(p) {
-                            fontName = p
-                        }
+    private var customThemeEditorSection: some View {
+        Section("Customize Theme: \(theme.activeTheme.name)") {
+            LabeledContent("Theme Name") {
+                TextField("Theme Name", text: Binding(
+                    get: { theme.activeTheme.name },
+                    set: {
+                        var t = theme.activeTheme
+                        t.name = $0
+                        theme.updateCustomTheme(t)
                     }
-                    Divider()
-                    Button("Reset to Default") {
-                        fontName = presets.first ?? "System"
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "textformat")
-                            .font(.system(size: 10))
-                        Text("Presets")
-                            .font(AppFont.normal(11))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
-                    }
-                    .foregroundStyle(Palette.muted)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 6))
-                }
-                .menuStyle(.borderlessButton)
-
-                TextField(placeholder, text: $fontName)
-                    .textFieldStyle(.plain)
-                    .font(AppFont.code(11.5))
-                    .foregroundStyle(Palette.ink)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .frame(width: 170)
-                    .background(Palette.card, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.rule, lineWidth: 1))
+                ))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 180)
             }
 
-            // Real-time sample text preview in this specific font
-            HStack(spacing: 6) {
-                Text("Sample:")
-                    .font(AppFont.normal(10))
-                    .foregroundStyle(Palette.subtle)
-                Text(sampleText)
-                    .font(sampleFont)
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-                Spacer()
+            Picker("Appearance Base", selection: Binding(
+                get: { theme.activeTheme.isDark },
+                set: {
+                    var t = theme.activeTheme
+                    t.isDark = $0
+                    theme.updateCustomTheme(t)
+                }
+            )) {
+                Text("Dark").tag(true)
+                Text("Light").tag(false)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Palette.raised.opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
+            .pickerStyle(.segmented)
+
+            ColorPicker("Canvas Background", selection: Binding(
+                get: { Color(hex: theme.activeTheme.canvasHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.canvasHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("Sidebar Background", selection: Binding(
+                get: { Color(hex: theme.activeTheme.sidebarHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.sidebarHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("Card / Input Background", selection: Binding(
+                get: { Color(hex: theme.activeTheme.cardHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.cardHex = $0.toHex()
+                    t.composerBgHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("Primary Text (Ink)", selection: Binding(
+                get: { Color(hex: theme.activeTheme.inkHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.inkHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("Accent Color", selection: Binding(
+                get: { Color(hex: theme.activeTheme.accentHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.accentHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("User Bubble Color", selection: Binding(
+                get: { Color(hex: theme.activeTheme.userBubbleHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.userBubbleHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            Button("Delete Custom Theme", role: .destructive) {
+                themeToDelete = theme.activeTheme
+            }
         }
-        .padding(.vertical, 3)
     }
 }
