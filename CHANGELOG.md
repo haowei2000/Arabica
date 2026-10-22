@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.10.0 — 2026-10-22
+
+- Add versioned task scoring contracts supporting regex, AST syntax validation, command execution, and model-graded verification.
+- Decouple run evaluation into an asynchronous, non-blocking background observer with SQLite persistence and live session scoring.
+- Add complete cost and execution time accounting with provider price cards and millicent precision.
+- Introduce frozen benchmark task suites and deterministic campaign comparison tooling (`blend_campaign`).
+- Add statistical superiority checks and recommendation gates using Wilson intervals to guard routing policy promotion.
+- Add automatic policy candidate generation from failure clusters, immutable policy lifecycle transitions, atomic rollback, and active session policy pinning.
+- Add macOS desktop Blend Inspector with Run Verification & Costs, Context & Observability, and Blend Tuning tabs.
+- Streamline policy tuning with one-click Quick Apply, dedicated toolbar access (`Cmd+Opt+I`), human-readable metrics, and Apple Human Interface Guidelines (HIG) visual alignment.
+
 ## 0.9.0 — 2026-10-21
 
 - Use the official Arabica app icon on the desktop welcome screen.
