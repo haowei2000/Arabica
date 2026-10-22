@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.11.0 — 2026-10-22
+
+- Restructure the macOS Desktop Blend Inspector into three progressive workflows: Evaluate, Generate Policy, and Update Policy.
+- Add conversational Turn filtering and Policy-based stage selection in the Evaluate panel, with interactive execution pass rates, evaluation score pills, and diagnostic reports (tool failure rates, run durations, bottleneck analysis).
+- Add transparent policy proposal generation with evidence rationale and clear parameter diffs (Default Model, Tool Routing, Stall Recovery Thresholds).
+- Add dedicated Update Policy workflow featuring Active Policy display, one-click Quick Apply to activate proposals immediately for subsequent runs, and version timeline with atomic rollback.
+- Unify desktop window and titlebar styling with Apple Human Interface Guidelines (HIG): remove glass-styled capsule from titlebar, restore native `.navigationTitle` and `.navigationSubtitle`, and embed lightweight connection status.
+- Modernize the Settings Appearance page into native macOS grouped forms (`.formStyle(.grouped)`) with system `ColorPicker` and standard typography controls, harmonizing design system across all settings tabs.
+- Clean up obsolete legacy view models and standardize conversation empty states with `ContentUnavailableView`.
+
 ## 0.10.0 — 2026-10-22
 
 - Add versioned task scoring contracts supporting regex, AST syntax validation, command execution, and model-graded verification.
