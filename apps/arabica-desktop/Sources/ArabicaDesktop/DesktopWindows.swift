@@ -24,29 +24,32 @@ struct DesktopWindowView: View {
             .environmentObject(model)
             .environment(\.desktopWindowID, windowID)
             .focusedSceneObject(model)
-            .navigationTitle(windowTitle)
-            .modifier(DesktopWindowTitleVisibility())
+            .navigationTitle(conversationTitle)
+            .navigationSubtitle(workspaceSubtitle)
             .background(DesktopWindowRegistration(id: windowID, model: model, windows: windows, title: windowTitle))
     }
 
-    private var windowTitle: String {
-        guard let workspace = model.workspace else { return "Arabica" }
-        let workspaceName = DesktopModel.projectName(for: workspace.path)
+    private var conversationTitle: String {
         let sessionTitle = model.sessions.first { $0.id == model.selectedSessionID }?
             .title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let conversationName = sessionTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "New Conversation"
-        return "\(workspaceName) — \(conversationName)"
+        return sessionTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "New Conversation"
     }
-}
 
-private struct DesktopWindowTitleVisibility: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.toolbar(removing: .title)
-        } else {
-            content
+    private var workspaceSubtitle: String {
+        guard let workspace = model.workspace else { return "Arabica" }
+        let workspaceName = DesktopModel.projectName(for: workspace.path)
+        if model.isConnecting {
+            return "\(workspaceName) — Connecting…"
+        } else if !model.isConnected {
+            return "\(workspaceName) — Disconnected"
         }
+        return workspaceName
+    }
+
+    private var windowTitle: String {
+        guard let workspace = model.workspace else { return "Arabica — \(conversationTitle)" }
+        let workspaceName = DesktopModel.projectName(for: workspace.path)
+        return "\(workspaceName) — \(conversationTitle)"
     }
 }
 
@@ -190,7 +193,7 @@ private final class DesktopWindowRegistrationView: NSView {
     private func applyTitle() {
         guard !isClosed, let window else { return }
         window.title = windowTitle
-        window.titleVisibility = .hidden
+        window.titleVisibility = .visible
     }
 
     override func viewDidMoveToWindow() {

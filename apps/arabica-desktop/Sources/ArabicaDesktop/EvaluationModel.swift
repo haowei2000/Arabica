@@ -88,6 +88,7 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let terminal_status: String
         let timing: Timing
         let tools: [ObservedTool]?
+        let policy_fingerprints: [String]?
     }
     struct ObservedTool: Decodable, Equatable, Sendable, Identifiable {
         var id: String { call_id }

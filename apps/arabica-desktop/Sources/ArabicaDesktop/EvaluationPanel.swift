@@ -1,9 +1,9 @@
 import SwiftUI
 
-enum BlendTab: String, CaseIterable, Identifiable {
-    case runs = "Runs & Costs"
-    case analytics = "Observability"
-    case tuning = "Blend Tuning"
+enum BlendInspectorTab: String, CaseIterable, Identifiable {
+    case evaluate = "Evaluate"
+    case generate = "Generate Policy"
+    case update = "Update Policy"
 
     var id: String { rawValue }
 }
@@ -11,7 +11,9 @@ enum BlendTab: String, CaseIterable, Identifiable {
 struct EvaluationPanel: View {
     @ObservedObject var model: EvaluationModel
     var isVisible: Bool
-    @State private var selectedTab: BlendTab = .runs
+    @State private var selectedTab: BlendInspectorTab = .evaluate
+    @State private var selectedPolicyFilter: String = "all"
+    @State private var selectedRunIDs: Set<String> = []
     @State private var confirmingRollbackPolicy: EvaluationSnapshot.PolicyRecord?
     @State private var confirmingAction: (action: String, policy: EvaluationSnapshot.PolicyRecord)?
 
@@ -35,9 +37,7 @@ struct EvaluationPanel: View {
                     )
                     .padding(.vertical, 24)
                 } else {
-                    quickOptimizerCard
-
-                    controlsBar
+                    tabPicker
 
                     if let message = model.message {
                         Label(message, systemImage: "info.circle")
@@ -56,21 +56,13 @@ struct EvaluationPanel: View {
                         }
                     }
 
-                    Picker("Blend Section", selection: $selectedTab) {
-                        ForEach(BlendTab.allCases) { tab in
-                            Text(tab.rawValue).tag(tab)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.vertical, 2)
-
                     switch selectedTab {
-                    case .runs:
-                        runsView
-                    case .analytics:
-                        analyticsView
-                    case .tuning:
-                        tuningView
+                    case .evaluate:
+                        evaluateSection
+                    case .generate:
+                        generatePolicySection
+                    case .update:
+                        updatePolicySection
                     }
 
                     if let date = model.queriedAt {
@@ -88,6 +80,10 @@ struct EvaluationPanel: View {
         .task(id: "\(isVisible):\(model.sessionID ?? "")") {
             guard isVisible, model.supported, model.sessionID != nil else { return }
             await model.poll()
+        }
+        .onChange(of: model.sessionID) { _, _ in
+            selectedRunIDs.removeAll()
+            selectedPolicyFilter = "all"
         }
         .confirmationDialog(
             "Rollback Blend Policy",
@@ -134,22 +130,32 @@ struct EvaluationPanel: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header & Tab Picker
 
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center) {
-                Label("Blend Routing & Tuning", systemImage: "slider.horizontal.2.square")
+                Label("Blend Inspector", systemImage: "slider.horizontal.2.square")
                     .font(.headline)
                 Spacer()
                 if let active = activePolicy {
                     statusBadge("v\(active.version) \(active.status)")
                 }
             }
-            Text("Multi-model routing, run acceptance, and continuous policy optimization.")
+            Text("Continuous multi-model evaluation, candidate generation, and policy lifecycle.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var tabPicker: some View {
+        Picker("Inspector Mode", selection: $selectedTab) {
+            ForEach(BlendInspectorTab.allCases) { tab in
+                Text(tab.rawValue).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.vertical, 2)
     }
 
     private var activePolicy: EvaluationSnapshot.PolicyRecord? {
@@ -160,254 +166,529 @@ struct EvaluationPanel: View {
         model.snapshot?.policies?.first(where: { $0.status == "candidate" || $0.status == "evaluated" })
     }
 
-    // MARK: - Quick Optimizer Card
+    // MARK: - SECTION 1: EVALUATE
 
     @ViewBuilder
-    private var quickOptimizerCard: some View {
+    private var evaluateSection: some View {
+        // 1. Current Session Context Card
         cardContainer {
-            if let candidate = pendingProposal {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label("Optimization Recommended", systemImage: "sparkles")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.purple)
-                        Spacer()
-                        statusBadge(candidate.status)
-                    }
-
-                    if let prop = candidate.proposal {
-                        Text(prop.rationale)
-                            .font(.callout)
-                            .foregroundStyle(.primary)
-
-                        HStack(spacing: 8) {
-                            Text("Metric: \(humanReadableMetric(prop.evidence.metric))")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            Text("Observed: \(prop.evidence.observed_value)")
-                                .font(.footnote.weight(.medium))
-                                .monospacedDigit()
-                            if let tool = prop.evidence.tool_name {
-                                Text("Tool: \(tool)")
-                                    .font(.caption2.weight(.medium))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color(nsColor: .quaternaryLabelColor), in: Capsule())
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        Button {
-                            Task {
-                                await model.quickApplyPolicy(policyId: candidate.policy_id, version: candidate.version)
-                            }
-                        } label: {
-                            Label("Quick Apply (v\(candidate.version))", systemImage: "bolt.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.purple)
-                        .controlSize(.small)
-                        .disabled(model.isRequesting)
-                        .help("Approve and activate this optimized policy for all upcoming sessions.")
-
-                        Button("Review Details") {
-                            selectedTab = .tuning
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                    .padding(.top, 2)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Target Conversation")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(model.sessionID ?? "Unknown Session")
+                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
                 }
-            } else {
+                Spacer()
+                Button {
+                    Task { await model.load(refresh: true) }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(model.isRequesting)
+            }
+        }
+
+        // 2. Policy Filter & Run Selection
+        let allRuns = model.snapshot?.report?.runs ?? []
+        let availablePolicies = extractAvailablePolicies(from: allRuns)
+
+        cardContainer {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Filter Runs by Policy")
+                        .font(.footnote.weight(.semibold))
+                    Spacer()
+                    Picker("Policy Filter", selection: $selectedPolicyFilter) {
+                        Text("All Policies").tag("all")
+                        ForEach(availablePolicies, id: \.self) { policy in
+                            Text(policy).tag(policy)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                }
+
+                Divider().padding(.vertical, 2)
+
+                HStack {
+                    Text("Turns / Processes (\(filteredRuns.count))")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Select All") {
+                        selectedRunIDs = Set(filteredRuns.map(\.id))
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+
+                    Text("·").foregroundStyle(.tertiary)
+
+                    Button("Clear") {
+                        selectedRunIDs.removeAll()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+
+                if filteredRuns.isEmpty {
+                    Text("No runs matching the selected policy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(filteredRuns) { run in
+                            runSelectionRow(run)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Evaluation Scoring & Diagnostic Report
+        if !effectiveEvaluatedRuns.isEmpty {
+            scoringAndDiagnosticReport
+        } else {
+            cardContainer {
+                Text("Select one or more runs above to generate an evaluation score and diagnostic report.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func extractAvailablePolicies(from runs: [EvaluationSnapshot.Run]) -> [String] {
+        var set = Set<String>()
+        if let policies = model.snapshot?.policies {
+            for p in policies {
+                set.insert("\(p.policy_id) v\(p.version)")
+            }
+        }
+        for run in runs {
+            if let fps = run.snapshot.policy_fingerprints {
+                for fp in fps {
+                    set.insert(String(fp.prefix(12)))
+                }
+            }
+        }
+        return Array(set).sorted()
+    }
+
+    private var filteredRuns: [EvaluationSnapshot.Run] {
+        guard let runs = model.snapshot?.report?.runs else { return [] }
+        if selectedPolicyFilter == "all" {
+            return runs
+        }
+        return runs.filter { run in
+            if let fps = run.snapshot.policy_fingerprints {
+                return fps.contains(where: { $0.hasPrefix(selectedPolicyFilter) || selectedPolicyFilter.contains($0.prefix(8)) })
+            }
+            return true
+        }
+    }
+
+    private var effectiveEvaluatedRuns: [EvaluationSnapshot.Run] {
+        if selectedRunIDs.isEmpty {
+            return filteredRuns
+        }
+        return filteredRuns.filter { selectedRunIDs.contains($0.id) }
+    }
+
+    @ViewBuilder
+    private func runSelectionRow(_ run: EvaluationSnapshot.Run) -> some View {
+        let isSelected = selectedRunIDs.isEmpty || selectedRunIDs.contains(run.id)
+        HStack(spacing: 8) {
+            Button {
+                toggleRunSelection(run.id)
+            } label: {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("Run \(run.id.prefix(8))")
+                        .font(.footnote.weight(.medium))
+                        .monospacedDigit()
+                    Text("· \(run.snapshot.terminal_status.capitalized)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if let verified = run.acceptance?.verified_success {
+                        Text(verified ? "PASS" : "FAIL")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(verified ? Color.green.opacity(0.12) : Color.red.opacity(0.12), in: Capsule())
+                            .foregroundStyle(verified ? Color.green : Color.red)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Text(elapsed(run.snapshot.timing.wall_ms))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    if let tools = run.snapshot.tools, !tools.isEmpty {
+                        Text("\(tools.count) tools")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(isSelected ? Color.accentColor.opacity(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private func toggleRunSelection(_ id: String) {
+        if selectedRunIDs.isEmpty {
+            // When starting manual selection from an all-selected default, select all except this one
+            var all = Set(filteredRuns.map(\.id))
+            all.remove(id)
+            selectedRunIDs = all
+        } else if selectedRunIDs.contains(id) {
+            selectedRunIDs.remove(id)
+        } else {
+            selectedRunIDs.insert(id)
+        }
+    }
+
+    struct ToolDiagnosticSummary {
+        var total: Int
+        var errors: Int
+        var elapsedMs: UInt64
+    }
+
+    struct RunAggregateMetrics {
+        let totalRuns: Int
+        let passedRuns: Int
+        let totalCriteria: Int
+        let passedCriteria: Int
+        let scoreRate: Double
+        let totalWallMs: UInt64
+        let totalActiveMs: UInt64
+        let totalApprovalWaitMs: UInt64
+    }
+
+    private func computeAggregateMetrics(runs: [EvaluationSnapshot.Run]) -> RunAggregateMetrics {
+        let totalRuns = runs.count
+        let passedRuns = runs.filter { $0.acceptance?.verified_success == true }.count
+        let totalCriteria = runs.reduce(0) { $0 + ($1.acceptance?.results.count ?? 0) }
+        let passedCriteria = runs.reduce(0) { sum, run in
+            sum + (run.acceptance?.results.filter { $0.status.lowercased().contains("pass") }.count ?? 0)
+        }
+        let scoreRate = totalCriteria > 0 ? Double(passedCriteria) / Double(totalCriteria) : (totalRuns > 0 ? Double(passedRuns) / Double(totalRuns) : 1.0)
+        let totalWallMs: UInt64 = runs.reduce(0) { $0 + ($1.snapshot.timing.wall_ms ?? 0) }
+        let totalActiveMs: UInt64 = runs.reduce(0) { $0 + ($1.snapshot.timing.active_ms ?? 0) }
+        let totalApprovalWaitMs: UInt64 = runs.reduce(0) { $0 + ($1.snapshot.timing.approval_wait_ms ?? 0) }
+        return RunAggregateMetrics(
+            totalRuns: totalRuns,
+            passedRuns: passedRuns,
+            totalCriteria: totalCriteria,
+            passedCriteria: passedCriteria,
+            scoreRate: scoreRate,
+            totalWallMs: totalWallMs,
+            totalActiveMs: totalActiveMs,
+            totalApprovalWaitMs: totalApprovalWaitMs
+        )
+    }
+
+    private func computeToolDiagnostics(runs: [EvaluationSnapshot.Run]) -> [String: ToolDiagnosticSummary] {
+        var toolUsage = [String: ToolDiagnosticSummary]()
+        for run in runs {
+            for tool in run.snapshot.tools ?? [] {
+                var current = toolUsage[tool.name] ?? ToolDiagnosticSummary(total: 0, errors: 0, elapsedMs: 0)
+                current.total += 1
+                if tool.outcome.lowercased().contains("error") {
+                    current.errors += 1
+                }
+                current.elapsedMs += tool.elapsed_ms
+                toolUsage[tool.name] = current
+            }
+        }
+        return toolUsage
+    }
+
+    // MARK: - Scoring & Diagnostic Report Card
+
+    @ViewBuilder
+    private var scoringAndDiagnosticReport: some View {
+        let runs = effectiveEvaluatedRuns
+        let metrics = computeAggregateMetrics(runs: runs)
+        let toolUsage = computeToolDiagnostics(runs: runs)
+
+        cardContainer {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Active: \(activePolicy?.policy_id ?? "default") · v\(activePolicy?.version ?? 1)")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Evaluation Score & Diagnostics")
                             .font(.subheadline.weight(.semibold))
+                        Text("Scored across \(metrics.totalRuns) selected turn(s)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    // Score Pill
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(String(format: "%.0f%%", metrics.scoreRate * 100))
+                            .font(.title2.weight(.bold))
                             .monospacedDigit()
-                        Text(activePolicy?.policy.default_model ?? "Standard Model")
-                            .font(.footnote)
+                            .foregroundStyle(metrics.scoreRate >= 0.8 ? Color.green : (metrics.scoreRate >= 0.5 ? Color.orange : Color.red))
+                        Text(metrics.scoreRate >= 0.8 ? "EXCELLENT" : (metrics.scoreRate >= 0.5 ? "MARGINAL" : "NEEDS REPAIR"))
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(metrics.scoreRate >= 0.8 ? Color.green : (metrics.scoreRate >= 0.5 ? Color.orange : Color.red))
+                    }
+                }
+
+                Divider()
+
+                // Key Performance Metrics
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                    GridRow {
+                        metricItem(title: "Verified Runs", value: "\(metrics.passedRuns) / \(metrics.totalRuns)")
+                        metricItem(title: "Criteria Passed", value: "\(metrics.passedCriteria) / \(metrics.totalCriteria)")
+                    }
+                    GridRow {
+                        metricItem(title: "Total Wall Time", value: elapsed(metrics.totalWallMs))
+                        metricItem(title: "Model Active Time", value: elapsed(metrics.totalActiveMs))
+                    }
+                    GridRow {
+                        metricItem(title: "Approval Wait", value: elapsed(metrics.totalApprovalWaitMs))
+                        metricItem(title: "Tools Executed", value: "\(toolUsage.values.reduce(0) { $0 + $1.total })")
+                    }
+                }
+
+                Divider()
+
+                // Tool Diagnostics Breakdown
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tool Diagnostics")
+                        .font(.footnote.weight(.semibold))
+                    if toolUsage.isEmpty {
+                        Text("No tools executed in selected runs.").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(toolUsage.keys.sorted(), id: \.self) { toolName in
+                            if let stat = toolUsage[toolName] {
+                                let errorRate = stat.total > 0 ? Double(stat.errors) / Double(stat.total) : 0.0
+                                HStack {
+                                    Text(toolName)
+                                        .font(.footnote.weight(.medium))
+                                    Spacer()
+                                    if stat.errors > 0 {
+                                        Text("\(stat.errors) err (\(String(format: "%.0f%%", errorRate * 100)))")
+                                            .font(.caption.weight(.medium))
+                                            .foregroundStyle(errorRate > 0.2 ? Color.red : Color.orange)
+                                    } else {
+                                        Text("100% clean")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    }
+                                    Text("· \(elapsed(stat.elapsedMs))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                // Diagnostic Conclusion & Next Step
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Optimization Diagnostic")
+                        .font(.footnote.weight(.semibold))
+
+                    let errorTools = toolUsage.filter { $0.value.errors > 0 }
+                    if !errorTools.isEmpty {
+                        Text("Observed errors on tool(s): \(errorTools.keys.joined(separator: ", ")). Generating a candidate policy can bind these tools to dedicated models or add failure recovery.")
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                    } else {
+                        Text("Execution clean with no tool errors. Candidate generation can explore cost-saving fast models for downstream steps.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        selectedTab = .generate
+                        Task { await model.proposePolicy() }
+                    } label: {
+                        HStack {
+                            Text("Generate Policy Based on Findings")
+                            Image(systemName: "arrow.right")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .controlSize(.small)
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    private func metricItem(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.footnote.weight(.semibold)).monospacedDigit()
+        }
+    }
+
+    // MARK: - SECTION 2: GENERATE POLICY
+
+    @ViewBuilder
+    private var generatePolicySection: some View {
+        cardContainer {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Policy Generation Engine")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Derive bounded candidate routing policies from evaluation evidence.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button {
                         Task { await model.proposePolicy() }
                     } label: {
-                        Label("Propose Tuning", systemImage: "sparkles")
+                        Label("Propose Candidate", systemImage: "sparkles")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
                     .controlSize(.small)
                     .disabled(model.isRequesting)
-                    .help("Analyze execution failures and propose an optimized Blend routing policy.")
                 }
             }
         }
-    }
 
-    private var controlsBar: some View {
-        HStack {
-            Button { Task { await model.load(refresh: true) } } label: {
-                Label("Refresh Status", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .disabled(model.isRequesting)
-            .help("Refresh Blend routing metrics and run verification status.")
-            Spacer()
-            if model.isRequesting {
-                ProgressView().controlSize(.small).accessibilityLabel("Updating Blend status")
-            }
-        }
-    }
+        if let candidate = pendingProposal {
+            cardContainer {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Proposed Candidate Policy")
+                                .font(.subheadline.weight(.semibold))
+                            Text("\(candidate.policy_id) v\(candidate.version)")
+                                .font(.title3.weight(.bold))
+                                .monospacedDigit()
+                        }
+                        Spacer()
+                        statusBadge(candidate.status)
+                    }
 
-    // MARK: - Tab 1: Runs & Costs
+                    if let prop = candidate.proposal {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Rationale & Evidence Basis")
+                                .font(.footnote.weight(.semibold))
+                            Text(prop.rationale)
+                                .font(.callout)
+                                .foregroundStyle(.primary)
 
-    @ViewBuilder
-    private var runsView: some View {
-        if let report = model.snapshot?.report {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Run Verification & Telemetry").font(.subheadline.weight(.semibold))
-                Text("Verification checks, execution times, and tool calls per run.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-
-            if let runs = report.runs, !runs.isEmpty {
-                ForEach(runs.reversed()) { run in
-                    cardContainer {
-                        DisclosureGroup {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text("Execution:")
-                                        .foregroundStyle(.secondary)
-                                        .font(.footnote)
-                                    Text(run.snapshot.terminal_status.capitalized)
-                                        .font(.footnote.weight(.medium))
-                                    Spacer()
-                                    if let verified = run.acceptance?.verified_success {
-                                        Text(verified ? "VERIFIED PASS" : "FAILED")
-                                            .font(.caption2.weight(.bold))
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(verified ? Color.green.opacity(0.12) : Color.red.opacity(0.12), in: Capsule())
-                                            .foregroundStyle(verified ? Color.green : Color.red)
-                                    }
-                                }
-
-                                LabeledContent("Completion of evaluated criteria", value: percent(run.acceptance?.completion_bps))
-                                LabeledContent("Evaluation coverage", value: percent(run.acceptance?.coverage_bps))
-                                LabeledContent("Total wall time", value: elapsed(run.snapshot.timing.wall_ms))
-                                LabeledContent("Queue wait", value: elapsed(run.snapshot.timing.queue_ms))
-                                LabeledContent("Approval wait", value: elapsed(run.snapshot.timing.approval_wait_ms))
-                                LabeledContent("Active execution time", value: elapsed(run.snapshot.timing.active_ms))
-                                LabeledContent("Model call total", value: elapsed(run.snapshot.timing.model_call_ms_total))
-                                LabeledContent("Runner call total", value: elapsed(run.snapshot.timing.runner_ms_total))
-                                LabeledContent("Usage reported calls", value: "\(run.snapshot.timing.usage_reported_calls) / \(run.snapshot.timing.model_calls)")
+                            HStack(spacing: 8) {
+                                Text("Metric: \(humanReadableMetric(prop.evidence.metric))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("Observed: \(prop.evidence.observed_value)")
+                                    .font(.caption.weight(.medium))
                                     .monospacedDigit()
-
-                                if let results = run.acceptance?.results, !results.isEmpty {
-                                    Divider().padding(.vertical, 2)
-                                    Text("Acceptance Criteria").font(.footnote.weight(.semibold))
-                                    ForEach(results) { res in
-                                        HStack(alignment: .top, spacing: 8) {
-                                            Image(systemName: res.status.lowercased().contains("pass") ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                                .foregroundStyle(res.status.lowercased().contains("pass") ? .green : .red)
-                                                .font(.subheadline)
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(res.criterion_id).font(.footnote.weight(.medium))
-                                                if let ev = res.evidence, !ev.isEmpty {
-                                                    Text(ev).font(.caption).foregroundStyle(.secondary).lineLimit(3)
-                                                }
-                                            }
-                                            Spacer()
-                                            Text(res.status.capitalized)
-                                                .font(.caption.weight(.medium))
-                                                .foregroundStyle(res.status.lowercased().contains("pass") ? .green : .red)
-                                        }
+                                if let tool = prop.evidence.tool_name {
+                                    Text("Tool: \(tool)")
+                                        .font(.caption2.weight(.medium))
+                                        .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
-                                    }
-                                }
-
-                                if let tools = run.snapshot.tools, !tools.isEmpty {
-                                    Divider().padding(.vertical, 2)
-                                    Text("Observed Tool Calls (\(tools.count))").font(.footnote.weight(.semibold))
-                                    ForEach(tools) { tool in
-                                        HStack {
-                                            Text("Step \(tool.step):")
-                                                .foregroundStyle(.secondary)
-                                                .font(.caption)
-                                                .monospacedDigit()
-                                            Text(tool.name).font(.footnote.weight(.medium))
-                                            Spacer()
-                                            Text(tool.outcome)
-                                                .font(.caption)
-                                                .foregroundStyle(tool.outcome.lowercased().contains("error") ? .red : .secondary)
-                                            Text(elapsed(tool.elapsed_ms))
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .monospacedDigit()
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.top, 6)
-                        } label: {
-                            HStack {
-                                Text("Run \(run.id.prefix(8)) · \(run.snapshot.terminal_status)")
-                                    .font(.subheadline.weight(.medium))
-                                    .monospacedDigit()
-                                Spacer()
-                                if let verified = run.acceptance?.verified_success {
-                                    Image(systemName: verified ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                        .foregroundStyle(verified ? .green : .red)
+                                        .background(Color(nsColor: .quaternaryLabelColor), in: Capsule())
                                 }
                             }
                         }
                     }
+
+                    Divider()
+
+                    // Parameter Changes (Delta View)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Policy Configuration Delta").font(.footnote.weight(.semibold))
+                        LabeledContent("Default model", value: candidate.policy.default_model)
+                        if let err = candidate.policy.after_tool_error {
+                            LabeledContent("After tool error", value: err)
+                        }
+                        if let succ = candidate.policy.after_tool_success {
+                            LabeledContent("After tool success", value: succ)
+                        }
+                        if let rec = candidate.policy.recovery_model {
+                            LabeledContent("Recovery model", value: rec)
+                        }
+                        if let steps = candidate.policy.recovery_after_no_progress_steps {
+                            LabeledContent("Recovery threshold", value: "\(steps) steps").monospacedDigit()
+                        }
+                        if let routes = candidate.policy.tool_routes, !routes.isEmpty {
+                            Text("Explicit tool routes:").font(.footnote.weight(.medium))
+                            ForEach(routes) { r in
+                                Text("  • \(r.id): -> \(r.model)").font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 10) {
+                        Button {
+                            selectedTab = .update
+                        } label: {
+                            HStack {
+                                Text("Review & Update Policy")
+                                Image(systemName: "arrow.right")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.accentColor)
+                        .controlSize(.small)
+
+                        Button {
+                            Task {
+                                await model.quickApplyPolicy(policyId: candidate.policy_id, version: candidate.version)
+                            }
+                        } label: {
+                            Label("Quick Apply to New Runs", systemImage: "bolt.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isRequesting)
+                    }
+                    .padding(.top, 2)
                 }
-            } else {
-                notice("No Runs Evaluated Yet", "Complete a run to see scored acceptance, costs, and timings.")
             }
         } else {
-            notice("No Report Yet", "Complete an interaction turn to view telemetry. The agent continues operating while background processing finishes.")
+            cardContainer {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No Candidate Proposal Yet").font(.subheadline.weight(.semibold))
+                    Text("Click 'Propose Candidate' above or complete an evaluation run to generate an evidence-backed routing proposal.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+            }
         }
     }
 
-    // MARK: - Tab 2: Observability
+    // MARK: - SECTION 3: UPDATE POLICY
 
     @ViewBuilder
-    private var analyticsView: some View {
-        if let report = model.snapshot?.report {
-            cardContainer {
-                result(report.context, context: true)
-            }
-            cardContainer {
-                result(report.model, context: false)
-            }
-            Text("Model and context statistics describe empirical token usage; task acceptance is scored separately.")
-                .font(.footnote).foregroundStyle(.secondary)
-        } else {
-            notice("No Observability Data Yet", "Observability metrics will appear here after runs complete.")
-        }
-
-        if let worker = model.snapshot?.worker_status {
-            cardContainer {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Background Worker Health").font(.subheadline.weight(.semibold))
-                    Text("Asynchronous scoring queue status.").font(.footnote).foregroundStyle(.secondary)
-                    LabeledContent("Completed evaluations", value: "\(worker.completed)").monospacedDigit()
-                    LabeledContent("Failed evaluations", value: "\(worker.failed)").monospacedDigit()
-                    LabeledContent("Notifications dropped", value: "\(worker.dropped)").monospacedDigit()
-                }
-            }
-        }
-    }
-
-    // MARK: - Tab 3: Blend Tuning
-
-    @ViewBuilder
-    private var tuningView: some View {
+    private var updatePolicySection: some View {
         let policies = model.snapshot?.policies ?? []
 
+        // Active Policy Card
         if let active = activePolicy {
             cardContainer {
                 VStack(alignment: .leading, spacing: 8) {
@@ -464,24 +745,21 @@ struct EvaluationPanel: View {
             }
         }
 
+        // Policy Version History & Actions
         HStack {
-            Text("Policy Versions (\(policies.count))")
+            Text("Policy Version History (\(policies.count))")
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
             Spacer()
-            Button {
-                Task { await model.proposePolicy() }
-            } label: {
-                Label("Propose Tuning", systemImage: "sparkles")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(model.isRequesting)
-            .help("Derive bounded proposals informed by evaluated evidence from this session.")
         }
 
         if policies.isEmpty {
-            notice("No Policies Registered", "Configured policies and evaluated proposals will appear here.")
+            cardContainer {
+                Text("No policies registered in the SQLite store.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
         } else {
             ForEach(policies) { p in
                 cardContainer {
@@ -500,9 +778,6 @@ struct EvaluationPanel: View {
                             if let steps = p.policy.recovery_after_no_progress_steps {
                                 LabeledContent("Recovery threshold", value: "\(steps) steps").monospacedDigit()
                             }
-                            if let dwell = p.policy.minimum_model_dwell_steps {
-                                LabeledContent("Minimum dwell", value: "\(dwell) steps").monospacedDigit()
-                            }
                             if let routes = p.policy.tool_routes, !routes.isEmpty {
                                 Text("Explicit tool routes:").font(.footnote.weight(.medium))
                                 ForEach(routes) { r in
@@ -517,9 +792,6 @@ struct EvaluationPanel: View {
                                     Text(prop.rationale).font(.callout).foregroundStyle(.primary)
                                     Text("Metric: \(humanReadableMetric(prop.evidence.metric)) (observed: \(prop.evidence.observed_value), threshold: \(prop.evidence.threshold))")
                                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                    if let tool = prop.evidence.tool_name {
-                                        Text("Affected tool: \(tool)").font(.caption).foregroundStyle(.secondary)
-                                    }
                                 }
                             }
 
@@ -527,7 +799,7 @@ struct EvaluationPanel: View {
                                 Text("Audit reason: \(p.reason)").font(.caption).foregroundStyle(.secondary)
                             }
 
-                            // Lifecycle Action Buttons
+                            // Actions
                             HStack(spacing: 8) {
                                 if p.status == "candidate" || p.status == "evaluated" {
                                     Button("Quick Apply") {
@@ -635,101 +907,6 @@ struct EvaluationPanel: View {
     }
 
     private func elapsed(_ value: UInt64?) -> String {
-        value.map { String(format: "%.2f s", Double($0) / 1000) } ?? "Not available"
-    }
-
-    private func percent(_ value: UInt32?) -> String {
-        value.map { String(format: "%.1f%%", Double($0) / 100) } ?? "Not evaluated"
-    }
-
-    private func notice(_ title: String, _ detail: String) -> some View {
-        cardContainer {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(detail).font(.footnote).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
-        }
-    }
-
-    private func result(_ result: EvaluationSnapshot.Result, context: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(context ? "Context Token Efficiency" : "Model Selection Distribution")
-                .font(.subheadline.weight(.semibold))
-            LabeledContent("Strategy", value: "\(result.plugin.id) · v\(result.plugin.version)")
-                .font(.footnote)
-            ForEach(Array(result.data.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
-                Text(diagnostic.explanation).font(.caption).foregroundStyle(.secondary)
-            }
-            if result.data.groups.isEmpty {
-                Text("No eligible samples.").font(.footnote).foregroundStyle(.secondary)
-            }
-            ForEach(Array(result.data.groups.enumerated()), id: \.offset) { _, group in
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if let policy = group.routing_policy_fingerprint {
-                            LabeledContent("Routing policy", value: String(policy.prefix(12)))
-                                .font(.caption)
-                                .help(policy)
-                        }
-                        if let registry = group.model_registry_fingerprint {
-                            LabeledContent("Model registry", value: String(registry.prefix(12)))
-                                .font(.caption)
-                                .help(registry)
-                        }
-                        let entries = context ? group.report.items ?? [:] : group.report.models ?? [:]
-                        ForEach(entries.keys.sorted(), id: \.self) { key in
-                            if let metrics = entries[key] {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(displayName(key))
-                                        .font(.footnote.weight(.medium))
-                                        .lineLimit(2)
-                                        .help(key)
-                                    if context {
-                                        metric("Eligible runs", "eligible_runs", metrics)
-                                        metric("Exposed runs", "exposed_runs", metrics)
-                                        metric("Activated runs", "activated_runs", metrics)
-                                        metric("Calls started", "started_calls", metrics)
-                                        metric("Failed calls", "failed_calls", metrics)
-                                    } else {
-                                        metric("Calls selected", "selected_calls", metrics)
-                                        metric("Calls observed", "observed_calls", metrics)
-                                        metric("Provider failures", "provider_failures", metrics)
-                                        metric("Unknown outcomes", "calls_with_unknown_outcome", metrics)
-                                        metric("Total elapsed (ms)", "elapsed_ms_total", metrics)
-                                        LabeledContent("Reported input tokens", value: metrics["usage_reported_calls", default: 0] > 0 ? "\(metrics["input_tokens", default: 0])" : "Not reported")
-                                            .font(.caption)
-                                            .monospacedDigit()
-                                        LabeledContent("Reported output tokens", value: metrics["usage_reported_calls", default: 0] > 0 ? "\(metrics["output_tokens", default: 0])" : "Not reported")
-                                            .font(.caption)
-                                            .monospacedDigit()
-                                    }
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                } label: {
-                    Text("\(group.group_id) · \(group.sample_runs) runs")
-                        .font(.footnote)
-                        .monospacedDigit()
-                }
-            }
-        }
-    }
-
-    private func metric(_ label: String, _ key: String, _ metrics: [String: UInt64]) -> some View {
-        LabeledContent(label, value: metrics[key].map(String.init) ?? "Unavailable")
-            .font(.caption)
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-    }
-
-    private func displayName(_ key: String) -> String {
-        guard let data = key.data(using: .utf8), let tuple = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              let name = tuple.first as? String else { return key }
-        return name
+        value.map { String(format: "%.2f s", Double($0) / 1000) } ?? "0.00 s"
     }
 }
