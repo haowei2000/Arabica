@@ -10,7 +10,10 @@ use arabica_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, TerminalControllerPolicy,
     TerminalControllerTransitionReason, ToolInteractionKind, WorkspaceId,
 };
-use arabica_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+use arabica_provider::{
+    ApiModelProvider, ApiProviderConfig, ApiType, ExperimentControls, OpenAiModelProvider,
+    OpenAiProviderConfig,
+};
 use arabica_runner::{
     RunnerEnvironment, RunnerError, RunnerOutput, ToolExecutionRequest, ToolExecutionResult,
     classify_shell_interaction, shell_classifier::inline_validation_position, truncate_output,
@@ -22,11 +25,12 @@ use arabica_runtime::{
 };
 use arabica_session::SessionManager;
 use serde::{Deserialize, Serialize};
+use structure_short_memory_benchmark::experiment::ExperimentConfig;
 use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
 
-const REPORT_SCHEMA: &str = "structure.harbor-agent/v13";
+const REPORT_SCHEMA: &str = "structure.harbor-agent/v14";
 const DEFAULT_MAX_STEPS: usize = 128;
 const DEFAULT_MAX_TOKENS: u32 = 8_192;
 const DEFAULT_CHECKPOINT_BATCHES: usize = 8;
@@ -75,6 +79,7 @@ struct Config {
     pointer_gc_admission_policy: PointerGcAdmissionPolicy,
     thinking_enabled: bool,
     terminal_controller_policy: TerminalControllerPolicy,
+    sampling: Option<ExperimentControls>,
 }
 
 #[derive(Deserialize)]
@@ -301,6 +306,7 @@ struct HarborAgentReport {
     terminal_controller_policy: TerminalControllerPolicy,
     model: String,
     api_type: ApiType,
+    sampling: Option<ExperimentControls>,
     compaction_strategy: RuntimeCompactionStrategy,
     pointer_gc_enabled: bool,
     pointer_gc_checkpoint_batches: usize,
@@ -360,19 +366,33 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if let Some(parent) = config.report.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let provider = ApiModelProvider::new(
-        ApiProviderConfig::new(
-            config.api_type,
+    let provider = if let Some(sampling) = &config.sampling {
+        let mut provider_config = OpenAiProviderConfig::new(
             config.api_key.clone(),
             config.base_url.clone(),
             config.model.clone(),
-        )
-        .with_max_tokens(config.max_tokens)
-        .with_thinking(config.thinking_enabled)
-        .with_anthropic_cache_static_prefix(config.strategy == Strategy::Capc)
-        .with_request_timeout_secs(480)
-        .with_raw_exchange_dir(config.report.with_file_name("provider-raw")),
-    )?;
+        )?;
+        provider_config.experiment_controls = Some(Box::new(sampling.clone()));
+        provider_config.max_tokens = Some(sampling.max_tokens);
+        provider_config.thinking_enabled = sampling.thinking_enabled;
+        provider_config.request_timeout_secs = 480;
+        provider_config.raw_exchange_dir = Some(config.report.with_file_name("provider-raw"));
+        ApiModelProvider::OpenAiChatCompletions(OpenAiModelProvider::new(provider_config))
+    } else {
+        ApiModelProvider::new(
+            ApiProviderConfig::new(
+                config.api_type,
+                config.api_key.clone(),
+                config.base_url.clone(),
+                config.model.clone(),
+            )
+            .with_max_tokens(config.max_tokens)
+            .with_thinking(config.thinking_enabled)
+            .with_anthropic_cache_static_prefix(config.strategy == Strategy::Capc)
+            .with_request_timeout_secs(480)
+            .with_raw_exchange_dir(config.report.with_file_name("provider-raw")),
+        )?
+    };
     let recorder = ProviderRecorder::with_snapshot_path(
         config.report.with_file_name("provider-calls.partial.json"),
     );
@@ -559,6 +579,7 @@ fn build_report(
         terminal_controller_policy: config.terminal_controller_policy,
         model: config.model.clone(),
         api_type: config.api_type,
+        sampling: config.sampling.clone(),
         compaction_strategy: match config.strategy {
             Strategy::B0 | Strategy::B2 => RuntimeCompactionStrategy::Disabled,
             Strategy::Pgc => RuntimeCompactionStrategy::PointerGc,
@@ -830,6 +851,7 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         .transpose()?
         .unwrap_or(DEFAULT_PGC_CACHED_INPUT_COST_BPS);
     let mut pointer_gc_admission_policy = PointerGcAdmissionPolicy::Profitability;
+    let mut sampling = None;
     let mut thinking_enabled = public_env(["STRUCTURE_THINKING", "THINKING"])
         .map(|value| parse_bool(&value, "STRUCTURE_THINKING"))
         .transpose()?
@@ -843,6 +865,15 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
                 strategy = Some(Strategy::parse(value(&arguments, &mut index, option)?)?)
             }
             "--report" => report = Some(PathBuf::from(value(&arguments, &mut index, option)?)),
+            "--experiment-config" => {
+                let path = value(&arguments, &mut index, option)?;
+                let config: ExperimentConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+                if config.shared_first_response {
+                    return Err("Harbor experiments run independent provider trajectories; shared_first_response must be false".into());
+                }
+                config.sampling.validate()?;
+                sampling = Some(config.sampling);
+            }
             "--model" => model = Some(value(&arguments, &mut index, option)?.to_owned()),
             "--base-url" => base_url = Some(value(&arguments, &mut index, option)?.to_owned()),
             "--api-type" => api_type = value(&arguments, &mut index, option)?.parse()?,
@@ -903,6 +934,16 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
     if pgc_cached_input_cost_bps > 10_000 {
         return Err("PGC cached-input cost must be between 0 and 10000 bps".into());
     }
+    if sampling.is_some() && api_type != ApiType::OpenAiChatCompletions {
+        return Err(
+            "--experiment-config currently requires the OpenAI-compatible Chat Completions API"
+                .into(),
+        );
+    }
+    if let Some(controls) = &sampling {
+        max_tokens = controls.max_tokens;
+        thinking_enabled = controls.thinking_enabled;
+    }
     Ok(Config {
         strategy: strategy.ok_or("--strategy is required")?,
         report: report.ok_or("--report is required")?,
@@ -938,6 +979,7 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         pointer_gc_admission_policy,
         thinking_enabled,
         terminal_controller_policy,
+        sampling,
     })
 }
 
@@ -1005,6 +1047,7 @@ mod tests {
             pointer_gc_admission_policy: PointerGcAdmissionPolicy::Profitability,
             thinking_enabled: false,
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
+            sampling: None,
         };
         build_report(
             &config,
@@ -1115,7 +1158,7 @@ mod tests {
         });
         assert!(completed.terminal_success);
         assert_eq!(completed.final_output.as_deref(), Some("done"));
-        assert_eq!(completed.schema_version, "structure.harbor-agent/v13");
+        assert_eq!(completed.schema_version, "structure.harbor-agent/v14");
         assert_eq!(completed.reasoning_output_tokens, 0);
     }
 }
