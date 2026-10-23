@@ -45,7 +45,7 @@ base64 = "0.22"
 rand = "0.9"
 jsonwebtoken = "9"
 similar = "2"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 toml = "1.1"

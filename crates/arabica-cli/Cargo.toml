@@ -53,12 +53,12 @@ arabica-runner = { version = "0.11.0", path = "../arabica-runner" }
 arabica-runtime = { version = "0.11.0", path = "../arabica-runtime" }
 arabica-session = { version = "0.11.0", path = "../arabica-session" }
 tokio.workspace = true
+tokio-util.workspace = true
 uuid.workspace = true
 serde-saphyr = { version = "=0.0.28", default-features = false, features = ["deserialize"] }
 
 [dev-dependencies]
 axum.workspace = true
-tokio-util.workspace = true
 
 [lints]
 workspace = true
