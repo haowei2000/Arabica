@@ -48,7 +48,16 @@ resumes following the conversation. ACP v1 tool calls show
 their category, status, text results, diffs, terminal references, and file
 locations. Write and command calls use native permission dialogs. The client
 also handles ACP file and terminal requests within the chosen workspace.
-The paperclip adds files as ACP resource links to a prompt.
+The paperclip sends PNG, JPEG, WebP, and GIF images as inline ACP image blocks.
+Attach up to four images per message, each at most 5 MiB, and select a model
+that supports vision (Gemini requires GIFs to be converted to PNG, JPEG, or
+WebP). Other files are sent as ACP resource links; the agent
+reads those through its workspace tools. Unsupported image formats and agents
+without image capability produce an error before the draft is cleared.
+Image bytes are retained in the local session history and sent to the configured
+provider with the conversation. Older conversation images follow the configured
+memory compaction policy.
+
 Drag the sidebar divider to resize it, or double-click to reset its width.
 The sidebar uses a native `NSOutlineView`: workspace folders contain conversation
 children with compact single-line titles. Arrow keys navigate the tree; Left and
@@ -118,7 +127,8 @@ ATX and Setext headings, nested lists and quotes, task indicators, indented and
 fenced code, and horizontally scrollable tables.
 Mermaid blocks preview common flowcharts and sequence diagrams locally; other
 diagram syntax remains available as source with an explanation. Image attachment
-previews remain future work. The desktop client
+previews remain future work; input images are sent to the model and shown as
+filenames in the feed. The desktop client
 speaks ACP v1 and accepts unknown `_meta` extension fields without making
 assumptions about their contents.
 

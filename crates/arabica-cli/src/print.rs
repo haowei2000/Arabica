@@ -410,6 +410,7 @@ async fn run_task(
         CommandId::new(uuid::Uuid::now_v7().to_string()),
         Some(session_id),
         Command::MessageSend {
+            images: Vec::new(),
             content: options.task,
         },
     );

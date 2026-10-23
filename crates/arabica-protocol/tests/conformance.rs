@@ -28,6 +28,7 @@ fn every_command_has_a_stable_dotted_wire_name() {
         (Command::SessionClose, "session.close"),
         (
             Command::MessageSend {
+                images: Vec::new(),
                 content: "hello".to_owned(),
             },
             "message.send",
@@ -111,6 +112,7 @@ fn every_event_has_a_stable_dotted_wire_name() {
         (Event::RunStarted, "run.started"),
         (
             Event::MessageAccepted {
+                images: Vec::new(),
                 content: "hello".to_owned(),
             },
             "message.accepted",
@@ -328,4 +330,34 @@ fn permission_decisions_reach_clients_with_stable_wire_values() {
     assert_eq!(value["payload"]["outcome"], "cancelled");
     assert_eq!(value["payload"]["scope"], "session");
     assert_eq!(value["payload"]["source"], "approver_unavailable");
+}
+
+#[test]
+fn image_messages_round_trip_and_legacy_text_records_remain_compatible() {
+    let legacy = serde_json::json!({"type":"message.send", "payload":{"content":"hello"}});
+    let command: Command = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(command).unwrap(), legacy);
+    let legacy_event =
+        serde_json::json!({"type":"message.accepted", "payload":{"content":"hello"}});
+    let event: Event = serde_json::from_value(legacy_event.clone()).unwrap();
+    assert_eq!(serde_json::to_value(event).unwrap(), legacy_event);
+    let image = arabica_model::ImageInput {
+        media_type: "image/png".into(),
+        data_base64: "aGVsbG8=".into(),
+    };
+    let command = Command::MessageSend {
+        content: String::new(),
+        images: vec![image.clone()],
+    };
+    let value = serde_json::to_value(&command).unwrap();
+    assert_eq!(value["payload"]["images"][0]["media_type"], "image/png");
+    assert_eq!(serde_json::from_value::<Command>(value).unwrap(), command);
+    let event = Event::MessageAccepted {
+        content: String::new(),
+        images: vec![image],
+    };
+    assert_eq!(
+        serde_json::from_value::<Event>(serde_json::to_value(&event).unwrap()).unwrap(),
+        event
+    );
 }

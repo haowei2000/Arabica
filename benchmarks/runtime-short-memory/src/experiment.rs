@@ -193,6 +193,7 @@ mod tests {
     }
     fn request(input: &str) -> ModelRunRequest {
         ModelRunRequest {
+            images: Vec::new(),
             session_id: arabica_protocol::SessionId::new("s"),
             run_id: RunId::new("r"),
             input: input.into(),
