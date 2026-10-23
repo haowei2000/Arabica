@@ -174,11 +174,13 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     fn runtime_history(&self) -> Vec<EventEnvelope> {
-        self.base_events
-            .iter()
-            .chain(&self.events)
-            .cloned()
-            .collect()
+        if self.base_events.is_empty() {
+            return self.events.clone();
+        }
+        let mut history = Vec::with_capacity(self.base_events.len() + self.events.len());
+        history.extend_from_slice(&self.base_events);
+        history.extend_from_slice(&self.events);
+        history
     }
 
     /// Append one canonical Event and, if a host attached one, notify the

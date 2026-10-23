@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -25,12 +25,13 @@ agent-client-protocol = "=2.2.0"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+fs2 = "0.4"
 globset = "0.4"
 hex = "0.4"
 ignore = "0.4"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rmcp = { version = "3.4", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "3.6", default-features = false, features = ["auth", "client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 rusqlite = { version = "0.40", features = ["bundled", "fallible_uint"] }
 rustix = { version = "1", features = ["process"] }
 schemars = "1"
@@ -40,16 +41,24 @@ serde = { version = "1", features = ["derive"] }
 # that unconditional; see docs/runtime_core_architecture.md Appendix B.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.11"
+base64 = "0.22"
+rand = "0.9"
+jsonwebtoken = "9"
 similar = "2"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 toml = "1.1"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["v7"] }
+url = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

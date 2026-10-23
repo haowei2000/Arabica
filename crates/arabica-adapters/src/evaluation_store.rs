@@ -52,7 +52,7 @@ impl SqliteEvaluationStore {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_millis(50))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if !matches!(version, 1 | 2) {
+        if !matches!(version, 1..=3) {
             return Err("unsupported evaluation database schema".into());
         }
         Self(connection).latest(workspace, session)
@@ -69,7 +69,7 @@ impl SqliteEvaluationStore {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_millis(50))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if !matches!(version, 1 | 2) {
+        if !matches!(version, 1..=3) {
             return Err("unsupported evaluation database schema".into());
         }
         Self(connection).list_policy_versions(policy_id)
@@ -92,7 +92,7 @@ impl SqliteEvaluationStore {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_millis(250))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if !matches!(version, 0..=2) {
+        if !matches!(version, 0..=3) {
             return Err("unsupported evaluation database schema".into());
         }
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
@@ -116,6 +116,7 @@ impl SqliteEvaluationStore {
                 policy_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
                 policy_json TEXT NOT NULL, basis_evidence_fingerprint TEXT, reason TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                proposal_json TEXT, activated_at TEXT,
                 PRIMARY KEY(policy_id, version));
             CREATE TABLE IF NOT EXISTS run_evidence_snapshots(
                 workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, run_id TEXT NOT NULL,
@@ -130,7 +131,22 @@ impl SqliteEvaluationStore {
                 scorer_id TEXT NOT NULL, scorer_version INTEGER NOT NULL, scorer_config TEXT NOT NULL,
                 spec_json TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(workspace_id,session_id,run_id,snapshot_fingerprint,spec_fingerprint,scorer_id,scorer_version,scorer_config));
-            CREATE INDEX IF NOT EXISTS evaluation_latest ON evaluation_results(workspace_id,session_id,sequence DESC); PRAGMA user_version=2; COMMIT;")?;
+            CREATE INDEX IF NOT EXISTS evaluation_latest ON evaluation_results(workspace_id,session_id,sequence DESC);
+            COMMIT;")?;
+        let has_proposal_col: bool = connection
+            .prepare("SELECT proposal_json FROM policy_versions LIMIT 0")
+            .is_ok();
+        if !has_proposal_col {
+            let _ = connection.execute(
+                "ALTER TABLE policy_versions ADD COLUMN proposal_json TEXT",
+                [],
+            );
+            let _ = connection.execute(
+                "ALTER TABLE policy_versions ADD COLUMN activated_at TEXT",
+                [],
+            );
+        }
+        connection.execute("PRAGMA user_version=3", [])?;
         Ok(Self(connection))
     }
     pub fn save(
@@ -206,14 +222,36 @@ impl SqliteEvaluationStore {
     }
     pub fn save_policy_version(&mut self, record: &GeneratedPolicyRecord) -> StoreResult<()> {
         let policy_json = serde_json::to_string(&record.policy)?;
+        let proposal_json = record
+            .proposal
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+
+        // Verify immutability of policy definition
+        let mut stmt = self.0.prepare(
+            "SELECT policy_json FROM policy_versions WHERE policy_id = ?1 AND version = ?2",
+        )?;
+        let mut rows = stmt.query(params![record.policy_id, record.version as i64])?;
+        if let Some(row) = rows.next()? {
+            let existing: String = row.get(0)?;
+            if existing != policy_json {
+                return Err(
+                    "immutable policy definition mismatch: existing version definition cannot be altered"
+                        .into(),
+                );
+            }
+        }
+
         self.0.execute(
-            "INSERT INTO policy_versions(policy_id, version, status, policy_json, basis_evidence_fingerprint, reason)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO policy_versions(policy_id, version, status, policy_json, basis_evidence_fingerprint, reason, proposal_json, activated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(policy_id, version) DO UPDATE SET
              status = excluded.status,
-             policy_json = excluded.policy_json,
              basis_evidence_fingerprint = excluded.basis_evidence_fingerprint,
-             reason = excluded.reason",
+             reason = excluded.reason,
+             proposal_json = COALESCE(excluded.proposal_json, policy_versions.proposal_json),
+             activated_at = COALESCE(excluded.activated_at, policy_versions.activated_at)",
             params![
                 record.policy_id,
                 record.version as i64,
@@ -221,6 +259,8 @@ impl SqliteEvaluationStore {
                 policy_json,
                 record.basis_fingerprint,
                 record.reason,
+                proposal_json,
+                record.activated_at,
             ],
         )?;
         Ok(())
@@ -331,7 +371,16 @@ impl SqliteEvaluationStore {
         &self,
         policy_id: Option<&str>,
     ) -> StoreResult<Vec<GeneratedPolicyRecord>> {
-        let mut sql = "SELECT policy_id, version, status, policy_json, basis_evidence_fingerprint, reason FROM policy_versions".to_string();
+        let has_proposal = self
+            .0
+            .prepare("SELECT proposal_json, activated_at FROM policy_versions LIMIT 0")
+            .is_ok();
+        let cols = if has_proposal {
+            "policy_id, version, status, policy_json, basis_evidence_fingerprint, reason, proposal_json, activated_at"
+        } else {
+            "policy_id, version, status, policy_json, basis_evidence_fingerprint, reason, NULL, NULL"
+        };
+        let mut sql = format!("SELECT {cols} FROM policy_versions");
         if policy_id.is_some() {
             sql.push_str(" WHERE policy_id = ?1");
         }
@@ -349,6 +398,8 @@ impl SqliteEvaluationStore {
             let policy_json: String = row.get(3)?;
             let basis_evidence_fingerprint: Option<String> = row.get(4)?;
             let reason: String = row.get(5)?;
+            let proposal_json: Option<String> = row.get(6)?;
+            let activated_at: Option<String> = row.get(7)?;
             let policy: BlendRoutingPolicy = serde_json::from_str(&policy_json).map_err(|e| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -356,6 +407,17 @@ impl SqliteEvaluationStore {
                     Box::new(e),
                 )
             })?;
+            let proposal = proposal_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
             Ok(GeneratedPolicyRecord {
                 policy_id,
                 version: version as u64,
@@ -363,6 +425,8 @@ impl SqliteEvaluationStore {
                 policy,
                 basis_fingerprint: basis_evidence_fingerprint,
                 reason,
+                proposal,
+                activated_at,
             })
         });
         let results: Result<Vec<_>, rusqlite::Error> = mapped.collect();
@@ -373,9 +437,18 @@ impl SqliteEvaluationStore {
         policy_id: &str,
         version: u64,
     ) -> StoreResult<Option<GeneratedPolicyRecord>> {
-        let mut stmt = self.0.prepare(
-            "SELECT policy_id, version, status, policy_json, basis_evidence_fingerprint, reason FROM policy_versions WHERE policy_id = ?1 AND version = ?2 LIMIT 1",
-        )?;
+        let has_proposal = self
+            .0
+            .prepare("SELECT proposal_json, activated_at FROM policy_versions LIMIT 0")
+            .is_ok();
+        let cols = if has_proposal {
+            "policy_id, version, status, policy_json, basis_evidence_fingerprint, reason, proposal_json, activated_at"
+        } else {
+            "policy_id, version, status, policy_json, basis_evidence_fingerprint, reason, NULL, NULL"
+        };
+        let mut stmt = self.0.prepare(&format!(
+            "SELECT {cols} FROM policy_versions WHERE policy_id = ?1 AND version = ?2 LIMIT 1"
+        ))?;
         let mut rows = stmt.query(params![policy_id, version as i64])?;
         if let Some(row) = rows.next()? {
             let policy_id: String = row.get(0)?;
@@ -384,6 +457,8 @@ impl SqliteEvaluationStore {
             let policy_json: String = row.get(3)?;
             let basis_evidence_fingerprint: Option<String> = row.get(4)?;
             let reason: String = row.get(5)?;
+            let proposal_json: Option<String> = row.get(6)?;
+            let activated_at: Option<String> = row.get(7)?;
             let policy: BlendRoutingPolicy = serde_json::from_str(&policy_json).map_err(|e| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -391,6 +466,17 @@ impl SqliteEvaluationStore {
                     Box::new(e),
                 )
             })?;
+            let proposal = proposal_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
             Ok(Some(GeneratedPolicyRecord {
                 policy_id,
                 version: version as u64,
@@ -398,10 +484,129 @@ impl SqliteEvaluationStore {
                 policy,
                 basis_fingerprint: basis_evidence_fingerprint,
                 reason,
+                proposal,
+                activated_at,
             }))
         } else {
             Ok(None)
         }
+    }
+    pub fn get_active_policy(&self, policy_id: &str) -> StoreResult<Option<GeneratedPolicyRecord>> {
+        let mut stmt = self.0.prepare(
+            "SELECT version FROM policy_versions WHERE policy_id = ?1 AND status = 'active' ORDER BY version DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![policy_id])?;
+        if let Some(row) = rows.next()? {
+            let version: i64 = row.get(0)?;
+            self.get_policy_version(policy_id, version as u64)
+        } else {
+            Ok(None)
+        }
+    }
+    pub fn activate_policy_version(
+        &mut self,
+        policy_id: &str,
+        version: u64,
+    ) -> StoreResult<GeneratedPolicyRecord> {
+        let current = self
+            .get_policy_version(policy_id, version)?
+            .ok_or_else(|| format!("policy '{policy_id}' version {version} not found"))?;
+
+        let status = current.lifecycle_status()?;
+        if !matches!(
+            status,
+            arabica_runtime::PolicyLifecycleStatus::Approved
+                | arabica_runtime::PolicyLifecycleStatus::Retired
+                | arabica_runtime::PolicyLifecycleStatus::Active
+        ) {
+            return Err(format!(
+                "policy '{policy_id}' v{version} has status '{status}'; only approved or retired policies can be activated"
+            )
+            .into());
+        }
+
+        let tx = self.0.transaction()?;
+        tx.execute(
+            "UPDATE policy_versions SET status = 'retired' WHERE policy_id = ?1 AND status = 'active' AND version != ?2",
+            params![policy_id, version as i64],
+        )?;
+        tx.execute(
+            "UPDATE policy_versions SET status = 'active', activated_at = CURRENT_TIMESTAMP WHERE policy_id = ?1 AND version = ?2",
+            params![policy_id, version as i64],
+        )?;
+        tx.commit()?;
+
+        self.get_policy_version(policy_id, version)?
+            .ok_or_else(|| "activated policy not found".into())
+    }
+    pub fn rollback_policy(
+        &mut self,
+        policy_id: &str,
+        target_version: Option<u64>,
+    ) -> StoreResult<GeneratedPolicyRecord> {
+        let target = if let Some(v) = target_version {
+            v
+        } else {
+            let active = self.get_active_policy(policy_id)?.ok_or_else(|| {
+                format!("no active policy found for '{policy_id}' to rollback from")
+            })?;
+            let mut stmt = self.0.prepare(
+                "SELECT version FROM policy_versions WHERE policy_id = ?1 AND version < ?2 AND status IN ('retired', 'approved') ORDER BY version DESC LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![policy_id, active.version as i64])?;
+            if let Some(row) = rows.next()? {
+                let v: i64 = row.get(0)?;
+                v as u64
+            } else {
+                return Err(
+                    format!("no previous version found for '{policy_id}' to rollback to").into(),
+                );
+            }
+        };
+
+        self.activate_policy_version(policy_id, target)
+    }
+    pub fn approve_policy(
+        &mut self,
+        policy_id: &str,
+        version: u64,
+    ) -> StoreResult<GeneratedPolicyRecord> {
+        let record = self
+            .get_policy_version(policy_id, version)?
+            .ok_or_else(|| format!("policy '{policy_id}' version {version} not found"))?;
+        let status = record.lifecycle_status()?;
+        if !status.can_transition_to(arabica_runtime::PolicyLifecycleStatus::Approved) {
+            return Err(
+                format!("invalid transition: cannot approve policy in '{status}' status").into(),
+            );
+        }
+        self.0.execute(
+            "UPDATE policy_versions SET status = 'approved' WHERE policy_id = ?1 AND version = ?2",
+            params![policy_id, version as i64],
+        )?;
+        self.get_policy_version(policy_id, version)?
+            .ok_or_else(|| "policy not found".into())
+    }
+    pub fn reject_policy(
+        &mut self,
+        policy_id: &str,
+        version: u64,
+    ) -> StoreResult<GeneratedPolicyRecord> {
+        let record = self
+            .get_policy_version(policy_id, version)?
+            .ok_or_else(|| format!("policy '{policy_id}' version {version} not found"))?;
+        let status = record.lifecycle_status()?;
+        if !status.can_transition_to(arabica_runtime::PolicyLifecycleStatus::Rejected) {
+            return Err(
+                format!("invalid transition: cannot reject policy in '{status}' status").into(),
+            );
+        }
+        self.0.execute(
+            "UPDATE policy_versions SET status = 'rejected' WHERE policy_id = ?1 AND version = ?2",
+            params![policy_id, version as i64],
+        )?;
+        self.get_policy_version(policy_id, version)?
+            .ok_or_else(|| "policy not found".into())
     }
 }
 
@@ -900,7 +1105,7 @@ mod tests {
         let version: u64 =
             db.0.query_row("PRAGMA user_version", [], |row| row.get(0))
                 .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         std::fs::remove_dir_all(home).unwrap();
     }
     #[test]
@@ -1049,6 +1254,8 @@ mod tests {
             policy,
             basis_fingerprint: Some("fp-1".to_string()),
             reason: "initial active policy".to_string(),
+            proposal: None,
+            activated_at: None,
         };
 
         db.save_policy_version(&record).unwrap();
@@ -1079,6 +1286,137 @@ mod tests {
             .unwrap();
         assert!(v2.is_some());
         assert_eq!(v2.unwrap().status, "candidate");
+
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn policy_immutability_lifecycle_and_rollback_flow() {
+        use std::collections::BTreeSet;
+        let home = home();
+        let path = home.join("evaluation.sqlite3");
+        let mut db = SqliteEvaluationStore::open(&path).unwrap();
+
+        let policy_v1 = BlendRoutingPolicy {
+            policy_id: "test-p".to_string(),
+            version: 1,
+            default_model: "fast".to_string(),
+            after_tool_success: None,
+            after_tool_error: None,
+            recovery_model: Some("strong".to_string()),
+            planning_model: None,
+            tool_routes: vec![],
+            recovery_after_no_progress_steps: 3,
+            minimum_model_dwell_steps: 1,
+            tool_call_capable_models: BTreeSet::new(),
+            typed_completion_capable_models: BTreeSet::new(),
+        };
+
+        let rec1 = GeneratedPolicyRecord::new(
+            "test-p",
+            1,
+            "candidate",
+            policy_v1.clone(),
+            None,
+            "initial seed candidate",
+        );
+        db.save_policy_version(&rec1).unwrap();
+
+        // 1. Immutability: Attempting to overwrite v1 definition must fail
+        let mut mutated_policy = policy_v1.clone();
+        mutated_policy.default_model = "mutated-model".to_string();
+        let bad_rec = GeneratedPolicyRecord::new(
+            "test-p",
+            1,
+            "candidate",
+            mutated_policy,
+            None,
+            "illegal edit",
+        );
+        assert!(db.save_policy_version(&bad_rec).is_err());
+
+        // 2. Lifecycle transitions: candidate -> approved -> active
+        db.approve_policy("test-p", 1).unwrap();
+        let v1_approved = db.get_policy_version("test-p", 1).unwrap().unwrap();
+        assert_eq!(v1_approved.status, "approved");
+
+        let v1_active = db.activate_policy_version("test-p", 1).unwrap();
+        assert_eq!(v1_active.status, "active");
+        assert!(v1_active.activated_at.is_some());
+        assert_eq!(db.get_active_policy("test-p").unwrap().unwrap().version, 1);
+
+        // 3. Propose v2 with evidence
+        let mut policy_v2 = policy_v1.clone();
+        policy_v2.version = 2;
+        policy_v2.after_tool_error = Some("strong".to_string());
+        let proposal = arabica_runtime::PolicyProposal {
+            proposal_id: "prop-1".into(),
+            base_policy_id: "test-p".into(),
+            base_version: 1,
+            candidate_version: 2,
+            proposed_policy: policy_v2.clone(),
+            parameter_deltas: vec![arabica_runtime::PolicyParameterDelta::AfterToolError {
+                from: None,
+                to: Some("strong".into()),
+            }],
+            evidence: arabica_runtime::ProposalEvidenceBasis {
+                metric: "total_tool_errors".into(),
+                observed_value: "3".into(),
+                threshold: "1".into(),
+                category: None,
+                source_fingerprint: Some("evidence-fp".into()),
+                tool_name: None,
+            },
+            rationale: "AfterToolError recovery proposal".into(),
+        };
+
+        let rec2 = GeneratedPolicyRecord::new(
+            "test-p",
+            2,
+            "candidate",
+            policy_v2,
+            Some("evidence-fp".into()),
+            "bounded proposal from evidence",
+        )
+        .with_proposal(proposal);
+        db.save_policy_version(&rec2).unwrap();
+
+        // Trace proposal to evidence
+        let stored_v2 = db.get_policy_version("test-p", 2).unwrap().unwrap();
+        assert_eq!(stored_v2.status, "candidate");
+        assert!(stored_v2.proposal.is_some());
+        assert_eq!(
+            stored_v2.proposal.as_ref().unwrap().evidence.metric,
+            "total_tool_errors"
+        );
+
+        // Cannot activate candidate without approval
+        assert!(db.activate_policy_version("test-p", 2).is_err());
+
+        // Approve v2 then activate
+        db.approve_policy("test-p", 2).unwrap();
+        let activated_v2 = db.activate_policy_version("test-p", 2).unwrap();
+        assert_eq!(activated_v2.status, "active");
+
+        // Prior active version 1 must now be retired
+        let v1_now = db.get_policy_version("test-p", 1).unwrap().unwrap();
+        assert_eq!(v1_now.status, "retired");
+        assert_eq!(db.get_active_policy("test-p").unwrap().unwrap().version, 2);
+
+        // 4. Rollback to previous version (v1)
+        let rolled_back = db.rollback_policy("test-p", None).unwrap();
+        assert_eq!(rolled_back.version, 1);
+        assert_eq!(rolled_back.status, "active");
+
+        let v2_after_rollback = db.get_policy_version("test-p", 2).unwrap().unwrap();
+        assert_eq!(v2_after_rollback.status, "retired");
+        assert_eq!(db.get_active_policy("test-p").unwrap().unwrap().version, 1);
+
+        // 5. Explicit rollback forward to v2
+        let forward = db.rollback_policy("test-p", Some(2)).unwrap();
+        assert_eq!(forward.version, 2);
+        assert_eq!(forward.status, "active");
+        assert_eq!(db.get_active_policy("test-p").unwrap().unwrap().version, 2);
 
         std::fs::remove_dir_all(home).unwrap();
     }

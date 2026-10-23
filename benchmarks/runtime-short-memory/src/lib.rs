@@ -15,6 +15,8 @@ pub use blend_campaign::{
 };
 mod cli_comparison;
 pub mod experiment;
+pub mod frozen_tasks;
+pub use frozen_tasks::*;
 mod gates;
 mod generator;
 mod long_horizon;

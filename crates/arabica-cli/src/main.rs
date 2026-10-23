@@ -13,7 +13,7 @@ use clap::{Args, Parser, Subcommand};
 use std::io::IsTerminal;
 
 #[derive(Parser, Debug)]
-#[command(name = "arabica", about = "Arabica coding agent host")]
+#[command(name = "arabica", version, about = "Arabica coding agent host")]
 struct Cli {
     #[command(flatten)]
     config: HostConfigArgs,
@@ -65,15 +65,35 @@ impl PrintArgs {
     }
 }
 
+#[derive(Args, Debug)]
+struct AcpArgs {
+    /// MCP lifecycle for HTTP and stdio servers: "auto" falls back to the
+    /// legacy initialize handshake only when a server proves it is legacy;
+    /// "modern" requires MCP 2026-07-28 and never falls back.
+    #[arg(long, value_enum, default_value_t = McpProtocol::Auto)]
+    mcp_protocol: McpProtocol,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum McpProtocol {
+    Auto,
+    Modern,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Install the latest signed release or configure automatic CLI updates.
+    Update(arabica_cli::update::UpdateArgs),
     /// Run as an Agent Client Protocol v1 agent over stdio (for editors like Zed).
-    Acp,
+    Acp(AcpArgs),
     /// Start an interactive terminal session (also the default).
     Chat,
-    /// Show the resolved provider configuration without starting a session.
-    Config,
-    /// Manage the terminal CLI's saved API key.
+    /// Show resolved configuration, or inspect and edit config.toml as JSON.
+    Config {
+        #[command(subcommand)]
+        action: Option<arabica_cli::settings::SettingsAction>,
+    },
+    /// Manage saved API credentials.
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -87,6 +107,16 @@ enum Commands {
     Sessions {
         #[command(subcommand)]
         action: SessionsAction,
+    },
+    /// Authorize remote MCP servers that use OAuth.
+    Mcp {
+        #[command(subcommand)]
+        action: arabica_cli::mcp::commands::McpAction,
+    },
+    /// Manage, discover, and sync models from upstream providers.
+    Models {
+        #[command(subcommand)]
+        action: arabica_cli::models::ModelsAction,
     },
 }
 
@@ -104,6 +134,14 @@ async fn run(cli: Cli) -> i32 {
     } = cli;
 
     // These commands need no working model provider.
+    if let Some(Commands::Update(args)) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the update subcommand");
+            2
+        } else {
+            arabica_cli::update::run(args).await
+        };
+    }
     if let Some(Commands::Evaluations { action }) = command {
         return if print_args.print.is_some() {
             eprintln!("error: -p cannot be combined with the evaluations subcommand");
@@ -125,14 +163,52 @@ async fn run(cli: Cli) -> i32 {
             eprintln!("error: -p cannot be combined with the auth subcommand");
             2
         } else {
-            arabica_cli::auth::run(action)
+            arabica_cli::auth::run(action).await
+        };
+    }
+    if let Some(Commands::Mcp { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the mcp subcommand");
+            2
+        } else {
+            arabica_cli::mcp::commands::run(action).await
+        };
+    }
+    if let Some(Commands::Models { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the models subcommand");
+            2
+        } else {
+            arabica_cli::models::run(action).await
+        };
+    }
+    if let Some(Commands::Config {
+        action: Some(action),
+    }) = command
+    {
+        return if print_args.print.is_some() {
+            println!(
+                "{}",
+                serde_json::json!({"error": {
+                    "code": "invalid_request",
+                    "message": "The config subcommands cannot be combined with -p.",
+                    "path": []
+                }})
+            );
+            2
+        } else {
+            arabica_cli::settings::run(action)
         };
     }
 
     let resolved = match (|| {
         let home = arabica_adapters::default_arabica_home()?;
         let cwd = std::env::current_dir()?;
-        resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
+        if matches!(command, Some(Commands::Acp(_))) {
+            arabica_cli::config::resolve_cli_acp_config(&config, &home, &cwd, process_environment)
+        } else {
+            resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
+        }
     })() {
         Ok(config) => config,
         Err(error) => {
@@ -142,23 +218,31 @@ async fn run(cli: Cli) -> i32 {
     };
 
     match (command, &print_args.print) {
-        (Some(Commands::Acp), Some(_)) => {
+        (Some(Commands::Acp(_)), Some(_)) => {
             eprintln!("error: -p cannot be combined with the acp subcommand");
             2
         }
-        (Some(Commands::Acp), None) => run_acp(resolved).await,
-        (Some(Commands::Chat | Commands::Config), Some(_)) => {
+        (Some(Commands::Acp(args)), None) => {
+            if args.mcp_protocol == McpProtocol::Modern {
+                arabica_cli::mcp::require_modern_protocol();
+            }
+            run_acp(resolved).await
+        }
+        (Some(Commands::Chat | Commands::Config { .. }), Some(_)) => {
             eprintln!("error: -p cannot be combined with this subcommand");
             2
         }
         (Some(Commands::Chat), None) => run_chat(resolved, print_args).await,
-        (Some(Commands::Config), None) => match describe_configuration(resolved) {
+        (Some(Commands::Config { action: None }), None) => match describe_configuration(resolved) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("error: {error}");
                 1
             }
         },
+        (Some(Commands::Config { action: Some(_) }), None) => {
+            unreachable!("structured config commands return early")
+        }
         (Some(Commands::Evaluations { .. }), _) => unreachable!("evaluations returns early"),
         (Some(Commands::Sessions { .. }), _) => {
             unreachable!("Commands::Sessions returns early above")
@@ -166,6 +250,13 @@ async fn run(cli: Cli) -> i32 {
         (Some(Commands::Auth { .. }), _) => {
             unreachable!("Commands::Auth returns early above")
         }
+        (Some(Commands::Mcp { .. }), _) => {
+            unreachable!("Commands::Mcp returns early above")
+        }
+        (Some(Commands::Models { .. }), _) => {
+            unreachable!("Commands::Models returns early above")
+        }
+        (Some(Commands::Update(_)), _) => unreachable!("update returns early"),
         (None, Some(task)) => run_print(resolved, task.clone(), print_args).await,
         (None, None) => run_chat(resolved, print_args).await,
     }
@@ -175,6 +266,9 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
     if args.output_format != OutputFormat::Text {
         eprintln!("error: --output-format is only available with -p");
         return 2;
+    }
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        arabica_cli::update::schedule_background_update();
     }
     let options = InteractiveOptions {
         allow_shell: args.allow_shell,
@@ -279,14 +373,7 @@ fn describe_configuration(resolved: ResolvedCliConfig) -> Result<(), Box<dyn std
     let api_type = provider_config.api_type;
     let base_url = provider_config.base_url.clone();
     let model_name = provider_config.model.clone();
-    let thinking = if !provider_config.thinking_enabled {
-        "off".to_owned()
-    } else {
-        provider_config
-            .reasoning_effort
-            .clone()
-            .unwrap_or_else(|| "on".to_owned())
-    };
+    let thinking = arabica_cli::config::thinking_level(&provider_config).to_owned();
 
     let runner_root = std::env::current_dir()?;
     let arabica_home = arabica_adapters::default_arabica_home()?;

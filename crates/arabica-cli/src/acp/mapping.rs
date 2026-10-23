@@ -32,6 +32,7 @@ pub struct AcpObserver {
     session_id: AcpSessionId,
     workspace_root: PathBuf,
     streamed: Mutex<StreamedContent>,
+    open_calls: Mutex<OpenToolCalls>,
 }
 
 #[derive(Default)]
@@ -51,6 +52,7 @@ impl AcpObserver {
             session_id,
             workspace_root,
             streamed: Mutex::new(StreamedContent::default()),
+            open_calls: Mutex::new(OpenToolCalls::default()),
         }
     }
 
@@ -101,6 +103,12 @@ impl AcpObserver {
 impl SessionEventObserver for AcpObserver {
     fn observe(&self, envelope: &EventEnvelope, _visibility: EventVisibility) {
         let mut updates = updates_for(&envelope.event, &envelope.run_id, &self.workspace_root);
+        updates.extend(
+            self.open_calls
+                .lock()
+                .expect("open tool calls lock poisoned")
+                .track(&envelope.event, &envelope.run_id),
+        );
         if let Event::ModelResponseItem { item, .. } = &envelope.event {
             let streamed = self.streamed.lock().expect("stream state lock poisoned");
             let already_sent = match item {
@@ -434,6 +442,54 @@ pub(super) fn updates_for(
     }
 }
 
+/// Tool calls a client has seen requested but not completed. When a run ends
+/// with calls still open, their outcome is unknown: each is reported as
+/// failed with that explanation, so no call stays in progress forever.
+#[derive(Default)]
+pub(super) struct OpenToolCalls(Vec<(Option<arabica_protocol::RunId>, String)>);
+
+impl OpenToolCalls {
+    pub(super) fn track(
+        &mut self,
+        event: &Event,
+        run_id: &Option<arabica_protocol::RunId>,
+    ) -> Vec<SessionUpdate> {
+        let reason = match event {
+            Event::ToolCallRequested { call_id, .. } => {
+                self.0.push((run_id.clone(), call_id.clone()));
+                return Vec::new();
+            }
+            Event::ToolCallCompleted { call_id, .. } => {
+                self.0
+                    .retain(|(open_run, open_call)| open_run != run_id || open_call != call_id);
+                return Vec::new();
+            }
+            Event::RunFailed { .. } | Event::RunCompleted { .. } => {
+                "The run ended before this tool call reported a result; its outcome is unknown."
+            }
+            Event::RunCancelled => {
+                "The run was cancelled before this tool call reported a result; it may still have taken effect."
+            }
+            _ => return Vec::new(),
+        };
+        let (ended, open): (Vec<_>, Vec<_>) = std::mem::take(&mut self.0)
+            .into_iter()
+            .partition(|(open_run, _)| open_run == run_id);
+        self.0 = open;
+        ended
+            .into_iter()
+            .map(|(_, call_id)| {
+                SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                    acp_tool_call_id(run_id, &call_id),
+                    ToolCallUpdateFields::new()
+                        .status(ToolCallStatus::Failed)
+                        .content(vec![ToolCallContent::from(reason)]),
+                ))
+            })
+            .collect()
+    }
+}
+
 fn in_progress(run_id: &Option<arabica_protocol::RunId>, call_id: &str) -> SessionUpdate {
     SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
         acp_tool_call_id(run_id, call_id),
@@ -461,6 +517,45 @@ mod tests {
         };
         assert_eq!(text.text, content);
         assert!(updates_for(&event, &None, Path::new("/workspace")).is_empty());
+    }
+
+    #[test]
+    fn calls_left_open_when_a_run_ends_are_reported_failed() {
+        let run = Some(arabica_protocol::RunId::new("run-1"));
+        let other = Some(arabica_protocol::RunId::new("run-2"));
+        let requested = |call_id: &str| Event::ToolCallRequested {
+            call_id: call_id.to_owned(),
+            name: "mcp__agentnexus__echo".to_owned(),
+            arguments: serde_json::json!({}),
+            provider_state: None,
+        };
+        let mut open = OpenToolCalls::default();
+        assert!(open.track(&requested("done"), &run).is_empty());
+        assert!(open.track(&requested("dangling"), &run).is_empty());
+        assert!(open.track(&requested("elsewhere"), &other).is_empty());
+        let completed = Event::ToolCallCompleted {
+            call_id: "done".to_owned(),
+            name: "mcp__agentnexus__echo".to_owned(),
+            result: "ok".to_owned(),
+            is_error: false,
+        };
+        assert!(open.track(&completed, &run).is_empty());
+        let settled = open.track(
+            &Event::RunFailed {
+                message: "outcome unknown".to_owned(),
+            },
+            &run,
+        );
+        assert_eq!(settled.len(), 1);
+        let SessionUpdate::ToolCallUpdate(update) = &settled[0] else {
+            panic!("expected a tool call update, got {settled:?}");
+        };
+        assert_eq!(update.tool_call_id, acp_tool_call_id(&run, "dangling"));
+        assert_eq!(update.fields.status, Some(ToolCallStatus::Failed));
+        // The other run's call is untouched until that run ends.
+        let cancelled = open.track(&Event::RunCancelled, &other);
+        assert_eq!(cancelled.len(), 1);
+        assert!(open.track(&Event::RunCancelled, &run).is_empty());
     }
 
     #[test]

@@ -27,6 +27,8 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let status: String
         let policy: PolicyDetails
         let reason: String
+        let proposal: Proposal?
+        let activated_at: String?
 
         struct PolicyDetails: Decodable, Equatable, Sendable {
             let default_model: String
@@ -35,7 +37,32 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
             let recovery_model: String?
             let recovery_after_no_progress_steps: Int?
             let minimum_model_dwell_steps: Int?
+            let tool_routes: [ToolRoute]?
         }
+
+        struct ToolRoute: Decodable, Equatable, Sendable, Identifiable {
+            let id: String
+            let model: String
+            let priority: Int?
+        }
+    }
+
+    struct Proposal: Decodable, Equatable, Sendable {
+        let proposal_id: String
+        let base_policy_id: String
+        let base_version: UInt64
+        let candidate_version: UInt64
+        let rationale: String
+        let evidence: ProposalEvidence
+    }
+
+    struct ProposalEvidence: Decodable, Equatable, Sendable {
+        let metric: String
+        let observed_value: String
+        let threshold: String
+        let category: String?
+        let source_fingerprint: String?
+        let tool_name: String?
     }
 
     struct WorkerStatus: Decodable, Equatable, Sendable {
@@ -60,6 +87,22 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let workspace_id: String
         let terminal_status: String
         let timing: Timing
+        let tools: [ObservedTool]?
+        let policy_fingerprints: [String]?
+    }
+    /// Mirrors the runtime's `ObservedTool`: a call that never finished
+    /// has neither field.
+    struct ObservedTool: Decodable, Equatable, Sendable, Identifiable {
+        var id: String { call_id }
+        let call_id: String
+        let name: String
+        let is_error: Bool?
+        /// `succeeded`, `failed`, `cancelled`, or `unknown`.
+        let runner_outcome: String?
+
+        var failed: Bool {
+            is_error == true || runner_outcome == "failed" || runner_outcome == "cancelled"
+        }
     }
     struct Timing: Decodable, Equatable, Sendable {
         let queue_ms: UInt64?
@@ -72,6 +115,7 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let usage_reported_calls: UInt64
     }
     struct Acceptance: Decodable, Equatable, Sendable {
+        let task_id: String?
         let completion_bps: UInt32?
         let coverage_bps: UInt32?
         let verified_success: Bool?
@@ -81,6 +125,7 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         var id: String { criterion_id }
         let criterion_id: String
         let status: String
+        let evidence: String?
     }
     struct Checkpoint: Decodable, Equatable, Sendable {
         let session_id: String
@@ -204,6 +249,63 @@ final class EvaluationModel: ObservableObject {
             self.error = "Could not read evaluation status. Retry or reconnect the workspace."
         }
     }
+    func approvePolicy(policyId: String, version: UInt64) async {
+        await performPolicyAction(action: "approve", policyId: policyId, version: version)
+    }
+
+    func rejectPolicy(policyId: String, version: UInt64) async {
+        await performPolicyAction(action: "reject", policyId: policyId, version: version)
+    }
+
+    func activatePolicy(policyId: String, version: UInt64) async {
+        await performPolicyAction(action: "activate", policyId: policyId, version: version)
+    }
+
+    func quickApplyPolicy(policyId: String, version: UInt64) async {
+        await approvePolicy(policyId: policyId, version: version)
+        if error == nil {
+            await activatePolicy(policyId: policyId, version: version)
+            message = "Policy \(policyId) v\(version) activated for new sessions."
+        }
+    }
+
+    func rollbackPolicy(policyId: String, targetVersion: UInt64? = nil) async {
+        await performPolicyAction(action: "rollback", policyId: policyId, targetVersion: targetVersion)
+    }
+
+    func proposePolicy(policyId: String? = nil) async {
+        await performPolicyAction(action: "propose", policyId: policyId)
+    }
+
+    private func performPolicyAction(
+        action: String,
+        policyId: String? = nil,
+        version: UInt64? = nil,
+        targetVersion: UInt64? = nil
+    ) async {
+        guard supported, !isRequesting, let session = sessionID, let request else { return }
+        let scope = generation
+        isRequesting = true
+        error = nil
+        defer { if generation == scope { isRequesting = false } }
+        do {
+            var params: [String: Any] = ["sessionId": session, "action": action]
+            if let policyId { params["policyId"] = policyId }
+            if let version { params["version"] = version }
+            if let targetVersion { params["targetVersion"] = targetVersion }
+            let response = try await request("_arabica/evaluation/policy/action", params)
+            guard generation == scope, !Task.isCancelled else { return }
+            let next = try EvaluationSnapshot.decode(response, session: session)
+            snapshot = next
+            cache[session] = next
+            queriedAt = Date()
+            message = "Policy \(action) completed."
+        } catch {
+            guard generation == scope, !Task.isCancelled else { return }
+            self.error = "Failed to \(action) policy: \(error.localizedDescription)"
+        }
+    }
+
     func poll() async {
         await load()
         while !Task.isCancelled {

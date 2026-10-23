@@ -70,6 +70,14 @@ if [[ -z "$identity" ]]; then
 fi
 
 # Sign nested command-line code first, then the enclosing app bundle.
+framework="$app/Contents/Frameworks/Sparkle.framework"
+for service in Installer Downloader; do
+  codesign --force --options runtime --timestamp --sign "$identity" \
+    --preserve-metadata=entitlements "$framework/Versions/B/XPCServices/${service}.xpc"
+done
+codesign --force --options runtime --timestamp --sign "$identity" "$framework/Versions/B/Autoupdate"
+codesign --force --options runtime --timestamp --sign "$identity" "$framework/Versions/B/Updater.app"
+codesign --force --options runtime --timestamp --sign "$identity" "$framework"
 codesign --force --options runtime --timestamp --sign "$identity" \
   "$app/Contents/Resources/arabica"
 codesign --force --options runtime --timestamp --sign "$identity" \
@@ -116,11 +124,27 @@ if [[ "$notary_status" != "Accepted" ]]; then
   exit 1
 fi
 
-xcrun stapler staple "$app"
+# Apple's ticket-delivery service may drop a connection after accepting notarization.
+# Retry the network step while retaining the signed bundle; validation stays mandatory.
+stapled=false
+for attempt in 1 2 3 4 5; do
+  if xcrun stapler staple "$app"; then
+    stapled=true
+    break
+  fi
+  if [[ "$attempt" != 5 ]]; then
+    echo "Notarization ticket delivery failed; retrying ($attempt/5)." >&2
+    sleep "$((attempt * 5))"
+  fi
+done
+if [[ "$stapled" != true ]]; then
+  echo 'Could not staple the accepted notarization ticket after five attempts.' >&2
+  exit 1
+fi
 xcrun stapler validate "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 spctl --assess --type execute --verbose=4 "$app"
 
 ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
-shasum -a 256 "$archive" > "$archive.sha256"
+(cd dist && shasum -a 256 "$(basename "$archive")" > "$(basename "$archive").sha256")
 echo "Signed, notarized, and packaged $archive"

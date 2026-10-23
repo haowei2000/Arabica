@@ -634,6 +634,56 @@ pub struct GeneratedPolicyRecord {
     pub policy: BlendRoutingPolicy,
     pub basis_fingerprint: Option<String>,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<crate::PolicyProposal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activated_at: Option<String>,
+}
+
+impl GeneratedPolicyRecord {
+    pub fn new(
+        policy_id: impl Into<String>,
+        version: u64,
+        status: impl Into<String>,
+        policy: BlendRoutingPolicy,
+        basis_fingerprint: Option<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            policy_id: policy_id.into(),
+            version,
+            status: status.into(),
+            policy,
+            basis_fingerprint,
+            reason: reason.into(),
+            proposal: None,
+            activated_at: None,
+        }
+    }
+
+    pub fn with_proposal(mut self, proposal: crate::PolicyProposal) -> Self {
+        self.proposal = Some(proposal);
+        self
+    }
+
+    pub fn lifecycle_status(&self) -> Result<crate::PolicyLifecycleStatus, crate::EvaluationError> {
+        self.status.parse()
+    }
+
+    pub fn set_lifecycle_status(
+        &mut self,
+        status: crate::PolicyLifecycleStatus,
+    ) -> Result<(), crate::EvaluationError> {
+        let current = self.lifecycle_status()?;
+        if !current.can_transition_to(status) {
+            return Err(crate::EvaluationError(format!(
+                "invalid status transition from '{current}' to '{status}' for policy '{}' v{}",
+                self.policy_id, self.version
+            )));
+        }
+        self.status = status.to_string();
+        Ok(())
+    }
 }
 
 /// Propose an evolved routing policy candidate given historical evaluation evidence and reports.
@@ -686,6 +736,8 @@ pub fn evolve_blend_policy(
             policy: evolved,
             basis_fingerprint,
             reason: reason_parts.join("; "),
+            proposal: None,
+            activated_at: None,
         })
     } else {
         None

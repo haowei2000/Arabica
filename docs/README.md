@@ -8,6 +8,7 @@
 - [Long-horizon experiment protocol](long_horizon_experiment_protocol.md)
 - [Blend model routing reading list](blend-reading-list.md)
 - [Arabica Blend implementation design](arabica-blend-design.md)
+- [Automatic task scoring and Blend iteration plan](blend-scoring-plan.md)
 - [Release audit](OPEN_SOURCE_RELEASE.md)
 
 ## Historical material

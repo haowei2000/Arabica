@@ -30,6 +30,23 @@ macro_rules! string_id {
             pub fn new(value: impl Into<String>) -> Self {
                 Self(value.into())
             }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = str;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl std::borrow::Borrow<str> for $name {
+            fn borrow(&self) -> &str {
+                &self.0
+            }
         }
 
         impl std::fmt::Display for $name {

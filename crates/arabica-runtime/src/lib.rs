@@ -10,6 +10,14 @@ mod context;
 mod context_report;
 mod run_evaluation;
 pub use run_evaluation::*;
+mod scoring;
+pub use scoring::*;
+mod accounting;
+pub use accounting::*;
+mod policy_comparison;
+pub use policy_comparison::*;
+mod policy_lifecycle;
+pub use policy_lifecycle::*;
 mod evaluation;
 pub use evaluation::*;
 mod context_state;
@@ -83,6 +91,23 @@ const MAX_FILE_BACKED_GC_CHECKPOINT_BATCHES: usize = 4;
 const POINTER_GC_CACHE_WARMUP_REQUESTS: u64 = 2;
 const DEFAULT_PINNED_ERROR_TOOL_BATCHES: usize = 2;
 const DEFAULT_PINNED_INSPECTION_TOOL_BATCHES: usize = 2;
+
+pub(crate) fn cached_regex_is_match(pattern: &str, text: &str) -> bool {
+    thread_local! {
+        static REGEX_CACHE: std::cell::RefCell<HashMap<String, Option<Regex>>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    REGEX_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(opt_re) = map.get(pattern) {
+            return opt_re.as_ref().is_some_and(|re| re.is_match(text));
+        }
+        let compiled = Regex::new(pattern).ok();
+        let matched = compiled.as_ref().is_some_and(|re| re.is_match(text));
+        map.insert(pattern.to_owned(), compiled);
+        matched
+    })
+}
 const DEFAULT_AUTO_HYDRATION_MAX_BYTES: usize = 64 * 1024;
 const PROBABILITY_SCALE_BPS: u32 = 10_000;
 const FALLBACK_BYTES_PER_TOKEN: usize = 4;
@@ -1353,19 +1378,19 @@ fn choose_tool_route(
                 BlendToolMatcher::RegexName(pattern) => (
                     2,
                     BlendRouteReason::ToolRouteRegexName,
-                    Regex::new(pattern).is_ok_and(|regex| regex.is_match(&name)),
+                    cached_regex_is_match(pattern, &name),
                 ),
                 BlendToolMatcher::EventTraceRegex(pattern) => (
                     2,
                     BlendRouteReason::ToolRouteEventTraceRegex,
-                    Regex::new(pattern).is_ok_and(|regex| regex.is_match(&event_trace)),
+                    cached_regex_is_match(pattern, &event_trace),
                 ),
                 BlendToolMatcher::EventTraceV1Regex(pattern) => (
                     2,
                     BlendRouteReason::ToolRouteEventTraceV1Regex,
-                    trace_v1.as_ref().is_some_and(|trace| {
-                        Regex::new(pattern).is_ok_and(|regex| regex.is_match(trace))
-                    }),
+                    trace_v1
+                        .as_ref()
+                        .is_some_and(|trace| cached_regex_is_match(pattern, trace)),
                 ),
                 BlendToolMatcher::Kind(expected) => {
                     (1, BlendRouteReason::ToolRouteKind, kind == *expected)
@@ -3097,7 +3122,7 @@ fn completion_advisory_message(
 ) -> String {
     if window_tool_errors > 0 {
         return format!(
-            "runtime_progress_advisory: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps, and the latest {window_steps}-step window contained {window_tool_errors} tool errors. The task is not yet validated: stop varying optional checks, address one concrete failure with a corrective mutation, dependency, or build action, then rerun the required validation. Do not call runtime_complete while required validation is failing."
+            "runtime_progress_advisory: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps, and the latest {window_steps}-step window contained {window_tool_errors} tool errors. The task is not yet validated: stop varying optional checks, address one concrete failure with a corrective mutation, dependency, or build action, then rerun the required validation. Do not call runtime_complete while required validation is failing. Take active corrective steps to fix the errors."
         );
     }
     format!(
@@ -3404,7 +3429,7 @@ fn blocked_tool_result(call: &ToolCallItem, repeat_count: usize) -> ToolResultIt
         call_id: call.call_id.clone(),
         name: Some(call.name.clone()),
         content: vec![ContentBlock::text(format!(
-            "duplicate_tool_call_blocked: this successful inspection or validation has already been reused and was requested {repeat_count} more times without a state-changing tool. Choose a different action that makes progress, or finish the task."
+            "duplicate_tool_call_blocked: this successful inspection or validation has already been reused and was requested {repeat_count} more times without a state-changing tool. You are in a read-only loop. To proceed: (1) if code changes are needed, apply them now using mutation tools (such as edit_files or write_file); (2) if previous work is done and verified, submit completion or report your final answer; (3) do not repeat read-only inspections without intervening mutations."
         ))],
         is_error: true,
     }
@@ -3669,10 +3694,10 @@ fn project_model_step(
         DEFAULT_PINNED_ERROR_TOOL_BATCHES,
         DEFAULT_PINNED_INSPECTION_TOOL_BATCHES,
     ));
-    let current_event_ids: HashSet<_> = history
+    let current_event_ids: HashSet<&str> = history
         .iter()
         .filter(|event| event.run_id.as_ref() == Some(run_id))
-        .map(|event| event.event_id.to_string())
+        .map(|event| event.event_id.as_str())
         .collect();
     let materialization = ShortMemoryProjector::materialize_for_model_step(
         history,
@@ -3717,7 +3742,7 @@ fn project_model_step(
         let is_current_run_entry = entry
             .source_event_ids
             .iter()
-            .any(|event_id| current_event_ids.contains(event_id));
+            .any(|event_id| current_event_ids.contains(event_id.as_str()));
         if !is_current_run_entry {
             short_memory.push(entry);
             continue;
@@ -3772,7 +3797,7 @@ fn provider_safe_policy_entries(
     let mut runs_with_model_messages = HashSet::new();
     let mut events_by_id = HashMap::new();
     for envelope in history {
-        events_by_id.insert(envelope.event_id.to_string(), envelope);
+        events_by_id.insert(envelope.event_id.as_str(), envelope);
         let Some(run_id) = &envelope.run_id else {
             continue;
         };
@@ -3781,23 +3806,23 @@ fn provider_safe_policy_entries(
         }
         match &envelope.event {
             Event::ToolCallCompleted { call_id, .. } => {
-                completed_calls.insert((run_id.clone(), call_id.clone()));
+                completed_calls.insert((run_id.as_str(), call_id.as_str()));
             }
             Event::ModelResponseItem {
                 item: RuntimeItem::Message(_),
                 ..
             } => {
-                runs_with_model_messages.insert(run_id.clone());
+                runs_with_model_messages.insert(run_id.as_str());
             }
             _ => {}
         }
     }
-    let tool_output_ids: HashSet<String> = batches
+    let tool_output_ids: HashSet<&str> = batches
         .iter()
         .filter(|batch| batch.context_kind == MemoryBatchKind::Tool)
         .flat_map(|batch| &batch.events)
         .filter(|event| matches!(event.event, Event::CommandOutput { .. }))
-        .map(|event| event.event_id.to_string())
+        .map(|event| event.event_id.as_str())
         .collect();
     entries
         .into_iter()
@@ -3805,7 +3830,7 @@ fn provider_safe_policy_entries(
             let [event_id] = entry.source_event_ids.as_slice() else {
                 return true;
             };
-            let Some(envelope) = events_by_id.get(event_id) else {
+            let Some(envelope) = events_by_id.get(event_id.as_str()) else {
                 return true;
             };
             let Some(run_id) = &envelope.run_id else {
@@ -3815,12 +3840,12 @@ fn provider_safe_policy_entries(
                 return true;
             }
             match &envelope.event {
-                Event::CommandOutput { .. } => !tool_output_ids.contains(event_id),
+                Event::CommandOutput { .. } => !tool_output_ids.contains(event_id.as_str()),
                 Event::ToolCallRequested { call_id, .. } => {
-                    completed_calls.contains(&(run_id.clone(), call_id.clone()))
+                    completed_calls.contains(&(run_id.as_str(), call_id.as_str()))
                 }
                 Event::RunCompleted { output: Some(_) } => {
-                    !runs_with_model_messages.contains(run_id)
+                    !runs_with_model_messages.contains(run_id.as_str())
                 }
                 _ => true,
             }
@@ -3838,7 +3863,7 @@ fn continuation_substitution<'a>(
         .collect::<HashSet<_>>();
     let call_ids = history
         .iter()
-        .filter(|event| event_ids.contains(&event.event_id.to_string()))
+        .filter(|event| event_ids.contains(event.event_id.as_str()))
         .filter_map(|event| match &event.event {
             Event::ToolCallRequested { call_id, .. } | Event::ToolCallCompleted { call_id, .. } => {
                 Some(call_id.clone())
@@ -4508,23 +4533,20 @@ fn pointer_gc_epoch_blockers(
 fn is_archivable_batch(batch: &EventBatch) -> bool {
     match batch.context_kind {
         MemoryBatchKind::Tool => {
-            let requested: HashSet<_> = batch
-                .events
-                .iter()
-                .filter_map(|event| match &event.event {
-                    Event::ToolCallRequested { call_id, .. } => Some(call_id.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let completed: HashSet<_> = batch
-                .events
-                .iter()
-                .filter_map(|event| match &event.event {
-                    Event::ToolCallCompleted { call_id, .. } => Some(call_id.as_str()),
-                    _ => None,
-                })
-                .collect();
-            !requested.is_empty() && requested.is_subset(&completed)
+            let mut has_requested = false;
+            for event in &batch.events {
+                if let Event::ToolCallRequested { call_id, .. } = &event.event {
+                    has_requested = true;
+                    let call_id = call_id.as_str();
+                    let completed = batch.events.iter().any(|other| {
+                        matches!(&other.event, Event::ToolCallCompleted { call_id: completed_id, .. } if completed_id.as_str() == call_id)
+                    });
+                    if !completed {
+                        return false;
+                    }
+                }
+            }
+            has_requested
         }
         MemoryBatchKind::Reasoning => true,
         MemoryBatchKind::Turn => batch.events.iter().any(|event| {
@@ -4612,11 +4634,12 @@ fn pointer_archive_path(batch: &EventBatch, content_hash: &str) -> String {
         _ => None,
     });
     let status = status.unwrap_or("closed");
-    let short_hash = content_hash
-        .trim_start_matches("sha256:")
-        .chars()
-        .take(20)
-        .collect::<String>();
+    let raw_hash = content_hash.strip_prefix("sha256:").unwrap_or(content_hash);
+    let short_hash = if raw_hash.len() > 20 {
+        &raw_hash[..20]
+    } else {
+        raw_hash
+    };
     format!(
         "m/{category}/{:06}-{:06}-{status}-{short_hash}.json",
         batch.sequence_start, batch.sequence_end
@@ -4754,7 +4777,7 @@ pub fn memory_search_definition() -> ToolDefinition {
                     "maximum": 10
                 }
             },
-            "required": ["query"],
+            "required": ["query", "limit"],
             "additionalProperties": false
         }),
         strict: Some(true),
@@ -8073,6 +8096,27 @@ mod tests {
         assert!(failed.contains("contained 3 tool errors"));
         assert!(failed.contains("corrective mutation, dependency, or build action"));
         assert!(failed.contains("Do not call runtime_complete"));
+    }
+
+    #[test]
+    fn blocked_tool_result_provides_actionable_recovery_guidance() {
+        let call = ToolCallItem {
+            id: None,
+            call_id: "test-call-1".to_owned(),
+            name: "grep".to_owned(),
+            arguments: serde_json::json!({"pattern": "foo"}),
+            provider_state: None,
+        };
+        let result = blocked_tool_result(&call, 2);
+        assert!(result.is_error);
+        let ContentBlock::Text { text } = &result.content[0] else {
+            panic!("expected text content");
+        };
+        assert!(text.starts_with("duplicate_tool_call_blocked:"));
+        assert!(text.contains("requested 2 more times"));
+        assert!(text.contains("read-only loop"));
+        assert!(text.contains("apply them now using mutation tools"));
+        assert!(text.contains("submit completion or report your final answer"));
     }
 
     #[tokio::test]

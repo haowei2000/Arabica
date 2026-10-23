@@ -49,6 +49,23 @@ final class EvaluationModelTests: XCTestCase {
         XCTAssertThrowsError(try EvaluationSnapshot.decode(response, session: "session"))
     }
 
+    func testObservedToolsDecodeInTheRuntimeShape() throws {
+        var response = view()
+        var report = response["report"] as! [String: Any]
+        let snapshot: [String: Any] = ["run_id": "run", "session_id": "session", "workspace_id": "workspace",
+            "terminal_status": "completed", "timing": ["model_call_ms_total": 900, "model_calls": 2, "usage_reported_calls": 1],
+            "tools": [
+                ["call_id": "a", "name": "list_dir", "is_error": false, "runner_outcome": "succeeded"],
+                ["call_id": "b", "name": "shell", "is_error": true, "runner_outcome": "succeeded"],
+                ["call_id": "c", "name": "write_file", "runner_outcome": "cancelled"],
+                ["call_id": "d", "name": "grep"],
+            ]]
+        report["runs"] = [["snapshot": snapshot]]
+        response["report"] = report
+        let tools = try EvaluationSnapshot.decode(response, session: "session").report!.runs!.first!.snapshot.tools!
+        XCTAssertEqual(tools.map(\.failed), [false, true, true, false])
+    }
+
     func testRefreshAcceptanceRetainsCachedReportWhenWorkerReturnsNoReport() async {
         let model = EvaluationModel()
         var requests: [String] = []
@@ -127,5 +144,95 @@ final class EvaluationModelTests: XCTestCase {
         await model.load(refresh: true)
         XCTAssertFalse(model.isRequesting)
         XCTAssertNil(model.snapshot)
+    }
+
+    func testPolicyLifecycleDecodesWithProposalAndActivatedAt() throws {
+        var response = view()
+        response["policies"] = [
+            [
+                "policy_id": "default",
+                "version": 2,
+                "status": "active",
+                "policy": [
+                    "default_model": "claude-3-7-sonnet",
+                    "after_tool_success": "claude-3-5-haiku",
+                    "after_tool_error": "claude-3-7-sonnet",
+                    "recovery_model": "claude-3-7-sonnet",
+                    "recovery_after_no_progress_steps": 3,
+                    "minimum_model_dwell_steps": 1,
+                    "tool_routes": [
+                        ["id": "bash", "model": "claude-3-7-sonnet", "priority": 10]
+                    ]
+                ],
+                "reason": "Activated after review",
+                "proposal": [
+                    "proposal_id": "prop-1",
+                    "base_policy_id": "default",
+                    "base_version": 1,
+                    "candidate_version": 2,
+                    "rationale": "High tool failure rate on bash",
+                    "evidence": [
+                        "metric": "tool_failure_rate",
+                        "observed_value": "0.35",
+                        "threshold": "0.20",
+                        "category": "error",
+                        "source_fingerprint": "fp-1",
+                        "tool_name": "bash"
+                    ]
+                ],
+                "activated_at": "2026-10-21T12:00:00Z"
+            ]
+        ]
+        let decoded = try EvaluationSnapshot.decode(response, session: "session")
+        XCTAssertEqual(decoded.policies?.count, 1)
+        let policy = decoded.policies!.first!
+        XCTAssertEqual(policy.policy_id, "default")
+        XCTAssertEqual(policy.version, 2)
+        XCTAssertEqual(policy.status, "active")
+        XCTAssertEqual(policy.policy.default_model, "claude-3-7-sonnet")
+        XCTAssertEqual(policy.policy.tool_routes?.count, 1)
+        XCTAssertEqual(policy.policy.tool_routes?.first?.id, "bash")
+        XCTAssertEqual(policy.activated_at, "2026-10-21T12:00:00Z")
+        XCTAssertEqual(policy.proposal?.proposal_id, "prop-1")
+        XCTAssertEqual(policy.proposal?.evidence.tool_name, "bash")
+    }
+
+    func testPolicyActionsDispatchCorrectRPCAndParameters() async {
+        let model = EvaluationModel()
+        var dispatchedMethods: [String] = []
+        var dispatchedParams: [[String: Any]] = []
+
+        model.connect(supported: true) { method, params in
+            dispatchedMethods.append(method)
+            dispatchedParams.append(params)
+            return self.view()
+        }
+        model.select("session")
+
+        await model.approvePolicy(policyId: "default", version: 2)
+        XCTAssertEqual(dispatchedMethods.last, "_arabica/evaluation/policy/action")
+        XCTAssertEqual(dispatchedParams.last?["action"] as? String, "approve")
+        XCTAssertEqual(dispatchedParams.last?["policyId"] as? String, "default")
+        XCTAssertEqual(dispatchedParams.last?["version"] as? UInt64, 2)
+        XCTAssertEqual(model.message, "Policy approve completed.")
+
+        await model.activatePolicy(policyId: "default", version: 2)
+        XCTAssertEqual(dispatchedParams.last?["action"] as? String, "activate")
+        XCTAssertEqual(model.message, "Policy activate completed.")
+
+        await model.rollbackPolicy(policyId: "default", targetVersion: 1)
+        XCTAssertEqual(dispatchedParams.last?["action"] as? String, "rollback")
+        XCTAssertEqual(dispatchedParams.last?["targetVersion"] as? UInt64, 1)
+        XCTAssertEqual(model.message, "Policy rollback completed.")
+
+        await model.proposePolicy(policyId: "default")
+        XCTAssertEqual(dispatchedParams.last?["action"] as? String, "propose")
+        XCTAssertEqual(dispatchedParams.last?["policyId"] as? String, "default")
+        XCTAssertEqual(model.message, "Policy propose completed.")
+
+        await model.quickApplyPolicy(policyId: "default", version: 3)
+        XCTAssertEqual(dispatchedParams[dispatchedParams.count - 2]["action"] as? String, "approve")
+        XCTAssertEqual(dispatchedParams.last?["action"] as? String, "activate")
+        XCTAssertEqual(model.message, "Policy default v3 activated for new sessions.")
     }
 }
