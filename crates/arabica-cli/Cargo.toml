@@ -48,13 +48,13 @@ toml.workspace = true
 toml_edit = "0.23"
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
-arabica-adapters = { version = "0.11.0", path = "../arabica-adapters" }
-arabica-model = { version = "0.11.0", path = "../arabica-model" }
-arabica-protocol = { version = "0.11.0", path = "../arabica-protocol" }
-arabica-provider = { version = "0.11.0", path = "../arabica-provider" }
-arabica-runner = { version = "0.11.0", path = "../arabica-runner" }
-arabica-runtime = { version = "0.11.0", path = "../arabica-runtime" }
-arabica-session = { version = "0.11.0", path = "../arabica-session" }
+arabica-adapters = { version = "0.12.0", path = "../arabica-adapters" }
+arabica-model = { version = "0.12.0", path = "../arabica-model" }
+arabica-protocol = { version = "0.12.0", path = "../arabica-protocol" }
+arabica-provider = { version = "0.12.0", path = "../arabica-provider" }
+arabica-runner = { version = "0.12.0", path = "../arabica-runner" }
+arabica-runtime = { version = "0.12.0", path = "../arabica-runtime" }
+arabica-session = { version = "0.12.0", path = "../arabica-session" }
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true

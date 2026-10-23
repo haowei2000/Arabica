@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.12.0 — 2026-10-23
+
+- Add dynamic authentication for remote HTTP MCP servers in long-lived ACP sessions. Tokens are resolved per request, refreshed once on expiry or after a single 401, shared across concurrent requests, and never replaced by an unauthenticated request. Modes: `broker` (the ACP client answers `_arabica/mcp/credential`, advertised as `arabica.mcpAuth`), `oauth`, and `command`.
+- Add MCP OAuth following the 2026-07-28 authorization specification, including RFC 9728 discovery, PKCE, RFC 8707 resource indicators, RFC 9207 issuer validation, challenge-driven scopes, and step-up re-authorization. Configure it with `[mcp.auth]` and authorize with `arabica mcp login` / `logout`. Grants are stored owner-only per resource and binding.
+- Report refused MCP tool calls (HTTP 4xx, JSON-RPC errors, `isError`) to the model as failed tool results instead of aborting the prompt. **Behavior change:** a call whose outcome is unknown (HTTP 5xx, timeout, lost connection) is never retried and ends the prompt with an explicit error.
+- **Behavior change:** HTTP MCP servers fall back to the legacy `initialize` handshake only when they reject `server/discover` as a legacy server, never after a slow probe, timeout, or 401/403. Add `arabica acp --mcp-protocol modern` to refuse legacy MCP servers entirely.
+- Settle tool calls left open when a run fails or is cancelled. ACP clients now receive a terminal `failed` status with an unknown-outcome note, both live and on `session/load` replay.
+- Fix `arabica acp` never exiting after stdin closed while the client had stopped reading stdout; shutdown now waits at most 5 seconds.
+- Run ACP `session/new`, `session/load`, and `session/resume` off the dispatch loop so session setup can wait on client replies.
+- Fix the desktop Blend Inspector failing with "Could not read evaluation status" for any session that used a tool, by decoding run tools in the runtime's shape; tool diagnostics now show call counts. Hide the inspector mode and policy filter picker labels that rendered as vertical text and a duplicated caption.
+- Add an executable-level acceptance suite for connector-managed ACP agents with per-session HTTP MCP endpoints, and document the connector contract in `docs/client-connector.md` and `docs/client-mcp-auth.md`.
+
 ## 0.11.0 — 2026-10-22
 
 - Restructure the macOS Desktop Blend Inspector into three progressive workflows: Evaluate, Generate Policy, and Update Policy.
