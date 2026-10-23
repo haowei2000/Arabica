@@ -135,6 +135,17 @@ Authorization = "Bearer your-token"</code></pre>
       <p>Each server uses exactly one transport: local <code>command</code> (stdio) or HTTP <code>url</code>. Store secrets in environment/header entries only when needed, and keep the config file private.</p>
       <p>Both transports prefer the stateless <a href="https://modelcontextprotocol.io/specification/2026-07-28">MCP 2026-07-28 protocol</a> and automatically fall back to the legacy initialization handshake for older servers. Modern requests carry their protocol version, client identity, and capabilities independently; HTTP requests do not need an MCP session ID. The same configuration works in the desktop app, terminal, and ACP clients.</p>
       <p>Use <code>headers</code> for authentication and application-specific headers. Protocol headers such as <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code>, <code>Mcp-Name</code>, and <code>Mcp-Param-*</code> are generated automatically and cannot be overridden. HTTP redirects are limited to same-origin 307/308 responses. Optional capabilities such as MCP Apps, Tasks, and elicitation are not enabled.</p>
+      <p>For tokens that expire or rotate, replace the static <code>Authorization</code> header with an <code>[mcp.auth]</code> table. Arabica then resolves the token for every request and refreshes it on expiry or after a single 401, without restarting the session. It never falls back to an unauthenticated request.</p>
+<pre class="code-block"><code>[[mcp]]
+name = "remote-search"
+url = "https://mcp.example.test/mcp"
+
+[mcp.auth]
+mode = "oauth"        # authorize once: arabica mcp login remote-search
+binding = "work"      # optional; separate grants per binding
+
+# or: mode = "command" with command = ["/absolute/path/to/token-helper"]</code></pre>
+      <p>ACP clients can declare the same modes, plus <code>broker</code>, in the server's <code>_meta</code> under <code>arabica.auth</code>. In broker mode, the client answers <code>_arabica/mcp/credential</code> requests and keeps the refresh tokens. See <a href="https://github.com/haowei2000/Arabica/blob/main/docs/client-mcp-auth.md">dynamic MCP authentication</a> for the contract and the retry rules.</p>
     </section>
     <section class="docs-section" id="server"><h2>HTTP server configuration</h2><p><code>arabica-server</code> uses process environment variables rather than the CLI/ACP user TOML. Set the required provider catalog and model aliases, then optional routing and runtime settings.</p>
       <div class="docs-table-wrap"><table class="docs-table"><thead><tr><th>Environment variable</th><th>Purpose</th></tr></thead><tbody>
