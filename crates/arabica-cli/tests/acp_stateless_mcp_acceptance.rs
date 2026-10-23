@@ -468,6 +468,38 @@ struct Agent {
     stderr: Arc<Mutex<Vec<String>>>,
 }
 
+/// Wait for the child to exit after its stdin closed. Polling `try_wait`
+/// observes the exit directly instead of relying only on the SIGCHLD
+/// wakeup; a timeout reports the process state and its stderr.
+async fn wait_for_exit(
+    child: &mut tokio::process::Child,
+    stderr: &Mutex<Vec<String>>,
+) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let state = child
+                .id()
+                .and_then(|pid| {
+                    std::process::Command::new("ps")
+                        .args(["-o", "pid=,stat=,etime=", "-p", &pid.to_string()])
+                        .output()
+                        .ok()
+                })
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .unwrap_or_default();
+            panic!(
+                "arabica did not exit within 10 s of stdin closing (ps: {state:?}); stderr: {:?}",
+                stderr.lock().unwrap()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "arabica-acp-acceptance-{label}-{}",
@@ -559,10 +591,7 @@ impl Agent {
     }
 
     async fn exits_cleanly(mut self) {
-        let status = tokio::time::timeout(Duration::from_secs(10), self.child.wait())
-            .await
-            .expect("arabica exits once stdin closes")
-            .unwrap();
+        let status = wait_for_exit(&mut self.child, &self.stderr).await;
         assert!(status.success(), "exit status {status}");
         assert!(
             self.stdout_violations.lock().unwrap().is_empty(),
@@ -1221,10 +1250,7 @@ async fn disconnect_mid_call_exits_without_further_platform_calls() {
     })
     .unwrap();
     let mut child = agent.child;
-    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("arabica exits on stdin EOF mid-call")
-        .unwrap();
+    let status = wait_for_exit(&mut child, &agent.stderr).await;
     assert!(status.success(), "exit status {status}");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(mcp.state.hang_dropped.load(Ordering::SeqCst));
@@ -1497,4 +1523,58 @@ async fn an_overlapping_prompt_is_rejected_and_the_first_still_settles() {
     assert!(error.contains("already in progress"), "{error}");
     assert_eq!(mcp.executed().len(), 1);
     agent.exits_cleanly().await;
+}
+
+/// A client that closes stdin while no longer reading stdout leaves the
+/// final drain blocked on a full pipe; the process still exits.
+#[tokio::test]
+async fn closing_stdin_ends_the_process_even_when_stdout_is_not_read() {
+    let (_model, model_url, _mcp, home, _workspace) = setup().await;
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_arabica"))
+        .arg("acp")
+        .env("ARABICA_PROVIDER_MOCK_API_KEY", "test-key")
+        .env("ARABICA__BASE_URL", &model_url)
+        .env("ARABICA_HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    // Far more response bytes than a pipe buffers, and nobody reads them.
+    let _unread_stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+    tokio::spawn({
+        let stderr_lines = stderr_lines.clone();
+        async move {
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                stderr_lines.lock().unwrap().push(line);
+            }
+        }
+    });
+    let mut stdin = child.stdin.take().unwrap();
+    for id in 0..2_000 {
+        let request = json!({
+            "jsonrpc": "2.0", "id": id, "method": "initialize",
+            "params": {"protocolVersion": 1, "clientCapabilities": {}}
+        });
+        stdin
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+    drop(stdin);
+    let status = wait_for_exit(&mut child, &stderr_lines).await;
+    assert!(status.success(), "exit status {status}");
+    assert!(
+        stderr_lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("shutdown has not finished")),
+        "{:?}",
+        stderr_lines.lock().unwrap()
+    );
 }

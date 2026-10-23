@@ -20,8 +20,10 @@ fixture.
   `ARABICA_PROVIDER_OPENAI_API_KEY`. Several processes may share one
   `ARABICA_HOME`. A session is held by one process at a time.
 - **Output.** stdout carries only newline-delimited JSON-RPC 2.0, and
-  diagnostics go to stderr. When stdin reaches EOF, the process ends its
-  sessions, abandons in-flight HTTP requests, and exits with status 0.
+  diagnostics go to stderr. When stdin reaches EOF, the process abandons
+  in-flight HTTP requests and exits with status 0. It waits at most 5 seconds
+  to flush pending output. If the client has stopped reading stdout, it logs
+  that and exits anyway.
 - **Initialize response.** It reports ACP protocol version 1 and
   `agentInfo` `{"name":"arabica","version":"<release>"}`. It advertises
   `loadSession: true`, `mcpCapabilities: {"http": true, "sse": false}`, and the
