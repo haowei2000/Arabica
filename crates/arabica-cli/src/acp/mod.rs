@@ -419,7 +419,9 @@ impl AcpState {
             .iter()
             .chain(restore_report.repaired_events.iter())
         {
-            for update in mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd) {
+            for update in
+                mapping::replay_updates_for(&envelope.event, &envelope.run_id, &request.cwd)
+            {
                 if let Err(error) = connection
                     .send_notification(SessionNotification::new(acp_session_id.clone(), update))
                 {
@@ -2052,6 +2054,28 @@ mod round_trip {
                     cx.send_request(AcpLoadSessionRequest::new(session_id.clone(), root))
                         .block_task()
                         .await?;
+                    {
+                        let seen = updates.lock().expect("updates lock poisoned");
+                        let messages: Vec<_> = seen
+                            .iter()
+                            .filter_map(|update| {
+                                let (role, chunk) = match update {
+                                    SessionUpdate::UserMessageChunk(chunk) => ("user", chunk),
+                                    SessionUpdate::AgentMessageChunk(chunk) => ("assistant", chunk),
+                                    _ => return None,
+                                };
+                                let AcpContentBlock::Text(text) = &chunk.content else {
+                                    return None;
+                                };
+                                Some((role, text.text.as_str()))
+                            })
+                            .collect();
+                        assert_eq!(
+                            messages,
+                            vec![("user", "say hello"), ("assistant", "hello from turn one")],
+                            "session/load must replay both sides in order before responding"
+                        );
+                    }
                     let prompt = cx
                         .send_request(AcpPromptRequest::new(
                             session_id,
