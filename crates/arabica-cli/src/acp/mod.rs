@@ -20,6 +20,7 @@ mod mapping;
 mod mcp_credentials;
 mod permission;
 mod session_metadata;
+mod stdio;
 mod stop_reason;
 mod time;
 
@@ -39,7 +40,7 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{
-    Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
+    Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult,
 };
 #[cfg(test)]
 use arabica_adapters::SqliteSessionStore;
@@ -633,11 +634,14 @@ impl AcpState {
         // (dangling tool calls, then run.failed) -- the repairs are new
         // Events appended after the stored history, not part of it, so they
         // belong after it in replay order too.
+        let mut open_calls = mapping::OpenToolCalls::default();
         for envelope in original_events
             .iter()
             .chain(restore_report.repaired_events.iter())
         {
-            for update in mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd) {
+            let mut updates = mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd);
+            updates.extend(open_calls.track(&envelope.event, &envelope.run_id));
+            for update in updates {
                 if let Err(error) = connection
                     .send_notification(SessionNotification::new(acp_session_id.clone(), update))
                 {
@@ -1090,11 +1094,16 @@ pub async fn run(resolved: ResolvedCliConfig, tool_policy: LocalRunnerPolicy) ->
     let model_catalog = resolved.model_catalog();
     let model_factory: Arc<ModelFactory> =
         Arc::new(move || model_catalog.build_model().map_err(provider_error));
-    serve(
-        AcpState::new(model_factory, tool_policy, arabica_home)
-            .with_provider_settings(settings)
-            .with_permission_policy(permission_policy),
-        Stdio::new(),
+    let (transport, stdin_closed) = stdio::transport();
+    stdio::serve_until_shutdown(
+        serve(
+            AcpState::new(model_factory, tool_policy, arabica_home)
+                .with_provider_settings(settings)
+                .with_permission_policy(permission_policy),
+            transport,
+        ),
+        stdin_closed,
+        stdio::SHUTDOWN_GRACE,
     )
     .await
 }

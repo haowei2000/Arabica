@@ -26,8 +26,9 @@ use auth::{AuthEnvironment, McpAuth, Origin};
 
 type Client = RunningService<RoleClient, ClientConfig>;
 
-// Allow the SDK's ten-second probe deadline plus fifteen seconds for a
-// silent legacy server to complete its fallback handshake.
+// Stdio: the SDK's ten-second probe deadline plus fifteen seconds for a
+// silent legacy server to complete its fallback handshake. HTTP: the whole
+// modern probe, or a legacy probe and handshake.
 const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 
 fn client_config() -> ClientConfig {
@@ -39,13 +40,52 @@ fn client_config() -> ClientConfig {
     )
 }
 
-fn client_lifecycle() -> ClientLifecycleMode {
-    // The SDK owns discovery, per-request metadata, and transport-specific
-    // fallback. A modern protocol error must never trigger a legacy handshake.
+/// Set once at startup by `arabica acp --mcp-protocol modern`.
+static MODERN_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Refuse the legacy `initialize` lifecycle for every MCP server in this
+/// process: a server that is not MCP 2026-07-28 fails to connect.
+pub fn require_modern_protocol() {
+    MODERN_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn modern_only() -> bool {
+    MODERN_ONLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn modern_lifecycle() -> ClientLifecycleMode {
+    ClientLifecycleMode::Discover {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+    }
+}
+
+fn stdio_lifecycle() -> ClientLifecycleMode {
+    if modern_only() {
+        return modern_lifecycle();
+    }
+    // A legacy stdio server may ignore `server/discover` entirely, so the
+    // SDK's probe deadline is the only evidence it can give.
     ClientLifecycleMode::Auto {
         preferred_versions: vec![ProtocolVersion::V_2026_07_28],
         legacy_version: Some(ProtocolVersion::LATEST_WITH_INITIALIZE),
     }
+}
+
+/// Whether a failed modern probe proves the server is legacy: a correlated
+/// JSON-RPC rejection of `server/discover` that is not a modern-era error.
+/// Timeouts, transport failures, and HTTP 401/403 prove nothing.
+fn is_legacy_evidence(error: &rmcp::service::ClientInitializeError) -> bool {
+    use rmcp::model::ErrorCode;
+    matches!(
+        error,
+        rmcp::service::ClientInitializeError::JsonRpcError(data)
+            if !matches!(
+                data.code,
+                ErrorCode::MISSING_REQUIRED_CLIENT_CAPABILITY
+                    | ErrorCode::HEADER_MISMATCH
+                    | ErrorCode::UNSUPPORTED_PROTOCOL_VERSION
+            )
+    )
 }
 
 #[derive(Debug)]
@@ -111,7 +151,7 @@ async fn connect_server(
             })?;
             let client = tokio::time::timeout(
                 CONNECTION_TIMEOUT,
-                client_config().serve_with_lifecycle(transport, client_lifecycle()),
+                client_config().serve_with_lifecycle(transport, stdio_lifecycle()),
             )
             .await
             .map_err(|_| format!("MCP server '{}' connection timed out", config.name))?
@@ -165,14 +205,38 @@ async fn connect_server(
             // configured credentials cannot be forwarded to another origin.
             let transport_config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
                 .custom_headers(headers);
+            // Probe strictly, then fall back only on the server's own legacy
+            // evidence. Unlike the SDK's automatic mode, a slow `server/discover`
+            // is not treated as legacy: an HTTP legacy server always answers.
+            // Each attempt gets a fresh transport.
+            macro_rules! serve_http {
+                ($transport:expr) => {
+                    async {
+                        match client_config()
+                            .serve_with_lifecycle($transport, modern_lifecycle())
+                            .await
+                        {
+                            Err(error) if !modern_only() && is_legacy_evidence(&error) => {
+                                client_config()
+                                    .with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
+                                    .serve_with_lifecycle(
+                                        $transport,
+                                        ClientLifecycleMode::Initialize,
+                                    )
+                                    .await
+                            }
+                            result => result,
+                        }
+                    }
+                };
+            }
             let client = match &auth {
                 None => {
                     tokio::time::timeout(
                         CONNECTION_TIMEOUT,
-                        client_config().serve_with_lifecycle(
-                            StreamableHttpClientTransport::from_config(transport_config),
-                            client_lifecycle(),
-                        ),
+                        serve_http!(StreamableHttpClientTransport::from_config(
+                            transport_config.clone()
+                        )),
                     )
                     .await
                 }
@@ -182,21 +246,18 @@ async fn connect_server(
                             .await?;
                     let credentials = std::sync::Arc::new(credentials::Credentials::new(source));
                     // Resolve the first credential before the lifecycle
-                    // starts: a slow provider must not run out the SDK's
-                    // discovery deadline and look like a legacy server.
+                    // starts, so a slow provider fails on its own deadline
+                    // instead of consuming the connection's.
                     credentials
                         .current()
                         .await
                         .map_err(|error| format!("MCP server '{}': {error}", config.name))?;
                     tokio::time::timeout(
                         CONNECTION_TIMEOUT,
-                        client_config().serve_with_lifecycle(
-                            StreamableHttpClientTransport::with_client(
-                                credentials::CredentialedClient::new(credentials),
-                                transport_config,
-                            ),
-                            client_lifecycle(),
-                        ),
+                        serve_http!(StreamableHttpClientTransport::with_client(
+                            credentials::CredentialedClient::new(credentials.clone()),
+                            transport_config.clone(),
+                        )),
                     )
                     .await
                 }
@@ -439,6 +500,72 @@ pub async fn connect_configured(
     Ok(McpTools::connect_lenient(servers, cwd, &environment).await)
 }
 
+/// How a failed `tools/call` ended.
+#[derive(Debug, PartialEq, Eq)]
+enum CallFailure {
+    /// The server answered with a refusal; the call did not run.
+    Rejected(String),
+    /// No definitive answer (timeout, lost connection, server error); the
+    /// call may have run.
+    Unknown(String),
+}
+
+const MAX_REASON_LENGTH: usize = 300;
+
+fn bounded(text: &str) -> String {
+    text.chars().take(MAX_REASON_LENGTH).collect()
+}
+
+fn classify_call_failure(error: &rmcp::ServiceError) -> CallFailure {
+    use rmcp::transport::streamable_http_client::StreamableHttpError;
+    match error {
+        rmcp::ServiceError::McpError(error) => CallFailure::Rejected(bounded(&format!(
+            "the server returned JSON-RPC error {}: {}",
+            error.code.0, error.message
+        ))),
+        rmcp::ServiceError::TransportSend(transport) => {
+            let http = transport
+                .error
+                .downcast_ref::<StreamableHttpError<reqwest::Error>>();
+            match http {
+                // A credential that could not be resolved stops the request
+                // before it is sent.
+                Some(StreamableHttpError::Io(error))
+                    if error
+                        .get_ref()
+                        .is_some_and(|inner| inner.is::<credentials::CredentialError>()) =>
+                {
+                    CallFailure::Rejected(bounded(&error.to_string()))
+                }
+                Some(StreamableHttpError::AuthRequired(_)) => {
+                    CallFailure::Rejected("the server answered HTTP 401 Unauthorized".to_owned())
+                }
+                Some(StreamableHttpError::InsufficientScope(_)) => CallFailure::Rejected(
+                    "the server answered HTTP 403 Forbidden (insufficient scope)".to_owned(),
+                ),
+                // rmcp reports other non-success statuses as "HTTP <status>: <body>".
+                Some(StreamableHttpError::UnexpectedServerResponse(message))
+                    if message.starts_with("HTTP 4") =>
+                {
+                    CallFailure::Rejected(bounded(&format!("the server answered {message}")))
+                }
+                Some(StreamableHttpError::Client(error))
+                    if error
+                        .status()
+                        .is_some_and(|status| status.is_client_error()) =>
+                {
+                    CallFailure::Rejected(format!(
+                        "the server answered HTTP {}",
+                        error.status().expect("checked above")
+                    ))
+                }
+                _ => CallFailure::Unknown(bounded(&transport.error.to_string())),
+            }
+        }
+        other => CallFailure::Unknown(bounded(&other.to_string())),
+    }
+}
+
 fn safe_name(value: &str) -> String {
     value
         .chars()
@@ -475,10 +602,33 @@ impl RunnerEnvironment for McpTools {
             .ok_or_else(|| RunnerError::new("MCP tool arguments must be an object"))?;
         let params =
             CallToolRequestParams::new(route.original_name.clone()).with_arguments(arguments);
-        let result = self.clients[route.server]
-            .call_tool(params)
-            .await
-            .map_err(|error| RunnerError::new(format!("MCP tool call failed: {error}")))?;
+        let result = match self.clients[route.server].call_tool(params).await {
+            Ok(result) => result,
+            Err(error) => match classify_call_failure(&error) {
+                // The server refused the request, so the model may see the
+                // failure and choose what to do next.
+                CallFailure::Rejected(reason) => {
+                    let content = format!("MCP tool call failed: {reason}");
+                    return Ok(ToolExecutionResult {
+                        result: ToolResultItem {
+                            id: None,
+                            call_id: request.call.call_id,
+                            name: Some(request.call.name),
+                            content: vec![ContentBlock::text(content.clone())],
+                            is_error: true,
+                        },
+                        output: vec![RunnerOutput::Stderr(content)],
+                    });
+                }
+                // The call may have run. Ending the turn keeps the model
+                // loop from repeating a side effect it cannot see.
+                CallFailure::Unknown(reason) => {
+                    return Err(RunnerError::new(format!(
+                        "MCP tool call outcome is unknown and it was not retried: {reason}"
+                    )));
+                }
+            },
+        };
         let serialized = serde_json::to_string(&result).map_err(|error| {
             RunnerError::new(format!("MCP tool result could not be serialized: {error}"))
         })?;
@@ -554,6 +704,26 @@ mod tests {
             _ => return StatusCode::NOT_FOUND.into_response(),
         };
         Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
+    }
+
+    #[test]
+    fn only_a_legacy_json_rpc_rejection_counts_as_legacy_evidence() {
+        use rmcp::model::{ErrorCode, ErrorData};
+        use rmcp::service::ClientInitializeError;
+        let rejection =
+            |code| ClientInitializeError::JsonRpcError(ErrorData::new(code, "no", None));
+        assert!(is_legacy_evidence(&rejection(ErrorCode::METHOD_NOT_FOUND)));
+        assert!(is_legacy_evidence(&rejection(ErrorCode::INVALID_REQUEST)));
+        for modern in [
+            ErrorCode::MISSING_REQUIRED_CLIENT_CAPABILITY,
+            ErrorCode::HEADER_MISMATCH,
+            ErrorCode::UNSUPPORTED_PROTOCOL_VERSION,
+        ] {
+            assert!(!is_legacy_evidence(&rejection(modern)));
+        }
+        assert!(!is_legacy_evidence(
+            &ClientInitializeError::ConnectionClosed("lost".to_owned())
+        ));
     }
 
     #[tokio::test]

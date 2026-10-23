@@ -478,8 +478,12 @@ async fn echo(tools: &mut McpTools, server: &str, value: &str) -> Result<String,
     .await
     .expect("tool call timed out")
     .map_err(|error| error.to_string())?;
-    assert!(!response.result.is_error);
-    Ok(serde_json::to_string(&response.result.content).unwrap())
+    let content = serde_json::to_string(&response.result.content).unwrap();
+    // A refused call is a failed tool result the model sees.
+    if response.result.is_error {
+        return Err(content);
+    }
+    Ok(content)
 }
 
 #[tokio::test]
