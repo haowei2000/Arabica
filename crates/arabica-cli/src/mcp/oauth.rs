@@ -15,8 +15,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use rmcp::transport::auth::{
-    AuthError, AuthorizationManager, AuthorizationRequest, AuthorizationSession,
-    CredentialRefreshGuard, CredentialStore, StoredCredentials,
+    AuthError, AuthorizationManager, AuthorizationMetadataSource, AuthorizationRequest,
+    AuthorizationSession, CredentialRefreshGuard, CredentialStore, StoredCredentials,
+    WWWAuthenticateParams,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -42,15 +43,25 @@ pub struct OAuthTarget {
 }
 
 impl OAuthTarget {
-    fn login_hint(&self) -> String {
+    fn login_command(&self) -> String {
         if self.configured {
-            format!("run `arabica mcp login {}`", self.server)
+            format!("arabica mcp login {}", self.server)
         } else {
             format!(
-                "run `arabica mcp login --url {} --binding {}`",
+                "arabica mcp login --url {} --binding {}",
                 self.url, self.binding
             )
         }
+    }
+
+    fn login_hint(&self) -> String {
+        format!("run `{}`", self.login_command())
+    }
+
+    /// Re-authorization keeps the grant's existing scopes, so naming only
+    /// the newly required one is enough.
+    fn scope_hint(&self, scope: &str) -> String {
+        format!("run `{} --scope '{scope}'`", self.login_command())
     }
 }
 
@@ -138,6 +149,14 @@ impl FileCredentialStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }
+    }
+
+    fn granted_scopes(&self) -> Vec<String> {
+        self.read()
+            .ok()
+            .flatten()
+            .map(|grant| grant.credentials.granted_scopes)
+            .unwrap_or_default()
     }
 
     fn stored_token(&self) -> Result<Option<(Secret, Option<SystemTime>)>, AuthError> {
@@ -302,6 +321,21 @@ impl OAuthSource {
 }
 
 impl CredentialSource for OAuthSource {
+    fn insufficient_scope(&self, scope: Option<&str>) -> CredentialError {
+        CredentialError::NeedsAuthorization(match scope {
+            Some(scope) => format!(
+                "'{}' requires OAuth scope '{scope}'; {}",
+                self.target.server,
+                self.target.scope_hint(scope)
+            ),
+            None => format!(
+                "'{}' requires more OAuth scope; {}",
+                self.target.server,
+                self.target.login_hint()
+            ),
+        })
+    }
+
     fn fetch<'a>(&'a self, request: FetchRequest<'a>) -> CredentialFuture<'a> {
         Box::pin(async move {
             if request.reason == FetchReason::Rejected {
@@ -337,6 +371,9 @@ impl CredentialSource for OAuthSource {
 pub struct LoginRequest {
     pub target: OAuthTarget,
     pub client_id: Option<String>,
+    /// An HTTPS Client ID Metadata Document URL, used when the authorization
+    /// server supports them and no client ID is given.
+    pub client_metadata_url: Option<String>,
     pub scopes: Vec<String>,
 }
 
@@ -363,20 +400,56 @@ pub async fn login(
     let mut manager = AuthorizationManager::new(request.target.url.as_str())
         .await
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
+    let previous_scopes = store.granted_scopes();
     manager.set_credential_store(store);
-    let metadata = manager
-        .resolve_metadata()
+    // The flow starts from the server's own 401 challenge, whose
+    // `resource_metadata` and `scope` take precedence over well-known probing.
+    let challenge = probe_challenge(&request.target.url).await;
+    let resolution = manager
+        .resolve_metadata_from_challenge(challenge.as_deref())
         .await
         .map_err(|error| format!("OAuth discovery failed: {error}"))?;
-    manager.set_metadata(metadata.metadata);
+    // MCP 2026-07-28 requires authorization server discovery through RFC 9728
+    // Protected Resource Metadata; endpoints are never guessed.
+    if !matches!(
+        resolution.source,
+        AuthorizationMetadataSource::ProtectedResourceMetadata
+    ) {
+        return Err(format!(
+            "MCP server '{}' does not publish OAuth Protected Resource Metadata (RFC 9728)",
+            request.target.server
+        ));
+    }
+    manager.set_metadata(resolution.metadata);
+    // Scopes the challenge names are required for this request; scopes the
+    // grant already holds are kept so re-authorization loses nothing.
+    let mut scopes = previous_scopes;
+    let challenged = challenge
+        .as_deref()
+        .and_then(|challenge| {
+            let base = url::Url::parse(&request.target.url).ok()?;
+            WWWAuthenticateParams::parse(challenge, &base).scope
+        })
+        .unwrap_or_default();
+    for scope in challenged
+        .split_whitespace()
+        .map(str::to_owned)
+        .chain(request.scopes.iter().cloned())
+    {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+    }
     let mut authorization = AuthorizationRequest::new(redirect_uri.clone())
         .with_client_name("Arabica")
         .with_initial_scope_selection();
-    if !request.scopes.is_empty() {
-        authorization = authorization.with_scopes(request.scopes.iter().cloned());
+    if !scopes.is_empty() {
+        authorization = authorization.with_scopes(scopes);
     }
     if let Some(client_id) = &request.client_id {
         authorization = authorization.with_preregistered_client(client_id.clone());
+    } else if let Some(url) = &request.client_metadata_url {
+        authorization = authorization.with_client_metadata_url(url.clone());
     }
     let session = AuthorizationSession::new(manager, authorization)
         .await
@@ -393,6 +466,37 @@ pub async fn login(
         .await
         .map_err(|error| format!("OAuth authorization failed: {error}"))?;
     Ok(())
+}
+
+/// Send one unauthenticated request so a protected server answers with its
+/// `WWW-Authenticate` challenge. Any other answer means no challenge.
+async fn probe_challenge(url: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15))
+        .build()
+        .ok()?;
+    let response = client
+        .post(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "application/json, text/event-stream",
+        )
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}
+        }))
+        .send()
+        .await
+        .ok()?;
+    if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return None;
+    }
+    response
+        .headers()
+        .get(reqwest::header::WWW_AUTHENTICATE)?
+        .to_str()
+        .ok()
+        .map(str::to_owned)
 }
 
 /// Accept loopback requests until one reaches `/callback`, answer it, and

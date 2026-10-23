@@ -38,12 +38,31 @@ pub(crate) struct Observed {
     accepted: bool,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum IssuerParameter {
+    #[default]
+    Omit,
+    Correct,
+    Wrong,
+}
+
 #[derive(Default)]
 struct OAuthServerState {
-    challenges: HashMap<String, String>,
-    refresh_tokens: HashSet<String>,
+    /// Authorization code to (PKCE challenge, requested scope).
+    codes: HashMap<String, (String, String)>,
+    /// Refresh token to the scope it grants.
+    refresh_tokens: HashMap<String, String>,
     refreshes: usize,
     issued: usize,
+    withhold_resource_metadata: bool,
+    advertise_issuer_parameter: bool,
+    issuer_parameter: IssuerParameter,
+    /// `scope` in the resource server's 401 challenge.
+    challenge_scope: Option<String>,
+    /// A scope `tools/call` demands, answered with 403 when missing.
+    required_call_scope: Option<String>,
+    requested_scopes: Vec<String>,
+    token_scopes: HashMap<String, String>,
 }
 
 struct FixtureState {
@@ -157,8 +176,16 @@ async fn mcp_request(
     if !accepted {
         let mut response = (StatusCode::UNAUTHORIZED, "invalid_token").into_response();
         if state.challenge {
+            let scope = state
+                .oauth
+                .lock()
+                .unwrap()
+                .challenge_scope
+                .as_ref()
+                .map(|scope| format!(", scope=\"{scope}\""))
+                .unwrap_or_default();
             let challenge = format!(
-                "Bearer error=\"invalid_token\", resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\"",
+                "Bearer error=\"invalid_token\", resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\"{scope}",
                 state.base
             );
             response.headers_mut().insert(
@@ -170,6 +197,29 @@ async fn mcp_request(
     }
     if method != Method::POST {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    if rpc_method == "tools/call" {
+        let oauth = state.oauth.lock().unwrap();
+        let token = headers[header::AUTHORIZATION]
+            .to_str()
+            .unwrap()
+            .trim_start_matches("Bearer ");
+        if let Some(required) = &oauth.required_call_scope
+            && !oauth
+                .token_scopes
+                .get(token)
+                .is_some_and(|granted| granted.split(' ').any(|scope| scope == required))
+        {
+            let challenge = format!(
+                "Bearer error=\"insufficient_scope\", scope=\"{required}\", resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\"",
+                state.base
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                [(header::WWW_AUTHENTICATE, challenge)],
+            )
+                .into_response();
+        }
     }
     if request.get("id").is_none() {
         return StatusCode::ACCEPTED.into_response();
@@ -204,18 +254,24 @@ async fn mcp_request(
     Json(json!({"jsonrpc": "2.0", "id": request["id"], "result": result})).into_response()
 }
 
-async fn protected_resource(State(state): State<Arc<FixtureState>>) -> Json<Value> {
+async fn protected_resource(State(state): State<Arc<FixtureState>>) -> Response {
+    if state.oauth.lock().unwrap().withhold_resource_metadata {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     Json(json!({
         "resource": format!("{}/mcp", state.base),
         "authorization_servers": [state.base],
         "scopes_supported": ["mcp"],
         "bearer_methods_supported": ["header"]
     }))
+    .into_response()
 }
 
 async fn authorization_server(State(state): State<Arc<FixtureState>>) -> Json<Value> {
     let base = &state.base;
+    let advertise = state.oauth.lock().unwrap().advertise_issuer_parameter;
     Json(json!({
+        "authorization_response_iss_parameter_supported": advertise,
         "issuer": base,
         "authorization_endpoint": format!("{base}/authorize"),
         "token_endpoint": format!("{base}/token"),
@@ -249,19 +305,28 @@ async fn authorize(
     assert_eq!(query["response_type"], "code");
     assert_eq!(query["code_challenge_method"], "S256");
     assert_eq!(query["resource"], format!("{}/mcp", state.base));
-    let code = format!("code-{}", query["state"].len());
-    state
-        .oauth
-        .lock()
-        .unwrap()
-        .challenges
-        .insert(code.clone(), query["code_challenge"].clone());
+    let mut oauth = state.oauth.lock().unwrap();
+    let code = format!("code-{}", oauth.codes.len() + oauth.issued);
+    let scope = query.get("scope").cloned().unwrap_or_default();
+    oauth.requested_scopes.push(scope.clone());
+    oauth
+        .codes
+        .insert(code.clone(), (query["code_challenge"].clone(), scope));
+    let issuer = match oauth.issuer_parameter {
+        IssuerParameter::Omit => String::new(),
+        IssuerParameter::Correct => format!("&iss={}", encode(&state.base)),
+        IssuerParameter::Wrong => format!("&iss={}", encode("https://attacker.example")),
+    };
     let location = format!(
-        "{}?code={code}&state={}",
+        "{}?code={code}&state={}{issuer}",
         query["redirect_uri"],
-        url::form_urlencoded::byte_serialize(query["state"].as_bytes()).collect::<String>()
+        encode(&query["state"])
     );
     (StatusCode::FOUND, [(header::LOCATION, location)]).into_response()
+}
+
+fn encode(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 async fn token(State(state): State<Arc<FixtureState>>, body: Bytes) -> Response {
@@ -279,9 +344,9 @@ async fn token(State(state): State<Arc<FixtureState>>, body: Bytes) -> Response 
             .into_response()
     };
     let mut oauth = state.oauth.lock().unwrap();
-    match form.get("grant_type").map(String::as_str) {
+    let scope = match form.get("grant_type").map(String::as_str) {
         Some("authorization_code") => {
-            let Some(challenge) = oauth.challenges.remove(&form["code"]) else {
+            let Some((challenge, scope)) = oauth.codes.remove(&form["code"]) else {
                 return invalid_grant();
             };
             let verifier = form.get("code_verifier").expect("PKCE verifier");
@@ -290,23 +355,26 @@ async fn token(State(state): State<Arc<FixtureState>>, body: Bytes) -> Response 
             if computed != challenge {
                 return invalid_grant();
             }
+            scope
         }
         Some("refresh_token") => {
-            if !oauth.refresh_tokens.remove(&form["refresh_token"]) {
+            let Some(scope) = oauth.refresh_tokens.remove(&form["refresh_token"]) else {
                 return invalid_grant();
-            }
+            };
             oauth.refreshes += 1;
+            scope
         }
         _ => return invalid_grant(),
-    }
+    };
     oauth.issued += 1;
     let access = format!("oauth-access-{}", oauth.issued);
     let refresh = format!("oauth-refresh-{}", oauth.issued);
-    oauth.refresh_tokens.insert(refresh.clone());
+    oauth.refresh_tokens.insert(refresh.clone(), scope.clone());
+    oauth.token_scopes.insert(access.clone(), scope.clone());
     state.valid_tokens.lock().unwrap().insert(access.clone());
     Json(json!({
         "access_token": access, "token_type": "Bearer", "expires_in": 3600,
-        "refresh_token": refresh, "scope": "mcp"
+        "refresh_token": refresh, "scope": scope
     }))
     .into_response()
 }
@@ -895,6 +963,7 @@ fn oauth_auth(binding: &str) -> McpAuth {
     McpAuth::Oauth {
         binding: Some(binding.to_owned()),
         client_id: None,
+        client_metadata_url: None,
         scopes: Vec::new(),
     }
 }
@@ -936,6 +1005,7 @@ async fn initial_oauth_login_uses_pkce_and_stores_an_owner_only_grant() {
         oauth::LoginRequest {
             target: oauth_target(&fixture, "work"),
             client_id: None,
+            client_metadata_url: None,
             scopes: Vec::new(),
         },
         home.path(),
@@ -993,6 +1063,7 @@ async fn an_existing_oauth_grant_refreshes_on_expiry_and_rejection_until_revoked
         oauth::LoginRequest {
             target: oauth_target(&fixture, "work"),
             client_id: None,
+            client_metadata_url: None,
             scopes: Vec::new(),
         },
         home.path(),
@@ -1036,4 +1107,161 @@ async fn an_existing_oauth_grant_refreshes_on_expiry_and_rejection_until_revoked
     assert!(!error.contains("oauth-access"), "{error}");
     assert!(!error.contains("oauth-refresh"), "{error}");
     assert_eq!(fixture.state.oauth.lock().unwrap().refreshes, 2);
+}
+
+fn login_request(fixture: &Fixture, scopes: &[&str]) -> oauth::LoginRequest {
+    oauth::LoginRequest {
+        target: oauth_target(fixture, "work"),
+        client_id: None,
+        client_metadata_url: None,
+        scopes: scopes.iter().map(|scope| (*scope).to_owned()).collect(),
+    }
+}
+
+#[tokio::test]
+async fn oauth_login_validates_the_authorization_response_issuer() {
+    for (advertise, issuer, accepted) in [
+        (true, IssuerParameter::Correct, true),
+        (false, IssuerParameter::Correct, true),
+        (false, IssuerParameter::Omit, true),
+        // RFC 9207 as applied by MCP: an advertised `iss` must be present,
+        // and a present one must match whether or not it was advertised.
+        (true, IssuerParameter::Omit, false),
+        (true, IssuerParameter::Wrong, false),
+        (false, IssuerParameter::Wrong, false),
+    ] {
+        let fixture = Fixture::start(Lifecycle::Modern, true, &[]).await;
+        {
+            let mut oauth = fixture.state.oauth.lock().unwrap();
+            oauth.advertise_issuer_parameter = advertise;
+            oauth.issuer_parameter = issuer;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let result = oauth::login(
+            login_request(&fixture, &[]),
+            home.path(),
+            approve_in_browser,
+        )
+        .await;
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "advertise={advertise}: {result:?}"
+        );
+        assert_eq!(grant_files(home.path()).len(), usize::from(accepted));
+        if !accepted {
+            assert_eq!(
+                fixture.state.oauth.lock().unwrap().issued,
+                0,
+                "the code must not reach the token endpoint"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn oauth_login_requires_protected_resource_metadata() {
+    let fixture = Fixture::start(Lifecycle::Modern, true, &[]).await;
+    fixture
+        .state
+        .oauth
+        .lock()
+        .unwrap()
+        .withhold_resource_metadata = true;
+    let home = tempfile::tempdir().unwrap();
+    let error = oauth::login(login_request(&fixture, &[]), home.path(), |_| {
+        panic!("no authorization may start without RFC 9728 discovery")
+    })
+    .await
+    .unwrap_err();
+    assert!(
+        error.contains("Protected Resource Metadata (RFC 9728)"),
+        "{error}"
+    );
+    assert!(grant_files(home.path()).is_empty());
+}
+
+#[tokio::test]
+async fn oauth_scopes_follow_the_challenge_and_step_up_keeps_granted_ones() {
+    let fixture = Fixture::start(Lifecycle::Modern, true, &[]).await;
+    fixture.state.oauth.lock().unwrap().challenge_scope = Some("files:read".to_owned());
+    let home = tempfile::tempdir().unwrap();
+    oauth::login(
+        login_request(&fixture, &[]),
+        home.path(),
+        approve_in_browser,
+    )
+    .await
+    .expect("login completes");
+    // The challenge is authoritative over `scopes_supported` ("mcp").
+    assert_eq!(
+        fixture.state.oauth.lock().unwrap().requested_scopes,
+        ["files:read"]
+    );
+
+    fixture.state.oauth.lock().unwrap().required_call_scope = Some("files:write".to_owned());
+    let environment = AuthEnvironment {
+        arabica_home: Some(home.path().to_path_buf()),
+        broker: None,
+    };
+    let (mut tools, diagnostics) = McpTools::connect_lenient(
+        vec![fixture.server("remote", &oauth_auth("work"))],
+        Path::new("/"),
+        &environment,
+    )
+    .await;
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let error = echo(&mut tools, "remote", "write").await.unwrap_err();
+    assert!(
+        error.contains("requires OAuth scope 'files:write'"),
+        "{error}"
+    );
+    assert!(
+        error.contains("arabica mcp login remote --scope 'files:write'"),
+        "{error}"
+    );
+    let attempts = fixture
+        .observed()
+        .into_iter()
+        .filter(|request| request.rpc_method == "tools/call")
+        .count();
+    assert_eq!(attempts, 1, "a 403 is not replayed with the same grant");
+
+    // Step-up: the new authorization asks for the union of scopes.
+    oauth::login(
+        login_request(&fixture, &["files:write"]),
+        home.path(),
+        approve_in_browser,
+    )
+    .await
+    .expect("step-up completes");
+    let requested = fixture.state.oauth.lock().unwrap().requested_scopes[1].clone();
+    let mut requested = requested.split(' ').collect::<Vec<_>>();
+    requested.sort_unstable();
+    assert_eq!(requested, ["files:read", "files:write"]);
+    let (mut tools, diagnostics) = McpTools::connect_lenient(
+        vec![fixture.server("remote", &oauth_auth("work"))],
+        Path::new("/"),
+        &environment,
+    )
+    .await;
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    echo(&mut tools, "remote", "write").await.unwrap();
+}
+
+#[test]
+fn client_metadata_documents_must_be_https_urls_with_a_path() {
+    for (url, valid) in [
+        ("https://arabica.example/client.json", true),
+        ("http://arabica.example/client.json", false),
+        ("https://arabica.example/", false),
+    ] {
+        let auth = McpAuth::Oauth {
+            binding: None,
+            client_id: None,
+            client_metadata_url: Some(url.to_owned()),
+            scopes: Vec::new(),
+        };
+        assert_eq!(auth.validate("remote").is_ok(), valid, "{url}");
+    }
 }

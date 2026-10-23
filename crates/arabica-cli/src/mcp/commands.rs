@@ -28,8 +28,13 @@ pub struct TargetArgs {
     /// A client ID registered with the authorization server in advance.
     #[arg(long, requires = "url")]
     client_id: Option<String>,
-    /// A scope to request; repeat for several.
-    #[arg(long = "scope", requires = "url")]
+    /// An HTTPS Client ID Metadata Document URL to use instead of dynamic
+    /// client registration.
+    #[arg(long, requires = "url", conflicts_with = "client_id")]
+    client_metadata_url: Option<String>,
+    /// A scope to request in addition to those the grant already holds;
+    /// repeat for several.
+    #[arg(long = "scope")]
     scopes: Vec<String>,
 }
 
@@ -39,6 +44,7 @@ fn resolve(args: TargetArgs, arabica_home: &std::path::Path) -> Result<LoginRequ
         let auth = McpAuth::Oauth {
             binding: Some(binding.clone()),
             client_id: args.client_id.clone(),
+            client_metadata_url: args.client_metadata_url.clone(),
             scopes: args.scopes.clone(),
         };
         auth.validate(&url)?;
@@ -50,6 +56,7 @@ fn resolve(args: TargetArgs, arabica_home: &std::path::Path) -> Result<LoginRequ
                 configured: false,
             },
             client_id: args.client_id,
+            client_metadata_url: args.client_metadata_url,
             scopes: args.scopes,
         });
     }
@@ -67,6 +74,7 @@ fn resolve(args: TargetArgs, arabica_home: &std::path::Path) -> Result<LoginRequ
         Some(
             ref auth @ McpAuth::Oauth {
                 ref client_id,
+                ref client_metadata_url,
                 ref scopes,
                 ..
             },
@@ -78,7 +86,8 @@ fn resolve(args: TargetArgs, arabica_home: &std::path::Path) -> Result<LoginRequ
                 configured: true,
             },
             client_id: client_id.clone(),
-            scopes: scopes.clone(),
+            client_metadata_url: client_metadata_url.clone(),
+            scopes: scopes.iter().chain(&args.scopes).cloned().collect(),
         }),
         _ => Err(format!(
             "MCP server '{name}' does not use OAuth; add an [mcp.auth] table with mode = \"oauth\""

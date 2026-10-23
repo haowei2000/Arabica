@@ -230,6 +230,7 @@ enum UserMcpAuth {
     Oauth {
         binding: Option<String>,
         client_id: Option<String>,
+        client_metadata_url: Option<String>,
         #[serde(default)]
         scopes: Vec<String>,
     },
@@ -244,10 +245,12 @@ impl UserMcpAuth {
             Self::Oauth {
                 binding,
                 client_id,
+                client_metadata_url,
                 scopes,
             } => crate::mcp::auth::McpAuth::Oauth {
                 binding,
                 client_id,
+                client_metadata_url,
                 scopes,
             },
         }
@@ -737,7 +740,7 @@ pub(crate) fn validate_settings_document(
         if auth.to_auth().validate(&server.name).is_err() {
             return Err(invalid(
                 path("auth"),
-                "Use an absolute credential command, a binding of 1 to 200 characters, and a non-empty client_id.",
+                "Use an absolute credential command, a binding of 1 to 200 characters, a non-empty client_id, and an HTTPS client_metadata_url.",
             ));
         }
         if server
@@ -2361,6 +2364,7 @@ files = ["tool:read_file", "tool:write_file"]
                 crate::mcp::auth::McpAuth::Oauth {
                     binding: Some("work".to_owned()),
                     client_id: Some("arabica-desktop".to_owned()),
+                    client_metadata_url: None,
                     scopes: vec!["mcp".to_owned()],
                 },
                 crate::mcp::auth::McpAuth::Command {

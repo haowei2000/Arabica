@@ -113,6 +113,18 @@ pub type CredentialFuture<'a> =
 /// One way of obtaining the token for one server binding.
 pub trait CredentialSource: Send + Sync {
     fn fetch<'a>(&'a self, request: FetchRequest<'a>) -> CredentialFuture<'a>;
+
+    /// The error for an HTTP 403 `insufficient_scope` challenge. Retrying
+    /// with the same grant cannot succeed, so the request is not replayed;
+    /// sources that can re-authorize say how.
+    fn insufficient_scope(&self, scope: Option<&str>) -> CredentialError {
+        CredentialError::NeedsAuthorization(match scope {
+            Some(scope) => format!(
+                "the server requires scope '{scope}', which the credential provider must grant"
+            ),
+            None => "the server requires more scope than the credential grants".to_owned(),
+        })
+    }
 }
 
 /// A credential handed to one request, with the cache generation it came
@@ -145,6 +157,10 @@ impl Credentials {
                 generation: 0,
             }),
         }
+    }
+
+    fn insufficient_scope(&self, scope: Option<&str>) -> CredentialError {
+        self.source.insufficient_scope(scope)
     }
 
     /// The credential for the next request, fetching one when there is none
@@ -261,7 +277,7 @@ impl CredentialedClient {
             .current()
             .await
             .map_err(credential_failure)?;
-        match call(lease.token.expose().to_owned()).await {
+        let result = match call(lease.token.expose().to_owned()).await {
             Err(error) if is_rejection(&error) => {
                 let replacement = self
                     .credentials
@@ -270,6 +286,13 @@ impl CredentialedClient {
                     .map_err(credential_failure)?;
                 call(replacement.token.expose().to_owned()).await
             }
+            result => result,
+        };
+        match result {
+            Err(StreamableHttpError::InsufficientScope(error)) => Err(credential_failure(
+                self.credentials
+                    .insufficient_scope(error.get_required_scope()),
+            )),
             result => result,
         }
     }

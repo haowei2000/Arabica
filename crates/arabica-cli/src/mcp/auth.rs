@@ -54,6 +54,10 @@ pub enum McpAuth {
         binding: Option<String>,
         #[serde(default)]
         client_id: Option<String>,
+        /// An HTTPS Client ID Metadata Document, preferred over dynamic
+        /// registration when no client ID is given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_metadata_url: Option<String>,
         #[serde(default)]
         scopes: Vec<String>,
     },
@@ -98,11 +102,23 @@ impl McpAuth {
                 binding.as_ref()
             }
             Self::Oauth {
-                binding, client_id, ..
+                binding,
+                client_id,
+                client_metadata_url,
+                ..
             } => {
                 if client_id.as_ref().is_some_and(|id| id.trim().is_empty()) {
                     return Err(format!(
                         "MCP server '{server}' OAuth client_id must not be empty"
+                    ));
+                }
+                if client_metadata_url.as_ref().is_some_and(|url| {
+                    url::Url::parse(url)
+                        .map(|url| url.scheme() != "https" || url.path() == "/")
+                        .unwrap_or(true)
+                }) {
+                    return Err(format!(
+                        "MCP server '{server}' OAuth client_metadata_url must be an HTTPS URL with a path"
                     ));
                 }
                 binding.as_ref()

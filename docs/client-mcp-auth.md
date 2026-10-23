@@ -69,7 +69,10 @@ until the server rejects it. A `message` is shown to the user, truncated to
 200 characters, and must not contain secrets. A JSON-RPC error, a malformed
 reply, or no reply within 30 seconds counts as `unavailable`.
 
-The broker keeps refresh tokens and upstream secrets. Arabica sees only the
+The broker must return only tokens issued for this MCP server by its
+authorization server: Arabica cannot check a token's audience, and MCP
+forbids sending a server any other token. The broker keeps refresh tokens
+and upstream secrets. Arabica sees only the
 short-lived access token it sends as `Authorization: Bearer …`. This is a
 trusted Agent boundary, not a claim that the agent cannot read that token.
 Arabica never sends a rejected token back to the client, never puts tokens
@@ -86,17 +89,33 @@ outstanding.
 "_meta": {"arabica.auth": {"mode": "oauth", "binding": "work", "clientId": "optional-preregistered-id", "scopes": ["mcp"]}}
 ```
 
+`clientMetadataUrl` may be given instead of `clientId`: an HTTPS URL, with a
+path, of a Client ID Metadata Document that the platform hosts.
+
 The grant must already exist. Create it once on the agent's machine:
 
 ```sh
 arabica mcp login --url https://mcp.example.com/mcp --binding work
 ```
 
-rmcp's authorization manager runs the flow. It discovers protected-resource
-and authorization-server metadata, registers the client dynamically or uses
-the given client ID, and uses PKCE with S256 and `state`. It sends the
-RFC 8707 `resource` indicator, validates the issuer, and uses a loopback
-redirect. The grant is stored owner-only in a file keyed by the canonical
+The flow follows the MCP 2026-07-28 authorization specification, and rmcp's
+authorization manager carries out the OAuth steps:
+
+- An unauthenticated request obtains the server's `WWW-Authenticate`
+  challenge. Its `resource_metadata` and `scope` guide discovery.
+- The authorization server must be found through RFC 9728 Protected
+  Resource Metadata. Login fails rather than guess endpoints when a server
+  publishes none.
+- The client is identified, in order, by the given client ID, a Client ID
+  Metadata Document when the server supports them, or dynamic registration.
+- Scopes come from the challenge when it names any, otherwise from
+  `scopes_supported`. Scopes the grant already holds are always kept, along
+  with any `--scope` given.
+- PKCE uses S256, with `state` and a loopback redirect. The RFC 8707
+  `resource` parameter is sent on authorization and token requests.
+- The RFC 9207 `iss` response parameter is checked against the recorded
+  issuer before the code is exchanged. A missing `iss` is rejected when the
+  server advertises it. The grant is stored owner-only in a file keyed by the canonical
 resource URL and the binding, so two bindings for the same URL never share
 a token. Refreshes take a file lock, so sessions and processes that share a
 grant do not refresh it at the same time. When the issuer changes, the
@@ -104,7 +123,9 @@ stored tokens are discarded.
 
 When the grant is missing or the refresh token is revoked, the connection or
 tool call fails with `MCP authorization required` and the login command to
-run. `arabica mcp logout` deletes a grant.
+run. A 403 `insufficient_scope` names the required scope and the step-up
+command, for example `arabica mcp login search --scope 'files:write'`; the
+new grant keeps the old scopes. `arabica mcp logout` deletes a grant.
 
 ## User config
 
@@ -116,7 +137,7 @@ url = "https://mcp.example.test/mcp"
 [mcp.auth]
 mode = "oauth"          # then run: arabica mcp login search
 binding = "work"        # optional, defaults to "default"
-client_id = "..."       # optional; dynamic registration otherwise
+client_id = "..."       # optional; or client_metadata_url = "https://…"
 scopes = ["mcp"]        # optional
 
 [[mcp]]
