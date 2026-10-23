@@ -481,6 +481,7 @@ mod tests {
             response: None,
         }]));
         let request = ModelRunRequest {
+            images: Vec::new(),
             session_id: arabica_protocol::SessionId::new("s"),
             run_id: RunId::new("r"),
             input: "hi".to_owned(),
