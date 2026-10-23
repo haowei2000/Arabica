@@ -90,13 +90,19 @@ struct EvaluationSnapshot: Decodable, Equatable, Sendable {
         let tools: [ObservedTool]?
         let policy_fingerprints: [String]?
     }
+    /// Mirrors the runtime's `ObservedTool`: a call that never finished
+    /// has neither field.
     struct ObservedTool: Decodable, Equatable, Sendable, Identifiable {
         var id: String { call_id }
         let call_id: String
         let name: String
-        let step: Int
-        let outcome: String
-        let elapsed_ms: UInt64
+        let is_error: Bool?
+        /// `succeeded`, `failed`, `cancelled`, or `unknown`.
+        let runner_outcome: String?
+
+        var failed: Bool {
+            is_error == true || runner_outcome == "failed" || runner_outcome == "cancelled"
+        }
     }
     struct Timing: Decodable, Equatable, Sendable {
         let queue_ms: UInt64?
