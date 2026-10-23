@@ -10,11 +10,14 @@
 //! turn is in flight -- see `concepts::ordering` in the `agent-client-protocol`
 //! crate for why a handler must never `.await` its own run to completion.
 
+use crate::mcp::auth::CredentialBroker;
+
 #[cfg(test)]
 mod configuration_tests;
 mod content;
 mod evaluation;
 mod mapping;
+mod mcp_credentials;
 mod permission;
 mod session_metadata;
 mod stdio;
@@ -467,7 +470,11 @@ impl AcpState {
         }
     }
 
-    async fn new_session(&self, request: NewSessionRequest) -> AcpResult<NewSessionResponse> {
+    async fn new_session(
+        &self,
+        request: NewSessionRequest,
+        broker: Option<Arc<dyn CredentialBroker>>,
+    ) -> AcpResult<NewSessionResponse> {
         if !request.cwd.is_absolute() {
             return Err(AcpError::invalid_params()
                 .data(format!("cwd must be absolute: {}", request.cwd.display())));
@@ -482,8 +489,13 @@ impl AcpState {
             Some(settings) => settings.build_model()?,
             None => (self.model_factory)()?,
         };
-        let mcp =
-            connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
+        let mcp = connect_session_mcp(
+            request.mcp_servers,
+            &request.cwd,
+            &self.arabica_home,
+            broker,
+        )
+        .await?;
         let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let instructions_sha256 =
@@ -596,8 +608,15 @@ impl AcpState {
             Some(settings) => settings.build_model()?,
             None => (self.model_factory)()?,
         };
-        let mcp =
-            connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
+        let mcp = connect_session_mcp(
+            request.mcp_servers,
+            &request.cwd,
+            &self.arabica_home,
+            Some(Arc::new(mcp_credentials::AcpCredentialBroker::new(
+                connection.clone(),
+            ))),
+        )
+        .await?;
         let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let restore_report = manager
@@ -673,6 +692,7 @@ impl AcpState {
     async fn resume_session(
         &self,
         request: ResumeSessionRequest,
+        broker: Option<Arc<dyn CredentialBroker>>,
     ) -> AcpResult<ResumeSessionResponse> {
         if !request.cwd.is_absolute() {
             return Err(AcpError::invalid_params()
@@ -705,8 +725,13 @@ impl AcpState {
             Some(settings) => settings.build_model()?,
             None => (self.model_factory)()?,
         };
-        let mcp =
-            connect_session_mcp(request.mcp_servers, &request.cwd, &self.arabica_home).await?;
+        let mcp = connect_session_mcp(
+            request.mcp_servers,
+            &request.cwd,
+            &self.arabica_home,
+            broker,
+        )
+        .await?;
         let runtime = self.build_runtime(model, &request.cwd, mcp, session_settings.as_ref())?;
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         manager
@@ -1124,6 +1149,15 @@ async fn serve(
                                 }),
                             ),
                             (
+                                "arabica.mcpAuth".into(),
+                                serde_json::json!({
+                                    "schemaVersion": 1,
+                                    "metaKey": crate::mcp::auth::META_KEY,
+                                    "modes": ["broker", "oauth"],
+                                    "credential": crate::mcp::auth::CREDENTIAL_METHOD
+                                }),
+                            ),
+                            (
                                 "arabica.session".into(),
                                 serde_json::json!({
                                     "schemaVersion": 1,
@@ -1141,11 +1175,19 @@ async fn serve(
                 let state = state.clone();
                 async move |request: NewSessionRequest,
                             responder: Responder<NewSessionResponse>,
-                            _connection: ConnectionTo<Client>| {
-                    match state.new_session(request).await {
-                        Ok(response) => responder.respond(response),
-                        Err(error) => responder.respond_with_error(error),
-                    }
+                            connection: ConnectionTo<Client>| {
+                    // Session setup may ask the client for MCP credentials,
+                    // so it runs off the dispatch loop that delivers the reply.
+                    let state = state.clone();
+                    let broker: Arc<dyn CredentialBroker> = Arc::new(
+                        mcp_credentials::AcpCredentialBroker::new(connection.clone()),
+                    );
+                    connection.spawn(async move {
+                        match state.new_session(request, Some(broker)).await {
+                            Ok(response) => responder.respond(response),
+                            Err(error) => responder.respond_with_error(error),
+                        }
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -1181,10 +1223,14 @@ async fn serve(
                 async move |request: LoadSessionRequest,
                             responder: Responder<LoadSessionResponse>,
                             connection: ConnectionTo<Client>| {
-                    match state.load_session(request, &connection).await {
-                        Ok(response) => responder.respond(response),
-                        Err(error) => responder.respond_with_error(error),
-                    }
+                    let state = state.clone();
+                    let task_connection = connection.clone();
+                    connection.spawn(async move {
+                        match state.load_session(request, &task_connection).await {
+                            Ok(response) => responder.respond(response),
+                            Err(error) => responder.respond_with_error(error),
+                        }
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -1208,11 +1254,17 @@ async fn serve(
                 let state = state.clone();
                 async move |request: ResumeSessionRequest,
                             responder: Responder<ResumeSessionResponse>,
-                            _connection: ConnectionTo<Client>| {
-                    match state.resume_session(request).await {
-                        Ok(response) => responder.respond(response),
-                        Err(error) => responder.respond_with_error(error),
-                    }
+                            connection: ConnectionTo<Client>| {
+                    let state = state.clone();
+                    let broker: Arc<dyn CredentialBroker> = Arc::new(
+                        mcp_credentials::AcpCredentialBroker::new(connection.clone()),
+                    );
+                    connection.spawn(async move {
+                        match state.resume_session(request, Some(broker)).await {
+                            Ok(response) => responder.respond(response),
+                            Err(error) => responder.respond_with_error(error),
+                        }
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -1312,13 +1364,18 @@ async fn connect_session_mcp(
     client_servers: Vec<McpServer>,
     cwd: &Path,
     arabica_home: &Path,
+    broker: Option<Arc<dyn CredentialBroker>>,
 ) -> AcpResult<crate::mcp::McpTools> {
+    let environment = crate::mcp::auth::AuthEnvironment {
+        arabica_home: Some(arabica_home.to_path_buf()),
+        broker,
+    };
     let client_names: HashSet<String> = client_servers
         .iter()
         .map(crate::mcp::server_name)
         .map(str::to_owned)
         .collect();
-    let mut tools = crate::mcp::McpTools::connect(client_servers, cwd)
+    let mut tools = crate::mcp::McpTools::connect(client_servers, cwd, &environment)
         .await
         .map_err(|error| AcpError::invalid_params().data(error))?;
     let configured = crate::config::user_config_mcp(arabica_home)
@@ -1328,7 +1385,7 @@ async fn connect_session_mcp(
         .filter(|server| !client_names.contains(crate::mcp::server_name(server)))
         .collect::<Vec<_>>();
     let (extra, diagnostics) =
-        crate::mcp::McpTools::connect_lenient(not_supplied_by_client, cwd).await;
+        crate::mcp::McpTools::connect_lenient(not_supplied_by_client, cwd, &environment).await;
     for diagnostic in diagnostics {
         eprintln!("structure: {diagnostic}");
     }
@@ -1718,7 +1775,7 @@ mod round_trip {
             blend_policies: BTreeMap::new(),
         });
         let session = state
-            .new_session(NewSessionRequest::new(root.clone()))
+            .new_session(NewSessionRequest::new(root.clone()), None)
             .await
             .unwrap();
         assert_eq!(session.config_options.as_ref().unwrap().len(), 3);
@@ -1832,7 +1889,7 @@ mod round_trip {
             blend_policies,
         });
         let session = state
-            .new_session(NewSessionRequest::new(root.clone()))
+            .new_session(NewSessionRequest::new(root.clone()), None)
             .await
             .unwrap();
         let options = session.config_options.as_ref().unwrap();
@@ -1946,7 +2003,7 @@ mod round_trip {
         assert_eq!(saved.model_thinking["strong"], "max");
         assert_eq!(saved.model_thinking["fast"], "low");
         let restored = state
-            .new_session(NewSessionRequest::new(root.clone()))
+            .new_session(NewSessionRequest::new(root.clone()), None)
             .await
             .unwrap();
         let restored_entry = state.entry(&restored.session_id).unwrap();
@@ -1973,7 +2030,7 @@ mod round_trip {
         );
         let other_root = temp_root("blend-other-workspace");
         let isolated = state
-            .new_session(NewSessionRequest::new(other_root.clone()))
+            .new_session(NewSessionRequest::new(other_root.clone()), None)
             .await
             .unwrap();
         let isolated_entry = state.entry(&isolated.session_id).unwrap();
@@ -2060,10 +2117,10 @@ mod round_trip {
             .await
             .unwrap();
         let resumed = state
-            .resume_session(ResumeSessionRequest::new(
-                restored.session_id.clone(),
-                root.clone(),
-            ))
+            .resume_session(
+                ResumeSessionRequest::new(restored.session_id.clone(), root.clone()),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(resumed.config_options.as_ref().unwrap().len(), 3);
@@ -2190,6 +2247,174 @@ mod round_trip {
         assert_eq!(
             std::fs::read_to_string(&marker).expect("MCP tool ran"),
             "worked"
+        );
+        server.abort();
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(arabica_home).ok();
+    }
+
+    fn named_tool_call(call_id: &str, name: &str, arguments: serde_json::Value) -> ModelRunResult {
+        let mut result = tool_call_result(name, arguments);
+        if let Some(RuntimeResponse { items, .. }) = &mut result.response
+            && let Some(RuntimeItem::ToolCall(call)) = items.first_mut()
+        {
+            call.call_id = call_id.to_owned();
+        }
+        result
+    }
+
+    #[tokio::test]
+    async fn broker_credentials_rotate_within_one_acp_session_and_stay_per_binding() {
+        use crate::mcp::auth::{BrokerRequest, McpAuth, ProvidedCredential};
+        use crate::mcp::auth_tests::{Fixture, Lifecycle};
+        use agent_client_protocol::schema::v1::McpServerHttp;
+
+        let fixture = Fixture::start(Lifecycle::Modern, true, &["a-1", "b-1"]).await;
+        let root = temp_root("mcp-broker");
+        let arabica_home = temp_root("mcp-broker-home");
+        let state = scripted_state(
+            vec![
+                named_tool_call("call-a", "mcp__a__echo", serde_json::json!({"value": "a"})),
+                named_tool_call("call-b", "mcp__b__echo", serde_json::json!({"value": "b"})),
+                text_result("first turn"),
+                named_tool_call(
+                    "call-a2",
+                    "mcp__a__echo",
+                    serde_json::json!({"value": "a-rotated"}),
+                ),
+                text_result("second turn"),
+            ],
+            acp_tool_policy(),
+            &arabica_home,
+        );
+        let (server, client_channel) = spawn_agent(state);
+        // The platform's view of each account's current token.
+        let current = Arc::new(StdMutex::new(HashMap::from([
+            ("account-a".to_owned(), "a-1".to_owned()),
+            ("account-b".to_owned(), "b-1".to_owned()),
+        ])));
+        let asked = Arc::new(StdMutex::new(Vec::<(String, String)>::new()));
+        let declare = |name: &str, binding: &str| {
+            McpServer::Http(
+                McpServerHttp::new(name, fixture.url.clone()).meta(
+                    McpAuth::Broker {
+                        binding: binding.to_owned(),
+                    }
+                    .to_meta(),
+                ),
+            )
+        };
+        let servers = vec![declare("a", "account-a"), declare("b", "account-b")];
+        let result = tokio::time::timeout(Duration::from_secs(20), {
+            let current = current.clone();
+            let asked = asked.clone();
+            let root = root.clone();
+            let fixture = &fixture;
+            ClientRole
+                .builder()
+                .name("test-client")
+                .on_receive_request(
+                    {
+                        let current = current.clone();
+                        async move |request: BrokerRequest,
+                                    responder: Responder<ProvidedCredential>,
+                                    _connection| {
+                            asked.lock().unwrap().push((
+                                request.binding.clone(),
+                                serde_json::to_value(request.reason)
+                                    .unwrap()
+                                    .as_str()
+                                    .unwrap()
+                                    .to_owned(),
+                            ));
+                            let token = current.lock().unwrap().get(&request.binding).cloned();
+                            responder.respond(match token {
+                                Some(access_token) => ProvidedCredential::Granted {
+                                    access_token,
+                                    expires_in_seconds: Some(3600),
+                                },
+                                None => ProvidedCredential::NeedsAuthorization { message: None },
+                            })
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |request: RequestPermissionRequest,
+                                responder: Responder<RequestPermissionResponse>,
+                                _connection| {
+                        let allow_once = request
+                            .options
+                            .iter()
+                            .find(|option| option.kind == PermissionOptionKind::AllowOnce)
+                            .expect("allow once is offered")
+                            .option_id
+                            .clone();
+                        responder.respond(RequestPermissionResponse::new(
+                            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                                allow_once,
+                            )),
+                        ))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_with(client_channel, async move |cx| {
+                    let initialize = cx
+                        .send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    let advertised = &initialize.meta.as_ref().unwrap()["arabica.mcpAuth"];
+                    assert_eq!(advertised["credential"], "_arabica/mcp/credential");
+                    assert_eq!(advertised["metaKey"], "arabica.auth");
+                    let session = cx
+                        .send_request(AcpNewSessionRequest::new(root).mcp_servers(servers))
+                        .block_task()
+                        .await?;
+                    let first = cx
+                        .send_request(AcpPromptRequest::new(
+                            session.session_id.clone(),
+                            vec![AcpContentBlock::from("use both accounts")],
+                        ))
+                        .block_task()
+                        .await?;
+                    // The platform rotates account A; the agent session and
+                    // its MCP connections stay as they are.
+                    fixture.rotate("a-1", "a-2");
+                    current
+                        .lock()
+                        .unwrap()
+                        .insert("account-a".to_owned(), "a-2".to_owned());
+                    let second = cx
+                        .send_request(AcpPromptRequest::new(
+                            session.session_id,
+                            vec![AcpContentBlock::from("use account A again")],
+                        ))
+                        .block_task()
+                        .await?;
+                    Ok((first.stop_reason, second.stop_reason))
+                })
+        })
+        .await
+        .expect("broker round trip timed out")
+        .expect("broker round trip succeeded");
+        assert_eq!(result, (StopReason::EndTurn, StopReason::EndTurn));
+        assert_eq!(
+            *asked.lock().unwrap(),
+            [
+                ("account-a".to_owned(), "initial".to_owned()),
+                ("account-b".to_owned(), "initial".to_owned()),
+                ("account-a".to_owned(), "rejected".to_owned()),
+            ]
+        );
+        let calls = fixture
+            .observed()
+            .into_iter()
+            .filter(|request| request.rpc_method == "tools/call")
+            .map(|request| request.authorization.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            calls,
+            ["Bearer a-1", "Bearer b-1", "Bearer a-1", "Bearer a-2"]
         );
         server.abort();
         std::fs::remove_dir_all(root).ok();
@@ -2429,7 +2654,7 @@ mod round_trip {
         let home = temp_root("rename-ownership-home");
         let owner = scripted_state(vec![], LocalRunnerPolicy::coding(), &home);
         let session = owner
-            .new_session(AcpNewSessionRequest::new(root.clone()))
+            .new_session(AcpNewSessionRequest::new(root.clone()), None)
             .await
             .unwrap();
         let other = scripted_state(vec![], LocalRunnerPolicy::coding(), &home);

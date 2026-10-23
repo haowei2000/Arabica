@@ -22,6 +22,7 @@ use tokio::sync::Notify;
 use tokio_util::codec::{BytesCodec, FramedRead};
 use tokio_util::sync::CancellationToken;
 
+use super::auth::AuthEnvironment;
 use super::*;
 
 const MODERN_VERSION: &str = "2026-07-28";
@@ -317,7 +318,11 @@ fn legacy_result(request: &Value) -> Option<Value> {
 async fn connect(fixture: &HttpFixture) -> McpTools {
     tokio::time::timeout(
         Duration::from_secs(5),
-        McpTools::connect(vec![fixture.config()], Path::new("/")),
+        McpTools::connect(
+            vec![fixture.config()],
+            Path::new("/"),
+            &AuthEnvironment::default(),
+        ),
     )
     .await
     .unwrap_or_else(|_| panic!("fixture connection timed out"))
@@ -522,7 +527,11 @@ async fn recognized_modern_version_error_does_not_downgrade_to_legacy() {
     let fixture = HttpFixture::start(FixtureMode::UnsupportedVersion).await;
     let result = tokio::time::timeout(
         Duration::from_secs(5),
-        McpTools::connect(vec![fixture.config()], Path::new("/")),
+        McpTools::connect(
+            vec![fixture.config()],
+            Path::new("/"),
+            &AuthEnvironment::default(),
+        ),
     )
     .await
     .unwrap_or_else(|_| panic!("version rejection timed out"));
@@ -547,7 +556,12 @@ async fn configured_headers_cannot_override_protocol_metadata() {
     ] {
         let config = McpServerHttp::new("remote", fixture.url.clone())
             .headers(vec![HttpHeader::new(name, "fixture-override-value")]);
-        let result = McpTools::connect(vec![McpServer::Http(config)], Path::new("/")).await;
+        let result = McpTools::connect(
+            vec![McpServer::Http(config)],
+            Path::new("/"),
+            &AuthEnvironment::default(),
+        )
+        .await;
         let error = match result {
             Ok(_) => panic!("protocol-owned header override must be rejected"),
             Err(error) => error,
@@ -593,7 +607,11 @@ async fn cross_origin_redirect_does_not_forward_configured_credentials() {
         };
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            McpTools::connect(vec![source.config()], Path::new("/")),
+            McpTools::connect(
+                vec![source.config()],
+                Path::new("/"),
+                &AuthEnvironment::default(),
+            ),
         )
         .await
         .unwrap_or_else(|_| panic!("redirect rejection timed out"));

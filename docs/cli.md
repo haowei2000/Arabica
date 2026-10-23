@@ -379,6 +379,9 @@ optional client capabilities: elicitation, sampling, roots, MCP Apps, and
 Tasks are not enabled. A state-only MRTR continuation echoes its opaque
 `requestState` with a fresh request ID; it is not exposed as a completed
 tool result. MCP connection and credential scope remains per ACP session.
+Servers whose tokens rotate can declare a dynamic `broker`, `oauth`, or
+`command` mode instead of static headers; see
+[Dynamic MCP authentication](client-mcp-auth.md).
 
 A stdio server receives
 only a small base environment (`PATH`, `HOME`, temporary-directory and locale

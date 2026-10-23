@@ -7,6 +7,7 @@ use agent_client_protocol::schema::v1::{EnvVariable, McpServerStdio};
 use arabica_model::ToolCallItem;
 use serde_json::{Value, json};
 
+use super::auth::AuthEnvironment;
 use super::*;
 
 struct Fixture {
@@ -133,9 +134,13 @@ fn assert_modern_metadata(request: &Value) {
 async fn modern_stdio_discovers_pages_and_calls_without_a_handshake() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let fixture = Fixture::compile().await;
-        let mut tools = McpTools::connect(vec![fixture.server("modern")], fixture.root.path())
-            .await
-            .expect("a pure stateless stdio peer connects without initialize");
+        let mut tools = McpTools::connect(
+            vec![fixture.server("modern")],
+            fixture.root.path(),
+            &AuthEnvironment::default(),
+        )
+        .await
+        .expect("a pure stateless stdio peer connects without initialize");
         assert_eq!(
             tools
                 .definitions()
@@ -231,9 +236,13 @@ async fn modern_stdio_discovers_pages_and_calls_without_a_handshake() {
 async fn dropping_a_modern_stdio_call_cancels_its_request_and_preserves_the_connection() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let fixture = Fixture::compile().await;
-        let mut tools = McpTools::connect(vec![fixture.server("modern")], fixture.root.path())
-            .await
-            .expect("a stateless peer connects");
+        let mut tools = McpTools::connect(
+            vec![fixture.server("modern")],
+            fixture.root.path(),
+            &AuthEnvironment::default(),
+        )
+        .await
+        .expect("a stateless peer connects");
 
         let mut pending = Box::pin(tools.execute(request("structured", json!({"value": "hang"}))));
         let hanging_request = tokio::select! {
@@ -301,9 +310,13 @@ async fn dropping_a_modern_stdio_call_cancels_its_request_and_preserves_the_conn
 async fn legacy_stdio_falls_back_after_method_not_found() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let fixture = Fixture::compile().await;
-        let mut tools = McpTools::connect(vec![fixture.server("legacy")], fixture.root.path())
-            .await
-            .expect("a legacy peer connects after rejecting server/discover");
+        let mut tools = McpTools::connect(
+            vec![fixture.server("legacy")],
+            fixture.root.path(),
+            &AuthEnvironment::default(),
+        )
+        .await
+        .expect("a legacy peer connects after rejecting server/discover");
         let result = tools
             .execute(request("structured", json!({"value": "legacy-worked"})))
             .await
