@@ -65,12 +65,27 @@ impl PrintArgs {
     }
 }
 
+#[derive(Args, Debug)]
+struct AcpArgs {
+    /// MCP lifecycle for HTTP and stdio servers: "auto" falls back to the
+    /// legacy initialize handshake only when a server proves it is legacy;
+    /// "modern" requires MCP 2026-07-28 and never falls back.
+    #[arg(long, value_enum, default_value_t = McpProtocol::Auto)]
+    mcp_protocol: McpProtocol,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum McpProtocol {
+    Auto,
+    Modern,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Install the latest signed release or configure automatic CLI updates.
     Update(arabica_cli::update::UpdateArgs),
     /// Run as an Agent Client Protocol v1 agent over stdio (for editors like Zed).
-    Acp,
+    Acp(AcpArgs),
     /// Start an interactive terminal session (also the default).
     Chat,
     /// Show resolved configuration, or inspect and edit config.toml as JSON.
@@ -176,7 +191,7 @@ async fn run(cli: Cli) -> i32 {
     let resolved = match (|| {
         let home = arabica_adapters::default_arabica_home()?;
         let cwd = std::env::current_dir()?;
-        if matches!(command, Some(Commands::Acp)) {
+        if matches!(command, Some(Commands::Acp(_))) {
             arabica_cli::config::resolve_cli_acp_config(&config, &home, &cwd, process_environment)
         } else {
             resolve_cli_runtime_config(&config, &home, &cwd, process_environment)
@@ -190,11 +205,16 @@ async fn run(cli: Cli) -> i32 {
     };
 
     match (command, &print_args.print) {
-        (Some(Commands::Acp), Some(_)) => {
+        (Some(Commands::Acp(_)), Some(_)) => {
             eprintln!("error: -p cannot be combined with the acp subcommand");
             2
         }
-        (Some(Commands::Acp), None) => run_acp(resolved).await,
+        (Some(Commands::Acp(args)), None) => {
+            if args.mcp_protocol == McpProtocol::Modern {
+                arabica_cli::mcp::require_modern_protocol();
+            }
+            run_acp(resolved).await
+        }
         (Some(Commands::Chat | Commands::Config { .. }), Some(_)) => {
             eprintln!("error: -p cannot be combined with this subcommand");
             2

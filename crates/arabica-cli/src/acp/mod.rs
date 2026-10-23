@@ -614,11 +614,14 @@ impl AcpState {
         // (dangling tool calls, then run.failed) -- the repairs are new
         // Events appended after the stored history, not part of it, so they
         // belong after it in replay order too.
+        let mut open_calls = mapping::OpenToolCalls::default();
         for envelope in original_events
             .iter()
             .chain(restore_report.repaired_events.iter())
         {
-            for update in mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd) {
+            let mut updates = mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd);
+            updates.extend(open_calls.track(&envelope.event, &envelope.run_id));
+            for update in updates {
                 if let Err(error) = connection
                     .send_notification(SessionNotification::new(acp_session_id.clone(), update))
                 {
