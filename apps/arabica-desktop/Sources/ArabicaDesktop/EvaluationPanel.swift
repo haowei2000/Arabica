@@ -155,6 +155,7 @@ struct EvaluationPanel: View {
             }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
         .padding(.vertical, 2)
     }
 
@@ -212,6 +213,7 @@ struct EvaluationPanel: View {
                     }
                     .pickerStyle(.menu)
                     .controlSize(.small)
+                    .labelsHidden()
                 }
 
                 Divider().padding(.vertical, 2)
@@ -365,7 +367,6 @@ struct EvaluationPanel: View {
     struct ToolDiagnosticSummary {
         var total: Int
         var errors: Int
-        var elapsedMs: UInt64
     }
 
     struct RunAggregateMetrics {
@@ -406,12 +407,11 @@ struct EvaluationPanel: View {
         var toolUsage = [String: ToolDiagnosticSummary]()
         for run in runs {
             for tool in run.snapshot.tools ?? [] {
-                var current = toolUsage[tool.name] ?? ToolDiagnosticSummary(total: 0, errors: 0, elapsedMs: 0)
+                var current = toolUsage[tool.name] ?? ToolDiagnosticSummary(total: 0, errors: 0)
                 current.total += 1
-                if tool.outcome.lowercased().contains("error") {
+                if tool.failed {
                     current.errors += 1
                 }
-                current.elapsedMs += tool.elapsed_ms
                 toolUsage[tool.name] = current
             }
         }
@@ -492,7 +492,7 @@ struct EvaluationPanel: View {
                                             .font(.caption)
                                             .foregroundStyle(.green)
                                     }
-                                    Text("· \(elapsed(stat.elapsedMs))")
+                                    Text("· \(stat.total) \(stat.total == 1 ? "call" : "calls")")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .monospacedDigit()

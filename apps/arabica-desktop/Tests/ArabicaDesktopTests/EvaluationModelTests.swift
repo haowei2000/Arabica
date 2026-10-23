@@ -49,6 +49,23 @@ final class EvaluationModelTests: XCTestCase {
         XCTAssertThrowsError(try EvaluationSnapshot.decode(response, session: "session"))
     }
 
+    func testObservedToolsDecodeInTheRuntimeShape() throws {
+        var response = view()
+        var report = response["report"] as! [String: Any]
+        let snapshot: [String: Any] = ["run_id": "run", "session_id": "session", "workspace_id": "workspace",
+            "terminal_status": "completed", "timing": ["model_call_ms_total": 900, "model_calls": 2, "usage_reported_calls": 1],
+            "tools": [
+                ["call_id": "a", "name": "list_dir", "is_error": false, "runner_outcome": "succeeded"],
+                ["call_id": "b", "name": "shell", "is_error": true, "runner_outcome": "succeeded"],
+                ["call_id": "c", "name": "write_file", "runner_outcome": "cancelled"],
+                ["call_id": "d", "name": "grep"],
+            ]]
+        report["runs"] = [["snapshot": snapshot]]
+        response["report"] = report
+        let tools = try EvaluationSnapshot.decode(response, session: "session").report!.runs!.first!.snapshot.tools!
+        XCTAssertEqual(tools.map(\.failed), [false, true, true, false])
+    }
+
     func testRefreshAcceptanceRetainsCachedReportWhenWorkerReturnsNoReport() async {
         let model = EvaluationModel()
         var requests: [String] = []
