@@ -214,6 +214,44 @@ struct UserMcpServer {
     env: Option<BTreeMap<String, String>>,
     url: Option<String>,
     headers: Option<BTreeMap<String, String>>,
+    auth: Option<UserMcpAuth>,
+}
+
+/// `[mcp.auth]`: how an HTTP server's access token is obtained when static
+/// headers are not enough. Broker mode is absent: only an ACP client can
+/// act as the broker.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase", deny_unknown_fields)]
+enum UserMcpAuth {
+    Command {
+        command: Vec<String>,
+        binding: Option<String>,
+    },
+    Oauth {
+        binding: Option<String>,
+        client_id: Option<String>,
+        #[serde(default)]
+        scopes: Vec<String>,
+    },
+}
+
+impl UserMcpAuth {
+    fn to_auth(&self) -> crate::mcp::auth::McpAuth {
+        match self.clone() {
+            Self::Command { command, binding } => {
+                crate::mcp::auth::McpAuth::Command { command, binding }
+            }
+            Self::Oauth {
+                binding,
+                client_id,
+                scopes,
+            } => crate::mcp::auth::McpAuth::Oauth {
+                binding,
+                client_id,
+                scopes,
+            },
+        }
+    }
 }
 
 impl UserMcpServer {
@@ -248,9 +286,12 @@ impl UserMcpServer {
                     .into_iter()
                     .map(|(name, value)| HttpHeader::new(name, value))
                     .collect::<Vec<_>>();
-                Ok(McpServer::Http(
-                    McpServerHttp::new(self.name.clone(), url.clone()).headers(headers),
-                ))
+                let mut server =
+                    McpServerHttp::new(self.name.clone(), url.clone()).headers(headers);
+                if let Some(auth) = &self.auth {
+                    server = server.meta(auth.to_auth().to_meta());
+                }
+                Ok(McpServer::Http(server))
             }
             (Some(_), Some(_)) => Err(format!(
                 "MCP server '{}' declares both command and url; pick one transport",
@@ -598,6 +639,12 @@ pub(crate) fn validate_settings_document(
             (Some(command), None)
                 if Path::new(command).is_absolute() && !command.contains('\0') =>
             {
+                if server.auth.is_some() {
+                    return Err(invalid(
+                        path("auth"),
+                        "Authentication modes apply only to MCP servers configured with a URL.",
+                    ));
+                }
                 if server
                     .headers
                     .as_ref()
@@ -680,6 +727,29 @@ pub(crate) fn validate_settings_document(
                     "Protocol-owned MCP headers are generated automatically and cannot be overridden.",
                 ));
             }
+        }
+    }
+    for (index, server) in config.mcp.iter().enumerate() {
+        let Some(auth) = &server.auth else {
+            continue;
+        };
+        let path = |key: &str| vec!["mcp".to_owned(), index.to_string(), key.to_owned()];
+        if auth.to_auth().validate(&server.name).is_err() {
+            return Err(invalid(
+                path("auth"),
+                "Use an absolute credential command, a binding of 1 to 200 characters, and a non-empty client_id.",
+            ));
+        }
+        if server
+            .headers
+            .iter()
+            .flatten()
+            .any(|(key, _)| key.eq_ignore_ascii_case("authorization"))
+        {
+            return Err(invalid(
+                path("headers"),
+                "Remove the Authorization header; the auth table supplies it.",
+            ));
         }
     }
     for (index, root) in config.skills.roots.iter().enumerate() {
@@ -2262,6 +2332,78 @@ files = ["tool:read_file", "tool:write_file"]
         assert_eq!(http.url, "https://mcp.example.test/mcp");
         assert_eq!(http.headers[0].name, "Authorization");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn user_config_mcp_auth_tables_become_dynamic_auth_declarations() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            user_config_path(&root),
+            "[[mcp]]\nname = 'remote'\nurl = 'https://mcp.example.test/mcp'\n\n[mcp.auth]\nmode = 'oauth'\nbinding = 'work'\nclient_id = 'arabica-desktop'\nscopes = ['mcp']\n\n[[mcp]]\nname = 'brokered'\nurl = 'https://other.example.test/mcp'\n\n[mcp.auth]\nmode = 'command'\ncommand = ['/usr/local/bin/token-helper', '--account', 'work']\n",
+        )
+        .unwrap();
+        let servers = user_config_mcp(&root).unwrap();
+        let auth = servers
+            .iter()
+            .map(|server| match server {
+                McpServer::Http(config) => {
+                    crate::mcp::auth::McpAuth::from_meta(&config.name, config.meta.as_ref())
+                        .unwrap()
+                        .unwrap()
+                }
+                other => panic!("expected HTTP server, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            auth,
+            [
+                crate::mcp::auth::McpAuth::Oauth {
+                    binding: Some("work".to_owned()),
+                    client_id: Some("arabica-desktop".to_owned()),
+                    scopes: vec!["mcp".to_owned()],
+                },
+                crate::mcp::auth::McpAuth::Command {
+                    command: vec![
+                        "/usr/local/bin/token-helper".to_owned(),
+                        "--account".to_owned(),
+                        "work".to_owned()
+                    ],
+                    binding: None,
+                },
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mcp_auth_tables_are_validated_with_their_transport() {
+        for (document, field) in [
+            (
+                "[[mcp]]\nname='x'\ncommand='/bin/true'\n[mcp.auth]\nmode='oauth'\n",
+                "auth",
+            ),
+            (
+                "[[mcp]]\nname='x'\nurl='https://mcp.example.test'\n[mcp.headers]\nAuthorization='Bearer static'\n[mcp.auth]\nmode='oauth'\n",
+                "headers",
+            ),
+            (
+                "[[mcp]]\nname='x'\nurl='https://mcp.example.test'\n[mcp.auth]\nmode='command'\ncommand=['relative-helper']\n",
+                "auth",
+            ),
+        ] {
+            let document = toml::from_str::<toml::Value>(document).unwrap();
+            let error = validate_settings_document(&document)
+                .err()
+                .unwrap_or_else(|| panic!("{document:?} must be rejected"));
+            assert_eq!(error.path.last().map(String::as_str), Some(field));
+        }
+        // Only an ACP client can act as a broker.
+        let document = toml::from_str::<toml::Value>(
+            "[[mcp]]\nname='x'\nurl='https://mcp.example.test'\n[mcp.auth]\nmode='broker'\nbinding='a'\n",
+        )
+        .unwrap();
+        assert!(validate_settings_document(&document).is_err());
     }
 
     #[test]

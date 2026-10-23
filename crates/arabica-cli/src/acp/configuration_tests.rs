@@ -180,7 +180,7 @@ async fn soe_prompt_with_tools_reaches_only_the_selected_model() {
     )
     .with_provider_settings(settings);
     let session = state
-        .new_session(NewSessionRequest::new(fixture.cwd.clone()))
+        .new_session(NewSessionRequest::new(fixture.cwd.clone()), None)
         .await
         .unwrap();
     for (option, value) in [
@@ -245,7 +245,7 @@ async fn selecting_named_policy_reloads_file_thinking_and_preserves_soe_preferen
     )
     .with_provider_settings(settings);
     let session = state
-        .new_session(NewSessionRequest::new(fixture.cwd.clone()))
+        .new_session(NewSessionRequest::new(fixture.cwd.clone()), None)
         .await
         .unwrap();
     state

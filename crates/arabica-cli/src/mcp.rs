@@ -17,6 +17,13 @@ use rmcp::service::RunningService;
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{ClientLifecycleMode, ClientServiceExt, RoleClient};
 
+pub mod auth;
+pub mod commands;
+pub mod credentials;
+pub mod oauth;
+
+use auth::{AuthEnvironment, McpAuth, Origin};
+
 type Client = RunningService<RoleClient, ClientConfig>;
 
 // Allow the SDK's ten-second probe deadline plus fifteen seconds for a
@@ -68,7 +75,12 @@ struct Connected {
 
 /// Bring one server up and discover its tools. Error messages carry the
 /// server name and the failure, never environment values or header values.
-async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, String> {
+async fn connect_server(
+    server: McpServer,
+    cwd: &Path,
+    origin: Origin,
+    environment: &AuthEnvironment,
+) -> Result<Connected, String> {
     let (name, client) = match server {
         McpServer::Stdio(config) => {
             if !config.command.is_absolute() {
@@ -107,6 +119,7 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
             (config.name, client)
         }
         McpServer::Http(config) => {
+            let auth = McpAuth::from_meta(&config.name, config.meta.as_ref())?;
             let mut headers = HashMap::new();
             for header in &config.headers {
                 let key = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(
@@ -133,6 +146,12 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
                         config.name
                     ));
                 }
+                if auth.is_some() && key == reqwest::header::AUTHORIZATION {
+                    return Err(format!(
+                        "MCP server '{}' cannot combine an Authorization header with dynamic authentication",
+                        config.name
+                    ));
+                }
                 let value =
                     reqwest::header::HeaderValue::from_str(&header.value).map_err(|_| {
                         format!(
@@ -144,15 +163,44 @@ async fn connect_server(server: McpServer, cwd: &Path) -> Result<Connected, Stri
             }
             // Keep the SDK's body-preserving, same-origin redirect policy so
             // configured credentials cannot be forwarded to another origin.
-            let transport = StreamableHttpClientTransport::from_config(
-                rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
-                    .custom_headers(headers),
-            );
-            let client = tokio::time::timeout(
-                CONNECTION_TIMEOUT,
-                client_config().serve_with_lifecycle(transport, client_lifecycle()),
-            )
-            .await
+            let transport_config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
+                .custom_headers(headers);
+            let client = match &auth {
+                None => {
+                    tokio::time::timeout(
+                        CONNECTION_TIMEOUT,
+                        client_config().serve_with_lifecycle(
+                            StreamableHttpClientTransport::from_config(transport_config),
+                            client_lifecycle(),
+                        ),
+                    )
+                    .await
+                }
+                Some(auth) => {
+                    let source =
+                        auth::source_for(auth, &config.name, &config.url, origin, environment)
+                            .await?;
+                    let credentials = std::sync::Arc::new(credentials::Credentials::new(source));
+                    // Resolve the first credential before the lifecycle
+                    // starts: a slow provider must not run out the SDK's
+                    // discovery deadline and look like a legacy server.
+                    credentials
+                        .current()
+                        .await
+                        .map_err(|error| format!("MCP server '{}': {error}", config.name))?;
+                    tokio::time::timeout(
+                        CONNECTION_TIMEOUT,
+                        client_config().serve_with_lifecycle(
+                            StreamableHttpClientTransport::with_client(
+                                credentials::CredentialedClient::new(credentials),
+                                transport_config,
+                            ),
+                            client_lifecycle(),
+                        ),
+                    )
+                    .await
+                }
+            }
             .map_err(|_| format!("MCP server '{}' connection timed out", config.name))?
             .map_err(|error| format!("MCP server '{}' connection failed: {error}", config.name))?;
             (config.name, client)
@@ -226,11 +274,15 @@ impl McpTools {
         identities
     }
 
-    pub async fn connect(servers: Vec<McpServer>, cwd: &Path) -> Result<Self, String> {
+    pub async fn connect(
+        servers: Vec<McpServer>,
+        cwd: &Path,
+        environment: &AuthEnvironment,
+    ) -> Result<Self, String> {
         let mut result = Self::default();
         let mut names = HashSet::new();
         for server in servers {
-            let connected = connect_server(server, cwd).await?;
+            let connected = connect_server(server, cwd, Origin::Client, environment).await?;
             result.register(connected, &mut names, "session")?;
         }
         Ok(result)
@@ -240,12 +292,16 @@ impl McpTools {
     /// failure: the shape terminal surfaces want, where one broken server
     /// must not take the session down. [`Self::connect`] keeps the strict
     /// all-or-nothing contract the ACP client relies on.
-    pub async fn connect_lenient(servers: Vec<McpServer>, cwd: &Path) -> (Self, Vec<String>) {
+    pub async fn connect_lenient(
+        servers: Vec<McpServer>,
+        cwd: &Path,
+        environment: &AuthEnvironment,
+    ) -> (Self, Vec<String>) {
         let mut result = Self::default();
         let mut names = HashSet::new();
         let mut diagnostics = Vec::new();
         for server in servers {
-            match connect_server(server, cwd).await {
+            match connect_server(server, cwd, Origin::Configured, environment).await {
                 Ok(connected) => {
                     if let Err(error) = result.register(connected, &mut names, "configured") {
                         diagnostics.push(error);
@@ -376,7 +432,11 @@ pub async fn connect_configured(
 ) -> Result<(McpTools, Vec<String>), String> {
     let servers =
         crate::config::user_config_mcp(arabica_home).map_err(|error| error.to_string())?;
-    Ok(McpTools::connect_lenient(servers, cwd).await)
+    let environment = AuthEnvironment {
+        arabica_home: Some(arabica_home.to_path_buf()),
+        broker: None,
+    };
+    Ok(McpTools::connect_lenient(servers, cwd, &environment).await)
 }
 
 fn safe_name(value: &str) -> String {
@@ -441,6 +501,8 @@ impl RunnerEnvironment for McpTools {
 }
 
 #[cfg(test)]
+pub(crate) mod auth_tests;
+#[cfg(test)]
 mod stateless_http_tests;
 #[cfg(test)]
 mod stateless_stdio_tests;
@@ -504,6 +566,7 @@ mod tests {
                 ),
             )],
             Path::new("/"),
+            &AuthEnvironment::default(),
         )
         .await;
         assert!(tools.definitions().is_empty());
@@ -526,8 +589,12 @@ mod tests {
             .with_state(saw_header.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
         let config = McpServerHttp::new("remote", format!("http://{address}/mcp"));
-        let (extra, diagnostics) =
-            McpTools::connect_lenient(vec![McpServer::Http(config)], Path::new("/")).await;
+        let (extra, diagnostics) = McpTools::connect_lenient(
+            vec![McpServer::Http(config)],
+            Path::new("/"),
+            &AuthEnvironment::default(),
+        )
+        .await;
         assert!(diagnostics.is_empty());
         // The base holds nothing; extending must re-base server indices so
         // the merged route table still executes against the right client.
@@ -569,9 +636,13 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
         let config = McpServerHttp::new("remote", format!("http://{address}/mcp"))
             .headers(vec![HttpHeader::new("x-test-token", "expected")]);
-        let mut tools = McpTools::connect(vec![McpServer::Http(config)], Path::new("/"))
-            .await
-            .expect("HTTP MCP connects");
+        let mut tools = McpTools::connect(
+            vec![McpServer::Http(config)],
+            Path::new("/"),
+            &AuthEnvironment::default(),
+        )
+        .await
+        .expect("HTTP MCP connects");
         assert_eq!(tools.definitions()[0].name, "mcp__remote__echo");
         let response = tools
             .execute(ToolExecutionRequest {

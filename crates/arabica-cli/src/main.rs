@@ -93,6 +93,11 @@ enum Commands {
         #[command(subcommand)]
         action: SessionsAction,
     },
+    /// Authorize remote MCP servers that use OAuth.
+    Mcp {
+        #[command(subcommand)]
+        action: arabica_cli::mcp::commands::McpAction,
+    },
     /// Manage, discover, and sync models from upstream providers.
     Models {
         #[command(subcommand)]
@@ -144,6 +149,14 @@ async fn run(cli: Cli) -> i32 {
             2
         } else {
             arabica_cli::auth::run(action).await
+        };
+    }
+    if let Some(Commands::Mcp { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the mcp subcommand");
+            2
+        } else {
+            arabica_cli::mcp::commands::run(action).await
         };
     }
     if let Some(Commands::Models { action }) = command {
@@ -216,6 +229,9 @@ async fn run(cli: Cli) -> i32 {
         }
         (Some(Commands::Auth { .. }), _) => {
             unreachable!("Commands::Auth returns early above")
+        }
+        (Some(Commands::Mcp { .. }), _) => {
+            unreachable!("Commands::Mcp returns early above")
         }
         (Some(Commands::Models { .. }), _) => {
             unreachable!("Commands::Models returns early above")
