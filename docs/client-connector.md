@@ -7,6 +7,9 @@ endpoint. The behaviour below is covered by the executable-level suite
 the real binary with a deterministic model and an audited MCP 2026-07-28
 fixture.
 
+The first release with this behaviour is **v0.12.0** (tag `v0.12.0`, commit
+`ae8dcd52`).
+
 ## Launch
 
 ```json
