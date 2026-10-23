@@ -11,6 +11,7 @@
 - Settle tool calls left open when a run fails or is cancelled. ACP clients now receive a terminal `failed` status with an unknown-outcome note, both live and on `session/load` replay.
 - Fix `arabica acp` never exiting after stdin closed while the client had stopped reading stdout; shutdown now waits at most 5 seconds.
 - Run ACP `session/new`, `session/load`, and `session/resume` off the dispatch loop so session setup can wait on client replies.
+- Fix the desktop Blend Inspector failing with "Could not read evaluation status" for any session that used a tool, by decoding run tools in the runtime's shape; tool diagnostics now show call counts. Hide the inspector mode and policy filter picker labels that rendered as vertical text and a duplicated caption.
 - Add an executable-level acceptance suite for connector-managed ACP agents with per-session HTTP MCP endpoints, and document the connector contract in `docs/client-connector.md` and `docs/client-mcp-auth.md`.
 
 ## 0.11.0 — 2026-10-22
