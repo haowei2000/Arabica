@@ -33,6 +33,14 @@ struct PrintArgs {
     /// answer) or "jsonl" (stdout is one JSON event per line, live).
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     output_format: OutputFormat,
+    #[command(flatten)]
+    session: SessionArgs,
+}
+
+/// Session flags accepted both before a task (`arabica --plain`) and after
+/// the chat subcommand (`arabica chat --plain`).
+#[derive(Args, Debug, Default)]
+struct SessionArgs {
     /// Allow terminal chat or -p to run the shell tool. Off by default.
     /// Interactive chat asks before execution; -p runs it outright.
     #[arg(long)]
@@ -53,7 +61,7 @@ struct PrintArgs {
     resume: Option<String>,
 }
 
-impl PrintArgs {
+impl SessionArgs {
     fn resume_mode(&self) -> Resume {
         if self.resume_last {
             Resume::Continue
@@ -62,6 +70,25 @@ impl PrintArgs {
         } else {
             Resume::None
         }
+    }
+
+    /// Combines flags given before and after `chat`; clap checks each level
+    /// on its own, so the cross-level conflicts are checked here.
+    fn merge(&mut self, chat: &SessionArgs) -> Result<(), &'static str> {
+        self.allow_shell |= chat.allow_shell;
+        self.read_only |= chat.read_only;
+        self.plain |= chat.plain;
+        self.resume_last |= chat.resume_last;
+        if let Some(id) = &chat.resume {
+            if self.resume.as_ref().is_some_and(|existing| existing != id) {
+                return Err("--resume was given twice with different session ids");
+            }
+            self.resume = Some(id.clone());
+        }
+        if self.resume_last && self.resume.is_some() {
+            return Err("--continue and --resume are mutually exclusive");
+        }
+        Ok(())
     }
 }
 
@@ -87,7 +114,7 @@ enum Commands {
     /// Run as an Agent Client Protocol v1 agent over stdio (for editors like Zed).
     Acp(AcpArgs),
     /// Start an interactive terminal session (also the default).
-    Chat,
+    Chat(SessionArgs),
     /// Show resolved configuration, or inspect and edit config.toml as JSON.
     Config {
         #[command(subcommand)]
@@ -130,8 +157,14 @@ async fn run(cli: Cli) -> i32 {
     let Cli {
         config,
         command,
-        print_args,
+        mut print_args,
     } = cli;
+    if let Some(Commands::Chat(chat)) = &command
+        && let Err(message) = print_args.session.merge(chat)
+    {
+        eprintln!("error: {message}");
+        return 2;
+    }
 
     // These commands need no working model provider.
     if let Some(Commands::Update(args)) = command {
@@ -228,11 +261,11 @@ async fn run(cli: Cli) -> i32 {
             }
             run_acp(resolved).await
         }
-        (Some(Commands::Chat | Commands::Config { .. }), Some(_)) => {
+        (Some(Commands::Chat(_) | Commands::Config { .. }), Some(_)) => {
             eprintln!("error: -p cannot be combined with this subcommand");
             2
         }
-        (Some(Commands::Chat), None) => run_chat(resolved, print_args).await,
+        (Some(Commands::Chat(_)), None) => run_chat(resolved, print_args).await,
         (Some(Commands::Config { action: None }), None) => match describe_configuration(resolved) {
             Ok(()) => 0,
             Err(error) => {
@@ -271,11 +304,11 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
         arabica_cli::update::schedule_background_update();
     }
     let options = InteractiveOptions {
-        allow_shell: args.allow_shell,
-        read_only: args.read_only,
-        resume: args.resume_mode(),
+        allow_shell: args.session.allow_shell,
+        read_only: args.session.read_only,
+        resume: args.session.resume_mode(),
     };
-    if !args.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+    if !args.session.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
         match resolved.build_model() {
             Ok(model) => {
                 arabica_cli::tui::run_with_model_configs(
@@ -339,7 +372,7 @@ async fn run_print(resolved: ResolvedCliConfig, task: String, args: PrintArgs) -
             return 2;
         }
     };
-    let resume = args.resume_mode();
+    let resume = args.session.resume_mode();
     let model = match resolved.build_model() {
         Ok(model) => model,
         Err(error) => {
@@ -353,8 +386,8 @@ async fn run_print(resolved: ResolvedCliConfig, task: String, args: PrintArgs) -
         PrintOptions {
             task,
             output_format: args.output_format,
-            allow_shell: args.allow_shell,
-            read_only: args.read_only,
+            allow_shell: args.session.allow_shell,
+            read_only: args.session.read_only,
             resume,
         },
     )
@@ -384,7 +417,7 @@ fn describe_configuration(resolved: ResolvedCliConfig) -> Result<(), Box<dyn std
         &arabica_home,
     );
 
-    println!("structure: configuration resolved");
+    println!("arabica: configuration resolved");
     println!("  api_type:    {api_type}");
     println!("  base_url:    {base_url}");
     println!("  model:       {model_name}");

@@ -144,8 +144,11 @@ final class WindowConfiguratorView: NSView {
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
 
-        let isDark = ThemeManager.shared.isDark
-        window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        let theme = ThemeManager.shared
+        // In System mode the window inherits the macOS appearance so it keeps
+        // tracking changes; pinning it here would freeze the first value.
+        window.appearance =
+            theme.mode == .system ? nil : NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
     }
 }
 
@@ -194,7 +197,10 @@ struct DesktopView: View {
                 } label: {
                     Label("Toggle Sidebar", systemImage: "sidebar.left")
                 }
-                .help("Toggle Sidebar (Cmd+Opt+S)")
+                .disabled(!SidebarLayout.canShowSidebar(availableWidth: windowWidth))
+                .help(
+                    SidebarLayout.canShowSidebar(availableWidth: windowWidth)
+                        ? "Toggle Sidebar (Cmd+Opt+S)" : "Widen the window to show the sidebar")
 
                 Button(action: presentConversationSearch) {
                     Label("Search Conversations", systemImage: "magnifyingglass")
@@ -264,9 +270,12 @@ struct DesktopView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
+                        .accessibilityLabel("Error")
+                    // Orange text fails contrast on light canvases; the icon
+                    // carries the severity color instead.
                     Text(error)
                         .font(AppFont.sans(12))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(2)
                         .textSelection(.enabled)
                     Spacer(minLength: 8)
@@ -572,8 +581,10 @@ private struct ConversationFeedView: View {
                         .padding(.bottom, 16)
                     }
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(model.items.groupedForFeed) { group in
-                            ChatGroupRow(group: group, isRunning: model.isRunning)
+                        let feed = model.items.groupedForFeed
+                        ForEach(feed) { group in
+                            // Only the newest group can still be streaming.
+                            ChatGroupRow(group: group, isRunning: model.isRunning && group.id == feed.last?.id)
                                 .id(group.id)
                         }
                         if model.isRunning {
@@ -1008,7 +1019,7 @@ private struct ThoughtCardView: View {
                 HStack(spacing: 7) {
                     ToolIconView(kind: "think", title: "think", size: 13)
                         .foregroundStyle(Color.purple.opacity(0.85))
-                    Text(isRunning && item.text.isEmpty ? "Thinking…" : "Thought process")
+                    Text(isRunning ? "Thinking…" : "Thought process")
                         .font(AppFont.event(11.5, weight: .medium))
                         .foregroundStyle(Palette.muted)
                     Spacer()
@@ -1208,6 +1219,15 @@ private struct ToolGroupCardView: View {
         }
     }
 
+    /// Only finished calls earn the checkmark; `pending` or missing statuses
+    /// have not run yet.
+    private var allCompleted: Bool {
+        tools.allSatisfy {
+            let status = ($0.status ?? "").lowercased()
+            return status == "completed" || status == "success" || status == "ok"
+        }
+    }
+
     private var summaryTitle: String {
         if tools.count == 1 {
             let item = tools[0]
@@ -1272,6 +1292,15 @@ private struct ToolGroupCardView: View {
                             Text("Failed")
                                 .font(AppFont.event(11))
                                 .foregroundStyle(.red)
+                        }
+                    } else if !allCompleted {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(AppFont.sans(11))
+                                .foregroundStyle(Palette.muted)
+                            Text("Pending")
+                                .font(AppFont.event(11))
+                                .foregroundStyle(Palette.muted)
                         }
                     } else {
                         HStack(spacing: 4) {
@@ -1544,9 +1573,9 @@ private struct PermissionView: View {
     let resolve: (String?) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Permission required")
-                .font(AppFont.sans(23, weight: .semibold))
+                .font(AppFont.sans(17, weight: .semibold))
             Text(prompt.title).font(AppFont.sans(14, weight: .medium))
             if let workspace = prompt.workspace {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1571,34 +1600,48 @@ private struct PermissionView: View {
                 }
                 .frame(maxHeight: 150)
                 .padding(12)
-                .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 8))
+                .background(Palette.codeBg, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
             }
             HStack {
-                Button("Cancel") { resolve(nil) }
-                    .font(AppFont.sans(13))
+                // Escape always declines: through the agent's Reject option
+                // when it offers one, otherwise by cancelling the request.
+                if !prompt.hasRejectOnceOption {
+                    Button("Cancel") { resolve(nil) }
+                        .keyboardShortcut(.cancelAction)
+                }
                 Spacer()
                 if prompt.options.isEmpty {
                     Button("Allow") { resolve("allow_once") }
                         .buttonStyle(.borderedProminent)
-                        .font(AppFont.sans(13))
+                        .keyboardShortcut(.defaultAction)
                 } else {
-                    ForEach(prompt.options, id: \.id) { option in
-                        if option.id == "allow_once" {
-                            Button(option.name) { resolve(option.id) }
-                                .buttonStyle(.borderedProminent)
-                                .font(AppFont.sans(13))
-                        } else {
-                            Button(option.name) { resolve(option.id) }
-                                .buttonStyle(.bordered)
-                                .font(AppFont.sans(13))
-                        }
+                    ForEach(prompt.orderedOptions, id: \.id) { option in
+                        optionButton(option)
                     }
                 }
             }
+            .font(AppFont.sans(13))
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.raised, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func optionButton(_ option: (id: String, name: String, kind: String?)) -> some View {
+        switch PermissionPrompt.optionKind(option) {
+        case "allow_once":
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        case "reject_once":
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
+        default:
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.bordered)
+        }
     }
 }
 

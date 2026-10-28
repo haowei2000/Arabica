@@ -32,10 +32,33 @@ struct PermissionPrompt: Identifiable {
     let id: ACPRequestID
     let title: String
     let detail: String
-    let options: [(id: String, name: String)]
+    let options: [(id: String, name: String, kind: String?)]
     let method: String
     let params: [String: Any]
     var workspace: URL? = nil
+
+    /// ACP permission option kinds, read from `kind` and falling back to the
+    /// option ID for agents that omit it.
+    static func optionKind(_ option: (id: String, name: String, kind: String?)) -> String {
+        option.kind ?? option.id
+    }
+
+    /// Dialog order: rejections on the left, Allow once last so it sits in
+    /// the macOS default-button position.
+    var orderedOptions: [(id: String, name: String, kind: String?)] {
+        let rank = ["reject_always": 0, "reject_once": 1, "allow_always": 2, "allow_once": 3]
+        return options.enumerated()
+            .sorted {
+                let left = rank[Self.optionKind($0.element)] ?? 2
+                let right = rank[Self.optionKind($1.element)] ?? 2
+                return left == right ? $0.offset < $1.offset : left < right
+            }
+            .map(\.element)
+    }
+
+    var hasRejectOnceOption: Bool {
+        options.contains { Self.optionKind($0) == "reject_once" }
+    }
 }
 
 private struct SessionControlState {
@@ -1071,11 +1094,11 @@ final class DesktopModel: ObservableObject {
             let rawInput = tool["rawInput"] ?? params["rawInput"]
             let detail = Self.jsonDetail(rawInput) ?? ""
             let options = (params["options"] as? [[String: Any]] ?? []).compactMap {
-                option -> (id: String, name: String)? in
+                option -> (id: String, name: String, kind: String?)? in
                 guard let optionID = option["optionId"] as? String,
                     let name = option["name"] as? String
                 else { return nil }
-                return (optionID, name)
+                return (optionID, name, option["kind"] as? String)
             }
             let prompt = PermissionPrompt(
                 id: id, title: title, detail: detail, options: options,
@@ -1090,7 +1113,7 @@ final class DesktopModel: ObservableObject {
             let detail = requestWorkspace.path + "\n\n" + (Self.jsonDetail(params) ?? "")
             let prompt = PermissionPrompt(
                 id: id, title: title, detail: detail,
-                options: [("allow_once", "Allow once")],
+                options: [("allow_once", "Allow once", "allow_once")],
                 method: method, params: params, workspace: requestWorkspace)
             if permission == nil { permission = prompt } else { permissionQueue.append(prompt) }
         } else {

@@ -170,7 +170,8 @@ arabica --plain
 In the TUI, typing `/` completes commands, `/thinking `, `/model `, or `/policy ` offers
 configured choices, and `@` searches workspace file paths (respecting ignore
 rules). Use Up/Down to select a suggestion; Tab or Enter accepts it. Left/Right
-always move the editor cursor. Enter sends, Shift+Enter inserts a line. The
+always move the editor cursor. Enter sends; Ctrl+J or Alt+Enter inserts a line,
+as does Shift+Enter in terminals with the kitty keyboard protocol. The
 composer grows with a draft up to one third of the terminal height and eight
 rows, then scrolls internally. Up/Down move by visual row in multiline or
 wrapped drafts while keeping the target column; otherwise they navigate

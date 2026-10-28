@@ -1046,10 +1046,12 @@ fn resolve_runtime_config(
         );
     }
     if user.models.is_empty() {
-        return Err(
-            "configure [providers.<name>], [models.<alias>], and [blend] in ~/.arabica/config.toml"
-                .into(),
-        );
+        return Err(format!(
+            "configure [providers.<name>], [models.<alias>], and [blend] in {}; \
+             run `arabica auth chatgpt-login` to set up a ChatGPT plan, or see https://github.com/haowei2000/Arabica/blob/main/docs/cli.md",
+            user_config_path(home).display()
+        )
+        .into());
     }
     let models = user
         .models

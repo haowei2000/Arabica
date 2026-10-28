@@ -37,7 +37,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame, Terminal};
 use similar::{ChangeTag, TextDiff};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::checkpoint::{self, WriteCheckpoint};
 use crate::context;
@@ -83,8 +83,10 @@ mod theme {
         Style::default().fg(Color::Green)
     }
 
+    /// Dimmed terminal foreground rather than ANSI bright black, which
+    /// several schemes (Solarized Dark among them) paint as the background.
     pub(crate) fn muted() -> Style {
-        Style::default().fg(Color::DarkGray)
+        Style::default().add_modifier(Modifier::DIM)
     }
 
     pub(crate) fn added() -> Style {
@@ -1162,6 +1164,10 @@ struct App {
     /// completion flips that same line to ✓/✗ instead of printing a second
     /// row.
     running_tool: Option<usize>,
+    /// True when the terminal reports Shift+Enter separately from Enter
+    /// (kitty keyboard protocol); otherwise only Ctrl+J/Alt+Enter insert a
+    /// newline and the hint says so.
+    keyboard_enhanced: bool,
 }
 
 /// The permission chooser's options, in navigation order.
@@ -1201,6 +1207,7 @@ impl Default for App {
             new_output_baseline: None,
             permission_prompt: None,
             running_tool: None,
+            keyboard_enhanced: false,
         }
     }
 }
@@ -1564,11 +1571,42 @@ enum EditorAction {
     Exit,
 }
 
+/// The newest text of the streaming reply that fits in one `width`-column
+/// row: the end of its last line, with a leading ellipsis when cut.
+fn live_tail(live: &str, width: usize) -> String {
+    let last_line = live
+        .trim_end_matches('\n')
+        .rsplit('\n')
+        .next()
+        .unwrap_or("");
+    if UnicodeWidthStr::width(last_line) <= width {
+        return last_line.to_owned();
+    }
+    let budget = width.saturating_sub(1);
+    let mut used = 0;
+    let mut start = last_line.len();
+    for (index, ch) in last_line.char_indices().rev() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > budget {
+            break;
+        }
+        used += ch_width;
+        start = index;
+    }
+    format!("…{}", &last_line[start..])
+}
+
 /// Restores the terminal even on early returns and errors.
-struct InlineGuard;
+struct InlineGuard {
+    keyboard_enhanced: bool,
+}
 
 impl Drop for InlineGuard {
     fn drop(&mut self) {
+        if self.keyboard_enhanced {
+            let _ =
+                crossterm::execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+        }
         let _ = disable_raw_mode();
         let _ = crossterm::execute!(
             io::stdout(),
@@ -1868,17 +1906,7 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     {
         // Assistant text streams here; thinking streams inside the
         // history pane below.
-        let tail: String = {
-            let width = sections[tail_index].width as usize;
-            app.live
-                .chars()
-                .rev()
-                .take(width * 2)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect()
-        };
+        let tail = live_tail(&app.live, sections[tail_index].width as usize);
         frame.render_widget(
             Paragraph::new(Line::styled(tail, theme::base())),
             sections[tail_index],
@@ -1982,9 +2010,15 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
         } else if app.busy {
             " Esc/Ctrl+C cancel · type to queue · Ctrl+End latest"
         } else if width < 100 {
-            " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+End latest"
-        } else {
+            if app.keyboard_enhanced {
+                " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+End latest"
+            } else {
+                " Enter send · Ctrl+J newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+End latest"
+            }
+        } else if app.keyboard_enhanced {
             " Enter send · Shift+Enter newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · Ctrl+End latest · /help"
+        } else {
+            " Enter send · Ctrl+J newline · ↑↓ history · Ctrl+C clear/exit · Ctrl+D delete/exit · Ctrl+A/E line · Ctrl+←/→ word · Ctrl+End latest · /help"
         };
         frame.render_widget(
             Paragraph::new(Line::styled(hints, theme::muted())),
@@ -2689,6 +2723,16 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 app.insert("\n");
                 EditorAction::None
             }
+            // Ctrl+J is a line feed in every terminal, so it is the newline
+            // key that works without keyboard-protocol support.
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
+                app.insert("\n");
+                EditorAction::None
+            }
             KeyEvent {
                 code: KeyCode::Enter,
                 ..
@@ -3099,13 +3143,25 @@ async fn run_inner_with_model_configs(
     app.status = format!("session {}", session.session_id);
 
     enable_raw_mode()?;
-    let _guard = InlineGuard;
+    // Without the kitty keyboard protocol most terminals send Shift+Enter
+    // as a bare carriage return, indistinguishable from Enter.
+    let keyboard_enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+    let _guard = InlineGuard { keyboard_enhanced };
+    app.keyboard_enhanced = keyboard_enhanced;
     crossterm::execute!(
         io::stdout(),
         crossterm::terminal::EnterAlternateScreen,
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableMouseCapture
     )?;
+    if keyboard_enhanced {
+        crossterm::execute!(
+            io::stdout(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
+        )?;
+    }
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -3386,6 +3442,14 @@ pub async fn run_with_model_configs(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn live_tail_shows_the_newest_text_of_the_last_line() {
+        assert_eq!(live_tail("short", 10), "short");
+        assert_eq!(live_tail("first\nsecond\n", 10), "second");
+        assert_eq!(live_tail("abcdefghijkl", 5), "…ijkl");
+        assert_eq!(live_tail("前文字符", 5), "…字符");
+    }
 
     #[test]
     fn committable_prefix_holds_back_open_fences() {
