@@ -27,7 +27,7 @@ use arabica_session::{NewSession, SessionStore, SessionWriter};
 use crate::config::{SOE_POLICY_ID, save_workspace_settings, set_thinking, soe_policy};
 use crate::host::{
     HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds,
-    build_host_runtime_with_blend, workspace_id_for,
+    build_host_runtime_with_blend_and_runner, workspace_id_for,
 };
 use crate::print::{self, Resume};
 
@@ -35,6 +35,8 @@ pub struct InteractiveOptions {
     pub allow_shell: bool,
     pub read_only: bool,
     pub resume: Resume,
+    /// Run built-in tools on the remote runner `[runners.<name>]`.
+    pub remote_runner: Option<String>,
 }
 
 struct TerminalObserver {
@@ -248,6 +250,7 @@ pub(crate) struct InteractiveSession {
     pub(crate) runner_root: PathBuf,
     pub(crate) read_only: bool,
     pub(crate) allow_shell: bool,
+    pub(crate) remote_runner: Option<String>,
 }
 
 impl InteractiveSession {
@@ -319,13 +322,27 @@ impl InteractiveSession {
         for diagnostic in mcp_diagnostics {
             eprintln!("structure: {diagnostic}");
         }
+        let remote = match &options.remote_runner {
+            Some(name) => {
+                let remote =
+                    crate::runner::connect_configured(&arabica_home, name, &tool_policy).await?;
+                eprintln!(
+                    "structure: tools run on remote runner {} ({})",
+                    remote.runner_id(),
+                    name
+                );
+                Some(remote)
+            }
+            None => None,
+        };
         let mut manager = SessionManager::with_ids(
-            build_host_runtime_with_blend(
+            build_host_runtime_with_blend_and_runner(
                 model,
                 &runner_root,
                 tool_policy,
                 &arabica_home,
                 mcp,
+                remote,
                 blend_policy,
             )?,
             Box::new(UuidIds),
@@ -401,6 +418,7 @@ impl InteractiveSession {
             runner_root,
             read_only: options.read_only,
             allow_shell: options.allow_shell,
+            remote_runner: options.remote_runner,
         })
     }
 
@@ -475,6 +493,7 @@ impl InteractiveSession {
                 allow_shell: self.allow_shell,
                 read_only: self.read_only,
                 resume: Resume::Id(id.to_owned()),
+                remote_runner: self.remote_runner.clone(),
             },
             self.arabica_home.clone(),
             Arc::clone(&self.session_store),
@@ -716,6 +735,9 @@ impl InteractiveSession {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let terminal = TerminalObserver::new();
         self.refresh_instructions();
+        if crate::host::sync_remote_tools(self.manager.runtime_mut()) {
+            eprintln!("structure: the remote runner changed its tools");
+        }
         set_progress(self.manager.runtime_mut().model_mut(), terminal.sink());
         let mut observers: Vec<Arc<dyn SessionEventObserver>> = vec![
             Arc::clone(&self.store) as Arc<dyn SessionEventObserver>,

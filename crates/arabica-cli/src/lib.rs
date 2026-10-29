@@ -22,6 +22,7 @@ pub mod interactive;
 pub mod mcp;
 pub mod models;
 pub mod print;
+pub mod runner;
 pub mod sessions;
 pub mod settings;
 pub mod skills;

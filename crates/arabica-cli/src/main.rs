@@ -51,6 +51,10 @@ struct PrintArgs {
     /// Mutually exclusive with --continue. See `arabica sessions list`.
     #[arg(long, value_name = "ID", conflicts_with = "resume_last")]
     resume: Option<String>,
+    /// Run the built-in tools on the remote runner configured as
+    /// [runners.NAME] in config.toml instead of in this process.
+    #[arg(long = "runner", value_name = "NAME")]
+    remote_runner: Option<String>,
 }
 
 impl PrintArgs {
@@ -118,6 +122,11 @@ enum Commands {
         #[command(subcommand)]
         action: arabica_cli::models::ModelsAction,
     },
+    /// Serve workspaces to a remote agent loop (Loop–Runner Protocol).
+    Runner {
+        #[command(subcommand)]
+        action: arabica_cli::runner::RunnerAction,
+    },
 }
 
 #[tokio::main]
@@ -172,6 +181,14 @@ async fn run(cli: Cli) -> i32 {
             2
         } else {
             arabica_cli::mcp::commands::run(action).await
+        };
+    }
+    if let Some(Commands::Runner { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the runner subcommand");
+            2
+        } else {
+            arabica_cli::runner::run(action).await
         };
     }
     if let Some(Commands::Models { action }) = command {
@@ -256,6 +273,9 @@ async fn run(cli: Cli) -> i32 {
         (Some(Commands::Models { .. }), _) => {
             unreachable!("Commands::Models returns early above")
         }
+        (Some(Commands::Runner { .. }), _) => {
+            unreachable!("Commands::Runner returns early above")
+        }
         (Some(Commands::Update(_)), _) => unreachable!("update returns early"),
         (None, Some(task)) => run_print(resolved, task.clone(), print_args).await,
         (None, None) => run_chat(resolved, print_args).await,
@@ -274,6 +294,7 @@ async fn run_chat(resolved: ResolvedCliConfig, args: PrintArgs) -> i32 {
         allow_shell: args.allow_shell,
         read_only: args.read_only,
         resume: args.resume_mode(),
+        remote_runner: args.remote_runner.clone(),
     };
     if !args.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
         match resolved.build_model() {
@@ -356,6 +377,7 @@ async fn run_print(resolved: ResolvedCliConfig, task: String, args: PrintArgs) -
             allow_shell: args.allow_shell,
             read_only: args.read_only,
             resume,
+            remote_runner: args.remote_runner,
         },
     )
     .await

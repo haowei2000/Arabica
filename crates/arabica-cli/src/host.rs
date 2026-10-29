@@ -221,10 +221,15 @@ impl ModelProvider for ScriptedModel {
 }
 
 /// Routes local tools to the confined runner and session-scoped MCP tools to
-/// their originating server.
+/// their originating server. With a remote runner, the built-in tools run
+/// there instead of in this process.
 #[derive(Debug)]
 pub struct HostRunner {
     local: LocalRunner,
+    remote: Option<arabica_runner_remote::RemoteRunner>,
+    /// The remote tool generation and names last advertised to the model;
+    /// see [`sync_remote_tools`].
+    remote_tools: (u64, Vec<String>),
     mcp: crate::mcp::McpTools,
     /// Workspace root, for reading the file snapshots the write journal
     /// takes and restores.
@@ -241,6 +246,11 @@ impl HostRunner {
         &self,
     ) -> std::sync::Arc<std::sync::Mutex<crate::checkpoint::WriteJournal>> {
         std::sync::Arc::clone(&self.writes)
+    }
+
+    /// The remote runner tools currently advertised to the model.
+    pub fn remote_tool_names(&self) -> &[String] {
+        &self.remote_tools.1
     }
 
     /// Run one local tool call, checkpointing the three write tools:
@@ -302,6 +312,8 @@ impl RunnerEnvironment for HostRunner {
             arabica_protocol::ToolInteractionKind::Plan
         } else if self.mcp.contains(&call.name) {
             self.mcp.classify(call)
+        } else if let Some(remote) = &self.remote {
+            remote.classify(call)
         } else {
             self.local.classify(call)
         }
@@ -313,6 +325,10 @@ impl RunnerEnvironment for HostRunner {
     ) -> Result<ToolExecutionResult, RunnerError> {
         if self.mcp.contains(&request.call.name) {
             self.mcp.execute(request).await
+        } else if let Some(remote) = &mut self.remote {
+            // The files live on the runner, so this host cannot snapshot
+            // them for `/diff` and `/undo`.
+            remote.execute(request).await
         } else {
             self.execute_with_checkpoint(request).await
         }
@@ -321,11 +337,42 @@ impl RunnerEnvironment for HostRunner {
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, RunnerError> {
         let local = self.local.cancel(run_id).await?;
         let mcp = self.mcp.cancel(run_id).await?;
-        Ok(local || mcp)
+        let remote = match &mut self.remote {
+            Some(remote) => remote.cancel(run_id).await?,
+            None => false,
+        };
+        Ok(local || mcp || remote)
     }
 }
 
 pub type HostRuntime = CoreRuntime<HostModel, HostRunner>;
+
+/// Re-advertise the remote runner's tools after it sent `tools.changed`,
+/// keeping every other tool in place. Returns whether the list changed.
+/// Call it between runs: a run keeps the tools it started with, and a call
+/// to a tool the runner withdrew comes back as a tool error.
+pub fn sync_remote_tools(runtime: &mut HostRuntime) -> bool {
+    let runner = runtime.runner_mut();
+    let Some(remote) = &runner.remote else {
+        return false;
+    };
+    let (generation, definitions) = remote.tools_snapshot();
+    if generation == runner.remote_tools.0 {
+        return false;
+    }
+    let names = definitions.iter().map(|tool| tool.name.clone()).collect();
+    let (_, withdrawn) = std::mem::replace(&mut runner.remote_tools, (generation, names));
+    let mut tools = definitions;
+    tools.extend(
+        runtime
+            .tools()
+            .iter()
+            .filter(|tool| !withdrawn.contains(&tool.name))
+            .cloned(),
+    );
+    runtime.set_tools(tools);
+    true
+}
 
 /// The standing instruction every coding CLI run carries: where it is, what
 /// it is running on, and the one rule the confined tools already enforce.
@@ -396,7 +443,29 @@ pub fn build_host_runtime_with_mcp(
     arabica_home: &Path,
     mcp: crate::mcp::McpTools,
 ) -> HostRuntime {
-    let mut tools = arabica_runner::tool_definitions(&tool_policy);
+    build_host_runtime_with_runner(model, runner_root, tool_policy, arabica_home, mcp, None)
+}
+
+/// [`build_host_runtime_with_mcp`] with an optional remote runner. A remote
+/// runner replaces the local built-in tools with the ones its lease offers.
+pub fn build_host_runtime_with_runner(
+    model: HostModel,
+    runner_root: &Path,
+    tool_policy: LocalRunnerPolicy,
+    arabica_home: &Path,
+    mcp: crate::mcp::McpTools,
+    remote: Option<arabica_runner_remote::RemoteRunner>,
+) -> HostRuntime {
+    let (remote_generation, mut tools) = match &remote {
+        Some(remote) => remote.tools_snapshot(),
+        None => (0, arabica_runner::tool_definitions(&tool_policy)),
+    };
+    let remote_names = if remote.is_some() {
+        tools.iter().map(|tool| tool.name.clone()).collect()
+    } else {
+        Vec::new()
+    };
+    let remote_tools = (remote_generation, remote_names);
     tools.extend(arabica_runtime::plan_tool_definitions());
     tools.push(memory_search_definition());
     tools.push(memory_read_definition());
@@ -404,6 +473,8 @@ pub fn build_host_runtime_with_mcp(
     let context_identities = mcp.context_identities();
     let runner = HostRunner {
         local: LocalRunner::with_policy(runner_root, tool_policy),
+        remote,
+        remote_tools,
         mcp,
         root: runner_root.to_path_buf(),
         writes: std::sync::Arc::new(std::sync::Mutex::new(
@@ -438,8 +509,28 @@ pub fn build_host_runtime_with_blend(
     mcp: crate::mcp::McpTools,
     blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
 ) -> Result<HostRuntime, arabica_runtime::RuntimeError> {
+    build_host_runtime_with_blend_and_runner(
+        model,
+        runner_root,
+        tool_policy,
+        arabica_home,
+        mcp,
+        None,
+        blend_policy,
+    )
+}
+
+pub fn build_host_runtime_with_blend_and_runner(
+    model: HostModel,
+    runner_root: &Path,
+    tool_policy: LocalRunnerPolicy,
+    arabica_home: &Path,
+    mcp: crate::mcp::McpTools,
+    remote: Option<arabica_runner_remote::RemoteRunner>,
+    blend_policy: Option<arabica_runtime::BlendRoutingPolicy>,
+) -> Result<HostRuntime, arabica_runtime::RuntimeError> {
     let mut runtime =
-        build_host_runtime_with_mcp(model, runner_root, tool_policy, arabica_home, mcp);
+        build_host_runtime_with_runner(model, runner_root, tool_policy, arabica_home, mcp, remote);
     runtime.set_blend_policy(blend_policy)?;
     let context_policy = crate::config::user_config_context(arabica_home).map_err(|_| {
         arabica_runtime::RuntimeError::new(
@@ -602,6 +693,8 @@ mod tests {
         let root = temp_root("checkpoint");
         let mut runner = HostRunner {
             local: arabica_runner::LocalRunner::with_policy(&root, LocalRunnerPolicy::coding()),
+            remote: None,
+            remote_tools: (0, Vec::new()),
             mcp: crate::mcp::McpTools::default(),
             root: root.clone(),
             writes: std::sync::Arc::new(std::sync::Mutex::new(
