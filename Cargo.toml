@@ -8,6 +8,7 @@ members = [
     "crates/arabica-provider",
     "crates/arabica-protocol",
     "crates/arabica-runner",
+    "crates/arabica-runner-remote",
     "crates/arabica-runtime",
     "crates/arabica-server",
     "crates/arabica-session",
