@@ -18,12 +18,13 @@ use arabica_provider::{
 };
 use arabica_runner::LocalRunner;
 use arabica_runtime::{
-    CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+    CoreRuntime, PointerGcAdmissionObservation, RuntimeArchiveStore, RuntimeCompactionStrategy,
+    ShortMemoryPolicy,
 };
 use arabica_session::SessionManager;
 use serde::{Deserialize, Serialize};
 
-pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v6";
+pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v7";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -177,7 +178,9 @@ impl TierBTask {
                     .to_owned(),
             }],
             final_output_contains: vec!["TASK_COMPLETE".to_owned()],
-            max_tool_calls: 2,
+            // Retrieval can require multiple memory tools before the final
+            // write and completion calls. Leave room for those valid steps.
+            max_tool_calls: 8,
         })
     }
 }
@@ -294,6 +297,8 @@ pub struct TierBRun {
     pub final_output: Option<String>,
     pub file_oracles: Vec<FileOracleResult>,
     pub provider_calls: Vec<ProviderCallObservation>,
+    #[serde(default)]
+    pub pointer_gc_admission_observations: Vec<PointerGcAdmissionObservation>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
@@ -566,6 +571,7 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
             .map(|event| event.session_id.clone())
             .ok_or_else(|| TierBError::new("session creation returned no event"))?;
         let provider_start = recorder.len();
+        let gc_observation_start = manager.runtime().pointer_gc_admission_observations().len();
         let started = Instant::now();
         let mut events = create_events;
         for (setup_index, prompt) in task.setup_prompts.iter().enumerate() {
@@ -593,6 +599,8 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
             .map_err(|error| TierBError::new(format!("task dispatch failed: {error}")))?;
         let elapsed_ms = saturating_u64(started.elapsed().as_millis());
         let provider_calls = recorder.from(provider_start);
+        let gc_observations =
+            manager.runtime().pointer_gc_admission_observations()[gc_observation_start..].to_vec();
         events.extend(task_events);
         runs.push(
             score_run(
@@ -600,6 +608,7 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
                 task,
                 session_id.to_string(),
                 provider_calls,
+                gc_observations,
                 elapsed_ms,
                 events,
             )
@@ -635,6 +644,7 @@ async fn score_run(
     task: TierBTask,
     session_id: String,
     provider_calls: Vec<ProviderCallObservation>,
+    pointer_gc_admission_observations: Vec<PointerGcAdmissionObservation>,
     elapsed_ms: u64,
     events: Vec<EventEnvelope>,
 ) -> TierBRun {
@@ -722,6 +732,7 @@ async fn score_run(
         final_output,
         file_oracles,
         provider_calls,
+        pointer_gc_admission_observations,
         input_tokens,
         output_tokens,
         cached_input_tokens,
@@ -1151,6 +1162,19 @@ mod tests {
             .expect("clock is valid")
             .as_nanos();
         std::env::temp_dir().join(format!("structure-tier-b-{name}-{nonce}"))
+    }
+
+    #[test]
+    fn recall_task_allows_memory_lookup_write_and_completion_tools() {
+        let task = TierBTask::recall_write_file(
+            "write-file-1",
+            "run-0001/result.txt",
+            "evidence-1",
+            "exact evidence",
+        )
+        .expect("task is valid");
+
+        assert_eq!(task.max_tool_calls, 8);
     }
 
     #[tokio::test]
