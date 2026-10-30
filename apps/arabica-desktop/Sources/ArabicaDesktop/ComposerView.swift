@@ -27,6 +27,8 @@ struct ComposerView: View {
                                     } label: {
                                         Image(systemName: "xmark")
                                             .font(AppFont.sans(9, weight: .bold))
+                                            .frame(width: 18, height: 18)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Remove \(file.lastPathComponent)")
@@ -56,8 +58,8 @@ struct ComposerView: View {
                 .padding(.top, 2)
                 .focused($isInputFocused)
                 .accessibilityLabel("Message")
-                .help("Return to send. Shift-Return for a new line.")
-                .onSubmit { Task { await model.send() } }
+                .help("Return to send. Option-Return for a new line.")
+                .onSubmit { Task { await model.submitDraft() } }
 
                 // Bottom toolbar inside composer card
                 HStack(spacing: 8) {
@@ -142,6 +144,8 @@ struct ComposerView: View {
             .background(Palette.composerBg, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.rule, lineWidth: 1))
             .shadow(color: themeManager.isDark ? Color.clear : Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
+
+            composerStatus
         }
         .padding(.horizontal, 24)
         .padding(.top, 8)
@@ -150,6 +154,34 @@ struct ComposerView: View {
         .frame(maxWidth: .infinity)
         .onChange(of: model.composerFocusRequest) { _, _ in
             isInputFocused = true
+        }
+    }
+
+    /// Why the composer cannot send right now, shown in place rather than
+    /// only in the Send button's tooltip.
+    @ViewBuilder
+    private var composerStatus: some View {
+        let phase = model.composerPhase
+        if model.isSendQueued {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                Text("Queued — sends when the current run finishes.")
+                Spacer(minLength: 8)
+                Button("Don't Send", action: model.cancelQueuedSend)
+                    .buttonStyle(.link)
+            }
+            .composerStatusStyle()
+        } else if phase != .ready, phase != .empty {
+            HStack(spacing: 6) {
+                Image(systemName: phase.symbol)
+                Text(phase.title).fontWeight(.medium)
+                Text(phase == .working ? "Return queues your next message." : phase.detail)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .composerStatusStyle()
+            .help(phase.detail)
         }
     }
 
@@ -214,7 +246,16 @@ struct ComposerView: View {
                 Task { await model.openWorkspace(workspace) }
             }
         case .createConversation:
-            Task { await model.newSession() }
+            // With a draft, create the conversation and send it in one step.
+            Task {
+                if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    model.attachedFiles.isEmpty
+                {
+                    await model.newSession()
+                } else {
+                    await model.submitDraft()
+                }
+            }
         case .reloadConversation:
             if let sessionID = model.selectedSessionID {
                 Task { await model.selectSession(sessionID) }
@@ -222,5 +263,14 @@ struct ComposerView: View {
         case .send:
             Task { await model.send() }
         }
+    }
+}
+
+private extension View {
+    func composerStatusStyle() -> some View {
+        font(AppFont.sans(11))
+            .foregroundStyle(Palette.muted)
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
     }
 }

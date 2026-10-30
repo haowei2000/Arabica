@@ -32,6 +32,7 @@ struct ArabicaDesktopApp: App {
     @FocusedBinding(\.projectSidebarVisible) private var sidebarVisible
     @FocusedValue(\.searchConversations) private var searchConversations
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("showEvaluationInspector") private var showEvaluation = false
 
     init() {
         let windows = DesktopWindowRegistry()
@@ -71,6 +72,10 @@ struct ArabicaDesktopApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(sidebarVisible == nil)
+                // Registered here rather than on the toolbar menu item, whose
+                // shortcut only fires while that menu is open.
+                Toggle("Show Blend Inspector", isOn: $showEvaluation)
+                    .keyboardShortcut("i", modifiers: [.command, .option])
             }
             CommandGroup(after: .textEditing) {
                 Button("Search Conversations") { searchConversations?() }
@@ -144,8 +149,11 @@ final class WindowConfiguratorView: NSView {
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
 
-        let isDark = ThemeManager.shared.isDark
-        window.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        let theme = ThemeManager.shared
+        // In System mode the window inherits the macOS appearance so it keeps
+        // tracking changes; pinning it here would freeze the first value.
+        window.appearance =
+            theme.mode == .system ? nil : NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
     }
 }
 
@@ -194,7 +202,10 @@ struct DesktopView: View {
                 } label: {
                     Label("Toggle Sidebar", systemImage: "sidebar.left")
                 }
-                .help("Toggle Sidebar (Cmd+Opt+S)")
+                .disabled(!SidebarLayout.canShowSidebar(availableWidth: windowWidth))
+                .help(
+                    SidebarLayout.canShowSidebar(availableWidth: windowWidth)
+                        ? "Toggle Sidebar (Cmd+Opt+S)" : "Widen the window to show the sidebar")
 
                 Button(action: presentConversationSearch) {
                     Label("Search Conversations", systemImage: "magnifyingglass")
@@ -206,11 +217,6 @@ struct DesktopView: View {
                     conversationSearch
                 }
 
-                Button(action: model.chooseWorkspace) {
-                    Label("Open Workspace", systemImage: "folder.badge.plus")
-                }
-                .help("Open Workspace (Cmd+O)")
-
                 workspaceChooser
 
                 Image(
@@ -220,6 +226,7 @@ struct DesktopView: View {
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(model.isConnected ? Color.green : (model.errorText != nil ? Color.red : Color.orange))
+                .symbolEffect(.pulse, isActive: model.isConnecting)
                 .help(connectionStatus)
                 .accessibilityLabel(connectionStatus)
             }
@@ -264,9 +271,12 @@ struct DesktopView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
+                        .accessibilityLabel("Error")
+                    // Orange text fails contrast on light canvases; the icon
+                    // carries the severity color instead.
                     Text(error)
                         .font(AppFont.sans(12))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(2)
                         .textSelection(.enabled)
                     Spacer(minLength: 8)
@@ -280,6 +290,11 @@ struct DesktopView: View {
                             Task { await model.selectSession(sessionID) }
                         }
                         .disabled(model.isLoadingSession)
+                    } else if model.canRetryLastPrompt {
+                        Button("Retry") {
+                            Task { await model.retryLastPrompt() }
+                        }
+                        .help("Send the last message again")
                     }
                     Button {
                         model.errorText = nil
@@ -419,11 +434,13 @@ struct DesktopView: View {
                 ))
                 Divider()
                 Toggle("Show Blend Inspector", isOn: $showEvaluation)
-                    .keyboardShortcut("i", modifiers: [.command, .option])
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { theme.cycleMode() }
-                } label: {
-                    Label("Change Appearance (\(theme.mode.rawValue))", systemImage: theme.mode.icon)
+                Picker("Appearance", selection: Binding(
+                    get: { theme.mode },
+                    set: { mode in withAnimation(.easeInOut(duration: 0.18)) { theme.mode = mode } }
+                )) {
+                    ForEach(ThemeMode.allCases) { mode in
+                        Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                    }
                 }
             } label: {
                 Label {
@@ -572,11 +589,17 @@ private struct ConversationFeedView: View {
                         .padding(.bottom, 16)
                     }
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(model.items.groupedForFeed) { group in
-                            ChatGroupRow(group: group, isRunning: model.isRunning)
-                                .id(group.id)
+                        let feed = model.items.groupedForFeed
+                        ForEach(feed) { group in
+                            // Only the newest group can still be streaming.
+                            ChatGroupRow(
+                                group: group, isRunning: model.isRunning && group.id == feed.last?.id,
+                                onEdit: model.editAsNewMessage
+                            )
+                            .id(group.id)
                         }
-                        if model.isRunning {
+                        // A streaming thought already says "Thinking…".
+                        if model.isRunning, !(feed.last?.isThought ?? false) || model.isWaitingForPermission {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
                                 Text(model.isWaitingForPermission ? "Waiting for permission…" : "Working…")
@@ -590,7 +613,7 @@ private struct ConversationFeedView: View {
                         .id(endID)
                         .background(ConversationScrollObserver { followsLatest = $0 })
                 }
-                .frame(maxWidth: 760)
+                .frame(maxWidth: 772)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
@@ -901,6 +924,11 @@ enum ChatFeedItem: Identifiable {
     case thought(ChatItem)
     case toolGroup(id: UUID, tools: [ChatItem])
 
+    var isThought: Bool {
+        if case .thought = self { return true }
+        return false
+    }
+
     var id: UUID {
         switch self {
         case .user(let item): return item.id
@@ -944,11 +972,12 @@ extension Array where Element == ChatItem {
 private struct ChatGroupRow: View {
     let group: ChatFeedItem
     let isRunning: Bool
+    let onEdit: (String) -> Void
 
     var body: some View {
         switch group {
         case .user(let item):
-            UserMessageView(item: item)
+            UserMessageView(item: item, onEdit: onEdit)
         case .assistant(let item):
             AssistantMessageView(item: item)
         case .thought(let item):
@@ -959,12 +988,61 @@ private struct ChatGroupRow: View {
     }
 }
 
-private struct UserMessageView: View {
-    let item: ChatItem
+/// Hover-revealed button that copies a whole message.
+private struct MessageCopyButton: View {
+    let text: String
+    let isVisible: Bool
+    @State private var copied = false
 
     var body: some View {
-        HStack {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
+            }
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(AppFont.sans(10.5))
+                .foregroundStyle(Palette.muted)
+                .padding(.horizontal, 6)
+                .frame(height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Copy message")
+        .accessibilityLabel(copied ? "Copied" : "Copy message")
+        // Kept in the layout so revealing it never shifts the feed, and
+        // left reachable for VoiceOver and keyboard users while hidden.
+        .opacity(isVisible || copied ? 1 : 0)
+    }
+}
+
+private struct UserMessageView: View {
+    let item: ChatItem
+    let onEdit: (String) -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 4) {
             Spacer(minLength: 64)
+            Button {
+                onEdit(item.text)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+                    .font(AppFont.sans(10.5))
+                    .foregroundStyle(Palette.muted)
+                    .padding(.horizontal, 6)
+                    .frame(height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Edit as a new message")
+            .accessibilityLabel("Edit as a new message")
+            .opacity(isHovering ? 1 : 0)
+            MessageCopyButton(text: item.text, isVisible: isHovering)
             Text(item.text)
                 .font(AppFont.message(13.5))
                 .lineSpacing(3.5)
@@ -976,11 +1054,13 @@ private struct UserMessageView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.rule, lineWidth: 1))
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .onHover { isHovering = $0 }
     }
 }
 
 private struct AssistantMessageView: View {
     let item: ChatItem
+    @State private var isHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -988,8 +1068,11 @@ private struct AssistantMessageView: View {
                 .font(AppFont.body(13.5))
                 .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            MessageCopyButton(text: item.text, isVisible: isHovering)
+                .padding(.leading, -6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -1008,7 +1091,7 @@ private struct ThoughtCardView: View {
                 HStack(spacing: 7) {
                     ToolIconView(kind: "think", title: "think", size: 13)
                         .foregroundStyle(Color.purple.opacity(0.85))
-                    Text(isRunning && item.text.isEmpty ? "Thinking…" : "Thought process")
+                    Text(isRunning ? "Thinking…" : "Thought process")
                         .font(AppFont.event(11.5, weight: .medium))
                         .foregroundStyle(Palette.muted)
                     Spacer()
@@ -1208,6 +1291,15 @@ private struct ToolGroupCardView: View {
         }
     }
 
+    /// Only finished calls earn the checkmark; `pending` or missing statuses
+    /// have not run yet.
+    private var allCompleted: Bool {
+        tools.allSatisfy {
+            let status = ($0.status ?? "").lowercased()
+            return status == "completed" || status == "success" || status == "ok"
+        }
+    }
+
     private var summaryTitle: String {
         if tools.count == 1 {
             let item = tools[0]
@@ -1272,6 +1364,15 @@ private struct ToolGroupCardView: View {
                             Text("Failed")
                                 .font(AppFont.event(11))
                                 .foregroundStyle(.red)
+                        }
+                    } else if !allCompleted {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(AppFont.sans(11))
+                                .foregroundStyle(Palette.muted)
+                            Text("Pending")
+                                .font(AppFont.event(11))
+                                .foregroundStyle(Palette.muted)
                         }
                     } else {
                         HStack(spacing: 4) {
@@ -1542,11 +1643,16 @@ private struct PlanProgressView: View {
 private struct PermissionView: View {
     let prompt: PermissionPrompt
     let resolve: (String?) -> Void
+    /// Allow buttons stay disabled briefly after the sheet opens, so a
+    /// Return typed for the composer cannot approve a call that appeared
+    /// mid-keystroke. Declining is always available.
+    @State private var isArmed = false
+    static let armDelay: Duration = .milliseconds(500)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Permission required")
-                .font(AppFont.sans(23, weight: .semibold))
+                .font(AppFont.sans(17, weight: .semibold))
             Text(prompt.title).font(AppFont.sans(14, weight: .medium))
             if let workspace = prompt.workspace {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1571,34 +1677,59 @@ private struct PermissionView: View {
                 }
                 .frame(maxHeight: 150)
                 .padding(12)
-                .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 8))
+                .background(Palette.codeBg, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.rule, lineWidth: 1))
             }
             HStack {
-                Button("Cancel") { resolve(nil) }
-                    .font(AppFont.sans(13))
+                // Escape always declines: through the agent's Reject option
+                // when it offers one, otherwise by cancelling the request.
+                if !prompt.hasRejectOnceOption {
+                    Button("Cancel") { resolve(nil) }
+                        .keyboardShortcut(.cancelAction)
+                }
                 Spacer()
                 if prompt.options.isEmpty {
                     Button("Allow") { resolve("allow_once") }
                         .buttonStyle(.borderedProminent)
-                        .font(AppFont.sans(13))
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!isArmed)
                 } else {
-                    ForEach(prompt.options, id: \.id) { option in
-                        if option.id == "allow_once" {
-                            Button(option.name) { resolve(option.id) }
-                                .buttonStyle(.borderedProminent)
-                                .font(AppFont.sans(13))
-                        } else {
-                            Button(option.name) { resolve(option.id) }
-                                .buttonStyle(.bordered)
-                                .font(AppFont.sans(13))
-                        }
+                    ForEach(prompt.orderedOptions, id: \.id) { option in
+                        optionButton(option)
                     }
                 }
             }
+            .font(AppFont.sans(13))
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.raised, in: RoundedRectangle(cornerRadius: 10))
+        .task(id: prompt.id) {
+            isArmed = false
+            try? await Task.sleep(for: Self.armDelay)
+            isArmed = true
+        }
+    }
+
+    @ViewBuilder
+    private func optionButton(_ option: (id: String, name: String, kind: String?)) -> some View {
+        switch PermissionPrompt.optionKind(option) {
+        case "allow_once":
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!isArmed)
+        case "reject_once":
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
+        case "allow_always":
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.bordered)
+                .disabled(!isArmed)
+        default:
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.bordered)
+        }
     }
 }
 

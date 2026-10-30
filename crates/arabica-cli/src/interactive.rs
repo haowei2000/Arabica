@@ -320,7 +320,7 @@ impl InteractiveSession {
             .await
             .map_err(|error| format!("mcp configuration: {error}"))?;
         for diagnostic in mcp_diagnostics {
-            eprintln!("structure: {diagnostic}");
+            eprintln!("arabica: {diagnostic}");
         }
         let remote = match &options.remote_runner {
             Some(name) => {
@@ -756,7 +756,7 @@ impl InteractiveSession {
                     if cancellation.is_cancelled() {
                         std::process::exit(130);
                     }
-                    eprintln!("structure: cancelling the current run...");
+                    eprintln!("arabica: cancelling the current run...");
                     cancellation.cancel();
                 }
             }
@@ -786,7 +786,15 @@ impl InteractiveSession {
                 request = permission_rx.recv() => {
                     let Some(request) = request else { continue; };
                     terminal.break_line();
-                    eprintln!("Allow {} {}? [y]es / [a]lways / [n]o / ne[v]er", request.call.name, request.call.arguments);
+                    // Name what the call acts on; tools without a summary
+                    // show their full arguments, never a truncated preview.
+                    let summary = if crate::tui::summarizes_tool(&request.call.name) {
+                        crate::tui::tool_summary(&request.call.name, &request.call.arguments)
+                    } else {
+                        request.call.arguments.to_string()
+                    };
+                    let target = if summary.is_empty() { String::new() } else { format!(" ({summary})") };
+                    eprintln!("Allow {}{target}? [y]es / [a]lways / [n]o / ne[v]er", request.call.name);
                     prompt("permission> ");
                     let answer = tokio::select! {
                         line = lines.recv() => line,
@@ -811,7 +819,7 @@ impl InteractiveSession {
             match &event.event {
                 Event::RunCompleted { output: answer } => output = answer.as_deref(),
                 Event::RunFailed { message } => eprintln!("error: {message}"),
-                Event::RunCancelled => eprintln!("structure: cancelled"),
+                Event::RunCancelled => eprintln!("arabica: cancelled"),
                 _ => {}
             }
         }
@@ -872,7 +880,7 @@ pub async fn run_with_model_configs(
     );
     let mut lines = input_lines();
     loop {
-        prompt("structure> ");
+        prompt("arabica> ");
         let received = tokio::select! {
             line = lines.recv() => line,
             interrupt = tokio::signal::ctrl_c() => {

@@ -38,11 +38,10 @@ pub enum OutputFormat {
     /// stdout carries only the final answer; progress goes to stderr.
     #[default]
     Text,
-    /// stdout carries one JSON `EventEnvelope` per line, live, for every
-    /// client-visible Event -- the same distinction
-    /// `arabica_protocol::Event::is_client_visible` already draws, so
-    /// nothing provider-internal (system prompts, raw reasoning) ever
-    /// reaches a pipe built for scripting.
+    /// stdout carries one JSON event per line, live; system prompts and raw
+    /// reasoning are never included.
+    // Each line is an `EventEnvelope` for a client-visible Event, the same
+    // distinction `arabica_protocol::Event::is_client_visible` draws.
     Jsonl,
 }
 

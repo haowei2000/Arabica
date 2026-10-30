@@ -32,10 +32,33 @@ struct PermissionPrompt: Identifiable {
     let id: ACPRequestID
     let title: String
     let detail: String
-    let options: [(id: String, name: String)]
+    let options: [(id: String, name: String, kind: String?)]
     let method: String
     let params: [String: Any]
     var workspace: URL? = nil
+
+    /// ACP permission option kinds, read from `kind` and falling back to the
+    /// option ID for agents that omit it.
+    static func optionKind(_ option: (id: String, name: String, kind: String?)) -> String {
+        option.kind ?? option.id
+    }
+
+    /// Dialog order: rejections on the left, Allow once last so it sits in
+    /// the macOS default-button position.
+    var orderedOptions: [(id: String, name: String, kind: String?)] {
+        let rank = ["reject_always": 0, "reject_once": 1, "allow_always": 2, "allow_once": 3]
+        return options.enumerated()
+            .sorted {
+                let left = rank[Self.optionKind($0.element)] ?? 2
+                let right = rank[Self.optionKind($1.element)] ?? 2
+                return left == right ? $0.offset < $1.offset : left < right
+            }
+            .map(\.element)
+    }
+
+    var hasRejectOnceOption: Bool {
+        options.contains { Self.optionKind($0) == "reject_once" }
+    }
 }
 
 private struct SessionControlState {
@@ -64,6 +87,7 @@ final class DesktopModel: ObservableObject {
     @Published var selectedSessionID: String? {
         didSet {
             guard selectedSessionID != oldValue else { return }
+            queuedSendSessionID = nil
             let previous = ComposerDraft(text: draft, files: attachedFiles)
             if let oldValue { sessionDrafts[oldValue] = previous } else { unassignedDraft = previous }
             let next =
@@ -74,7 +98,18 @@ final class DesktopModel: ObservableObject {
         }
     }
     @Published var items: [ChatItem] = []
-    @Published var draft = ""
+    @Published var draft = "" {
+        didSet {
+            if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachedFiles.isEmpty {
+                queuedSendSessionID = nil
+            }
+        }
+    }
+    /// The conversation whose draft sends as soon as its current run
+    /// completes. Cleared by switching conversations, emptying the draft,
+    /// or a run that fails or is stopped.
+    @Published private(set) var queuedSendSessionID: String?
+    var isSendQueued: Bool { queuedSendSessionID != nil && queuedSendSessionID == selectedSessionID }
     @Published private(set) var composerFocusRequest = UUID()
     @Published var attachedFiles: [URL] = []
     @Published private var activeRuns: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
@@ -145,6 +180,8 @@ final class DesktopModel: ObservableObject {
     private var sessionControlCache: [String: SessionControlState] = [:]
     @Published private var permissionQueue: [PermissionPrompt] = [] { didSet { syncSidebarActivity() } }
     private var sessionDrafts: [String: ComposerDraft] = [:]
+    /// The last prompt sent in each conversation, for retrying a failed run.
+    private var lastPrompts: [String: ComposerDraft] = [:]
     private var unassignedDraft = ComposerDraft()
     private var connectionGeneration = UUID()
     private var navigationGeneration = UUID()
@@ -818,12 +855,60 @@ final class DesktopModel: ObservableObject {
         }
     }
 
+    /// Return in the composer: sends when possible, creates the first
+    /// conversation for a draft written before one existed, and queues the
+    /// draft while the agent is still working.
+    func submitDraft() async {
+        let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
+        guard hasDraft else { return }
+        if selectedSessionID == nil {
+            guard isConnected, !isConnecting, !isCreatingSession, workspace != nil else { return }
+            await newSession()
+            await send()
+            return
+        }
+        if isRunning, !isStopping, let id = selectedSessionID {
+            queuedSendSessionID = id
+            return
+        }
+        await send()
+    }
+
+    func cancelQueuedSend() { queuedSendSessionID = nil }
+
+    /// The selected conversation's last run failed and its prompt can be
+    /// sent again as-is.
+    var canRetryLastPrompt: Bool {
+        guard let id = selectedSessionID, lastPrompts[id] != nil else { return false }
+        return sessionOutcomes[id] == .failed && isSessionReady && !isRunning && !isWaitingForPermission
+            && !isUpdatingSessionConfiguration
+    }
+
+    /// Resends the last prompt of a failed run, leaving the composer draft alone.
+    func retryLastPrompt() async {
+        guard canRetryLastPrompt, let id = selectedSessionID, let prompt = lastPrompts[id] else { return }
+        await sendPrompt(content: prompt.text, files: prompt.files, in: id)
+    }
+
+    /// Puts an earlier message back in the composer to revise and send as a
+    /// new message. An existing draft is kept above it rather than replaced.
+    func editAsNewMessage(_ text: String) {
+        let current = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = current.isEmpty ? text : current + "\n\n" + text
+        composerFocusRequest = UUID()
+    }
+
     func send() async {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSendMessage, let id = selectedSessionID else { return }
         let files = attachedFiles
         draft = ""
         attachedFiles = []
+        await sendPrompt(content: content, files: files, in: id)
+    }
+
+    private func sendPrompt(content: String, files: [URL], in id: String) async {
+        lastPrompts[id] = ComposerDraft(text: content, files: files)
         errorText = nil
         sessionConfigurationFeedback.removeValue(forKey: id)
         let runID = beginRun(for: id)
@@ -884,6 +969,12 @@ final class DesktopModel: ObservableObject {
         if selectedSessionID != sessionID { unreadSessionIDs.insert(sessionID) } else if let error { errorText = error }
         touchSession(sessionID)
         if selectedSessionID == sessionID { itemCache[sessionID] = items }
+        if queuedSendSessionID == sessionID {
+            queuedSendSessionID = nil
+            if outcome == .completed, selectedSessionID == sessionID, error == nil {
+                Task { await send() }
+            }
+        }
     }
 
     func cancel() {
@@ -1071,11 +1162,11 @@ final class DesktopModel: ObservableObject {
             let rawInput = tool["rawInput"] ?? params["rawInput"]
             let detail = Self.jsonDetail(rawInput) ?? ""
             let options = (params["options"] as? [[String: Any]] ?? []).compactMap {
-                option -> (id: String, name: String)? in
+                option -> (id: String, name: String, kind: String?)? in
                 guard let optionID = option["optionId"] as? String,
                     let name = option["name"] as? String
                 else { return nil }
-                return (optionID, name)
+                return (optionID, name, option["kind"] as? String)
             }
             let prompt = PermissionPrompt(
                 id: id, title: title, detail: detail, options: options,
@@ -1090,7 +1181,7 @@ final class DesktopModel: ObservableObject {
             let detail = requestWorkspace.path + "\n\n" + (Self.jsonDetail(params) ?? "")
             let prompt = PermissionPrompt(
                 id: id, title: title, detail: detail,
-                options: [("allow_once", "Allow once")],
+                options: [("allow_once", "Allow once", "allow_once")],
                 method: method, params: params, workspace: requestWorkspace)
             if permission == nil { permission = prompt } else { permissionQueue.append(prompt) }
         } else {
