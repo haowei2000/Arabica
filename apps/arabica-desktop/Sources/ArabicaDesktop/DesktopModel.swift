@@ -180,6 +180,8 @@ final class DesktopModel: ObservableObject {
     private var sessionControlCache: [String: SessionControlState] = [:]
     @Published private var permissionQueue: [PermissionPrompt] = [] { didSet { syncSidebarActivity() } }
     private var sessionDrafts: [String: ComposerDraft] = [:]
+    /// The last prompt sent in each conversation, for retrying a failed run.
+    private var lastPrompts: [String: ComposerDraft] = [:]
     private var unassignedDraft = ComposerDraft()
     private var connectionGeneration = UUID()
     private var navigationGeneration = UUID()
@@ -874,12 +876,39 @@ final class DesktopModel: ObservableObject {
 
     func cancelQueuedSend() { queuedSendSessionID = nil }
 
+    /// The selected conversation's last run failed and its prompt can be
+    /// sent again as-is.
+    var canRetryLastPrompt: Bool {
+        guard let id = selectedSessionID, lastPrompts[id] != nil else { return false }
+        return sessionOutcomes[id] == .failed && isSessionReady && !isRunning && !isWaitingForPermission
+            && !isUpdatingSessionConfiguration
+    }
+
+    /// Resends the last prompt of a failed run, leaving the composer draft alone.
+    func retryLastPrompt() async {
+        guard canRetryLastPrompt, let id = selectedSessionID, let prompt = lastPrompts[id] else { return }
+        await sendPrompt(content: prompt.text, files: prompt.files, in: id)
+    }
+
+    /// Puts an earlier message back in the composer to revise and send as a
+    /// new message. An existing draft is kept above it rather than replaced.
+    func editAsNewMessage(_ text: String) {
+        let current = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = current.isEmpty ? text : current + "\n\n" + text
+        composerFocusRequest = UUID()
+    }
+
     func send() async {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSendMessage, let id = selectedSessionID else { return }
         let files = attachedFiles
         draft = ""
         attachedFiles = []
+        await sendPrompt(content: content, files: files, in: id)
+    }
+
+    private func sendPrompt(content: String, files: [URL], in id: String) async {
+        lastPrompts[id] = ComposerDraft(text: content, files: files)
         errorText = nil
         sessionConfigurationFeedback.removeValue(forKey: id)
         let runID = beginRun(for: id)

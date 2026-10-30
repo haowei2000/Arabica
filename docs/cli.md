@@ -129,10 +129,12 @@ completion and print the answer once it is complete.
 ## Interactive terminal
 
 Run `arabica` (or `arabica chat`) in a project directory to start a
-continuous conversation. In a terminal, the chat runs inline, Claude-Code
-style: the transcript is printed straight into the terminal's native
-scrollback -- normal scrolling, selection, and search keep working -- while a
-small input box pinned to the bottom owns the editor and status line.
+continuous conversation. In a terminal, the chat runs full screen (in the
+terminal's alternate screen): a scrolling history pane on top and an editor,
+key hints, and a status line pinned to the bottom. Scroll the history with the
+mouse wheel or PageUp/PageDown, search it with `/find <text>` (F3/Shift+F3 to
+step), and click a block or move to it with ↑/↓ then press Enter or `c` to
+copy it. Leaving the chat returns the terminal to its previous contents.
 Tool calls render folded: one summary line per call, a status line for the
 result, and a colored diff for file edits; Ctrl+O toggles verbose printing
 and Ctrl+T shows or hides thinking for later events. A permission prompt

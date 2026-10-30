@@ -290,6 +290,11 @@ struct DesktopView: View {
                             Task { await model.selectSession(sessionID) }
                         }
                         .disabled(model.isLoadingSession)
+                    } else if model.canRetryLastPrompt {
+                        Button("Retry") {
+                            Task { await model.retryLastPrompt() }
+                        }
+                        .help("Send the last message again")
                     }
                     Button {
                         model.errorText = nil
@@ -587,8 +592,11 @@ private struct ConversationFeedView: View {
                         let feed = model.items.groupedForFeed
                         ForEach(feed) { group in
                             // Only the newest group can still be streaming.
-                            ChatGroupRow(group: group, isRunning: model.isRunning && group.id == feed.last?.id)
-                                .id(group.id)
+                            ChatGroupRow(
+                                group: group, isRunning: model.isRunning && group.id == feed.last?.id,
+                                onEdit: model.editAsNewMessage
+                            )
+                            .id(group.id)
                         }
                         // A streaming thought already says "Thinking…".
                         if model.isRunning, !(feed.last?.isThought ?? false) || model.isWaitingForPermission {
@@ -964,11 +972,12 @@ extension Array where Element == ChatItem {
 private struct ChatGroupRow: View {
     let group: ChatFeedItem
     let isRunning: Bool
+    let onEdit: (String) -> Void
 
     var body: some View {
         switch group {
         case .user(let item):
-            UserMessageView(item: item)
+            UserMessageView(item: item, onEdit: onEdit)
         case .assistant(let item):
             AssistantMessageView(item: item)
         case .thought(let item):
@@ -1013,11 +1022,26 @@ private struct MessageCopyButton: View {
 
 private struct UserMessageView: View {
     let item: ChatItem
+    let onEdit: (String) -> Void
     @State private var isHovering = false
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 4) {
             Spacer(minLength: 64)
+            Button {
+                onEdit(item.text)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+                    .font(AppFont.sans(10.5))
+                    .foregroundStyle(Palette.muted)
+                    .padding(.horizontal, 6)
+                    .frame(height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Edit as a new message")
+            .accessibilityLabel("Edit as a new message")
+            .opacity(isHovering ? 1 : 0)
             MessageCopyButton(text: item.text, isVisible: isHovering)
             Text(item.text)
                 .font(AppFont.message(13.5))
