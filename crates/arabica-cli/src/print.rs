@@ -53,6 +53,8 @@ pub struct PrintOptions {
     pub allow_shell: bool,
     pub read_only: bool,
     pub resume: Resume,
+    /// Run built-in tools on the remote runner `[runners.<name>]`.
+    pub remote_runner: Option<String>,
 }
 
 /// Which session `-p` should send `task` to.
@@ -241,6 +243,17 @@ pub async fn run_with_model(
         }
     };
 
+    let remote = match &options.remote_runner {
+        Some(name) => match crate::runner::connect_configured(&arabica_home, name, &policy).await {
+            Ok(remote) => Some(remote),
+            Err(message) => {
+                eprintln!("error: {message}");
+                return EXIT_CONFIG_ERROR;
+            }
+        },
+        None => None,
+    };
+
     match run_task(
         model,
         blend_policy,
@@ -252,6 +265,7 @@ pub async fn run_with_model(
         resumed,
         session_store,
         mcp,
+        remote,
     )
     .await
     {
@@ -305,13 +319,15 @@ async fn run_task(
     resumed: Option<StoredSession>,
     session_store: Arc<dyn SessionStore>,
     mcp: crate::mcp::McpTools,
+    remote: Option<arabica_runner_remote::RemoteRunner>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
-    let runtime: HostRuntime = crate::host::build_host_runtime_with_blend(
+    let runtime: HostRuntime = crate::host::build_host_runtime_with_blend_and_runner(
         model,
         runner_root,
         policy,
         &arabica_home,
         mcp,
+        remote,
         blend_policy,
     )?;
     let mut manager = SessionManager::with_ids(runtime, Box::new(crate::host::UuidIds));

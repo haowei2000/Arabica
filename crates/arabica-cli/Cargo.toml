@@ -53,6 +53,7 @@ arabica-model = { version = "0.12.0", path = "../arabica-model" }
 arabica-protocol = { version = "0.12.0", path = "../arabica-protocol" }
 arabica-provider = { version = "0.12.0", path = "../arabica-provider" }
 arabica-runner = { version = "0.12.0", path = "../arabica-runner" }
+arabica-runner-remote = { version = "0.12.0", path = "../arabica-runner-remote" }
 arabica-runtime = { version = "0.12.0", path = "../arabica-runtime" }
 arabica-session = { version = "0.12.0", path = "../arabica-session" }
 tokio.workspace = true
@@ -62,6 +63,7 @@ serde-saphyr = { version = "=0.0.28", default-features = false, features = ["des
 
 [dev-dependencies]
 axum.workspace = true
+rcgen = "0.14"
 
 [lints]
 workspace = true

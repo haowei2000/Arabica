@@ -24,6 +24,7 @@ The Cargo workspace is split into small crates with explicit ownership:
 | `arabica-protocol` | Canonical commands, events, identifiers, and schema |
 | `arabica-provider` | Model-provider abstraction and API implementations |
 | `arabica-runner` | Local tool execution boundary |
+| `arabica-runner-remote` | Loop–Runner Protocol: remote runner client and runner host over WebSocket + mTLS |
 | `arabica-runtime` | Agent loop, long memory, and short-memory projection |
 | `arabica-session` | Session identity, sequencing, history, and lifecycle |
 | `arabica-server` | Axum HTTP and SSE protocol host |
