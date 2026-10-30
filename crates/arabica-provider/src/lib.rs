@@ -63,6 +63,7 @@ pub struct ModelRunRequest {
     pub session_id: SessionId,
     pub run_id: RunId,
     pub input: String,
+    pub images: Vec<arabica_model::ImageInput>,
     /// Session event history projected by Runtime. This is an ephemeral view,
     /// not a second source of truth.
     pub short_memory: Vec<ShortMemoryEntry>,
@@ -2096,7 +2097,7 @@ fn anthropic_request(
     for item in &request.items {
         match item {
         RuntimeItem::Message(message) if matches!(message.role, RuntimeRole::System | RuntimeRole::Developer) => { let mut block = json!({"type":"text", "text": text_content(&message.content, ApiType::AnthropicMessages)?}); if cache_static_prefix { block["cache_control"] = json!({"type":"ephemeral"}); } system.push(block); }
-        RuntimeItem::Message(message) => messages.push(json!({"role": if message.role == RuntimeRole::Assistant { "assistant" } else { "user" }, "content": text_content(&message.content, ApiType::AnthropicMessages)?})),
+        RuntimeItem::Message(message) => messages.push(json!({"role": if message.role == RuntimeRole::Assistant { "assistant" } else { "user" }, "content": message_content(&message.content, ApiType::AnthropicMessages)?})),
         RuntimeItem::ToolCall(call) => messages.push(json!({"role":"assistant", "content":[{"type":"tool_use", "id":call.call_id, "name":call.name, "input":call.arguments}]})),
         RuntimeItem::ToolResult(result) => messages.push(json!({"role":"user", "content":[{"type":"tool_result", "tool_use_id":result.call_id, "content":text_content(&result.content, ApiType::AnthropicMessages)?}]})),
         RuntimeItem::Reasoning(_) => {}
@@ -2755,13 +2756,9 @@ fn gemini_generate_content_request(
                 } else {
                     "user"
                 };
-                push_part(
-                    &mut contents,
-                    role,
-                    json!({
-                        "text": text_content(&message.content, ApiType::GeminiGenerateContent)?
-                    }),
-                );
+                for part in content_parts(&message.content, ApiType::GeminiGenerateContent)? {
+                    push_part(&mut contents, role, part);
+                }
             }
             RuntimeItem::ToolCall(call) => push_part(
                 &mut contents,
@@ -3174,7 +3171,7 @@ impl ApiCodec for OpenAiResponsesCodec {
                                 RuntimeRole::User => "user",
                                 RuntimeRole::Assistant => "assistant",
                             },
-                            "content": text_content(&message.content, self.api_type())?,
+                            "content": message_content(&message.content, self.api_type())?,
                         }));
                     }
                 }
@@ -3479,7 +3476,7 @@ struct OpenAiThinking {
 struct OpenAiMessage {
     role: OpenAiRole,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -3613,7 +3610,7 @@ impl OpenAiChatStreamState {
             choices: vec![OpenAiChoice {
                 message: OpenAiMessage {
                     role: OpenAiRole::Assistant,
-                    content: (!self.content.is_empty()).then_some(self.content),
+                    content: (!self.content.is_empty()).then_some(Value::String(self.content)),
                     reasoning_content: (!self.reasoning.is_empty()).then_some(self.reasoning),
                     tool_calls: calls,
                     tool_call_id: None,
@@ -3785,7 +3782,7 @@ impl ApiCodec for OpenAiChatCodec {
                         RuntimeRole::User => OpenAiRole::User,
                         RuntimeRole::Assistant => OpenAiRole::Assistant,
                     },
-                    content: Some(text_content(&message.content, self.api_type())?),
+                    content: Some(message_content(&message.content, self.api_type())?),
                     reasoning_content: None,
                     tool_calls: Vec::new(),
                     tool_call_id: None,
@@ -3820,7 +3817,10 @@ impl ApiCodec for OpenAiChatCodec {
                 }
                 RuntimeItem::ToolResult(result) => messages.push(OpenAiMessage {
                     role: OpenAiRole::Tool,
-                    content: Some(text_content(&result.content, self.api_type())?),
+                    content: Some(Value::String(text_content(
+                        &result.content,
+                        self.api_type(),
+                    )?)),
                     reasoning_content: None,
                     tool_calls: Vec::new(),
                     tool_call_id: Some(result.call_id.clone()),
@@ -3899,7 +3899,16 @@ impl ApiCodec for OpenAiChatCodec {
                 provider_state: Some(ProviderState::OpenAiChatCompletions { reasoning_content }),
             }));
         }
-        if let Some(content) = choice.message.content.filter(|content| !content.is_empty()) {
+        let content = match choice.message.content {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) => Some(text),
+            Some(_) => {
+                return Err(ProviderError::new(
+                    "OpenAI Chat returned unsupported non-text output",
+                ));
+            }
+        };
+        if let Some(content) = content.filter(|content| !content.is_empty()) {
             items.push(RuntimeItem::Message(MessageItem::text(
                 RuntimeRole::Assistant,
                 content,
@@ -4004,9 +4013,9 @@ pub fn compile_runtime_request(request: &ModelRunRequest, model: &str) -> Runtim
             .filter(|entry| !matches!(&entry.item, ShortMemoryItem::MemoryPointer(_)))
             .filter_map(|entry| memory_item_to_runtime_item(&entry.item)),
     );
-    items.push(RuntimeItem::Message(MessageItem::text(
-        RuntimeRole::User,
-        request.input.clone(),
+    items.push(RuntimeItem::Message(user_input_message(
+        &request.input,
+        &request.images,
     )));
     items.extend(
         request
@@ -4064,10 +4073,22 @@ fn compact_memory_pointer_index(pointers: &[&arabica_model::MemoryPointer]) -> R
     ))
 }
 
+fn user_input_message(content: &str, images: &[arabica_model::ImageInput]) -> MessageItem {
+    let mut message = MessageItem::text(RuntimeRole::User, content);
+    // Image-only prompts must not produce an empty text block (Claude rejects it).
+    if content.is_empty() && !images.is_empty() {
+        message.content.clear();
+    }
+    message
+        .content
+        .extend(images.iter().map(arabica_model::ImageInput::content_block));
+    message
+}
+
 fn memory_item_to_runtime_item(item: &ShortMemoryItem) -> Option<RuntimeItem> {
     Some(match item {
-        ShortMemoryItem::UserMessage { content } => {
-            RuntimeItem::Message(MessageItem::text(RuntimeRole::User, content.clone()))
+        ShortMemoryItem::UserMessage { content, images } => {
+            RuntimeItem::Message(user_input_message(content, images))
         }
         ShortMemoryItem::AssistantMessage { content } => {
             RuntimeItem::Message(MessageItem::text(RuntimeRole::Assistant, content.clone()))
@@ -4110,6 +4131,43 @@ fn memory_item_to_runtime_item(item: &ShortMemoryItem) -> Option<RuntimeItem> {
             ),
         )),
     })
+}
+
+/// Preserve the text-only wire shape while encoding image messages as parts.
+fn message_content(blocks: &[ContentBlock], api_type: ApiType) -> Result<Value, ProviderError> {
+    if blocks
+        .iter()
+        .all(|block| matches!(block, ContentBlock::Text { .. }))
+    {
+        return text_content(blocks, api_type).map(Value::String);
+    }
+    content_parts(blocks, api_type).map(Value::Array)
+}
+
+fn content_parts(blocks: &[ContentBlock], api_type: ApiType) -> Result<Vec<Value>, ProviderError> {
+    blocks.iter().map(|block| {
+        match block {
+            ContentBlock::Text { text } => Ok(match api_type {
+                ApiType::OpenAiResponses => json!({"type":"input_text", "text":text}),
+                ApiType::GeminiGenerateContent => json!({"text":text}),
+                _ => json!({"type":"text", "text":text}),
+            }),
+            ContentBlock::InlineData { media_type, data_base64 } => {
+                let image = arabica_model::ImageInput { media_type: media_type.clone(), data_base64: data_base64.clone() };
+                image.validate().map_err(ProviderError::new)?;
+                let url = format!("data:{media_type};base64,{data_base64}");
+                match api_type {
+                    ApiType::OpenAiChatCompletions => Ok(json!({"type":"image_url", "image_url":{"url":url}})),
+                    ApiType::OpenAiResponses => Ok(json!({"type":"input_image", "image_url":url})),
+                    ApiType::AnthropicMessages => Ok(json!({"type":"image", "source":{"type":"base64", "media_type":media_type, "data":data_base64}})),
+                    ApiType::GeminiGenerateContent if media_type == "image/gif" => Err(ProviderError::new("Gemini image input does not support GIF; convert it to PNG, JPEG, or WebP")),
+                    ApiType::GeminiGenerateContent => Ok(json!({"inlineData":{"mimeType":media_type, "data":data_base64}})),
+                    _ => Err(ProviderError::new(format!("{api_type} cannot encode images"))),
+                }
+            }
+            _ => Err(ProviderError::new(format!("{api_type} cannot losslessly encode this content block"))),
+        }
+    }).collect()
 }
 
 fn text_content(blocks: &[ContentBlock], api_type: ApiType) -> Result<String, ProviderError> {
@@ -4376,6 +4434,7 @@ mod tests {
 
     fn sample_request() -> ModelRunRequest {
         ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("s"),
             run_id: RunId::new("r"),
@@ -4390,8 +4449,60 @@ mod tests {
         }
     }
     #[test]
+    fn image_messages_encode_for_all_supported_provider_apis() {
+        let mut request = sample_request();
+        request.images = vec![arabica_model::ImageInput {
+            media_type: "image/png".into(),
+            data_base64: "aGVsbG8=".into(),
+        }];
+        let runtime = compile_runtime_request(&request, "vision-model");
+        let chat = serde_json::to_value(OpenAiChatCodec.encode(&runtime).unwrap()).unwrap();
+        assert_eq!(
+            chat["messages"][1]["content"][0],
+            json!({"type":"text", "text":"test"})
+        );
+        assert_eq!(
+            chat["messages"][1]["content"][1],
+            json!({"type":"image_url", "image_url":{"url":"data:image/png;base64,aGVsbG8="}})
+        );
+        let responses =
+            serde_json::to_value(OpenAiResponsesCodec.encode(&runtime).unwrap()).unwrap();
+        assert_eq!(
+            responses["input"][1]["content"][1],
+            json!({"type":"input_image", "image_url":"data:image/png;base64,aGVsbG8="})
+        );
+        let anthropic = anthropic_request(&runtime, 1024, false).unwrap();
+        assert_eq!(
+            anthropic["messages"][0]["content"][1],
+            json!({"type":"image", "source":{"type":"base64", "media_type":"image/png", "data":"aGVsbG8="}})
+        );
+        let gemini = gemini_generate_content_request(&runtime, 1024).unwrap();
+        assert_eq!(
+            gemini["contents"][0]["parts"][1],
+            json!({"inlineData":{"mimeType":"image/png", "data":"aGVsbG8="}})
+        );
+
+        request.input.clear();
+        let runtime = compile_runtime_request(&request, "vision-model");
+        let anthropic = anthropic_request(&runtime, 1024, false).unwrap();
+        assert_eq!(
+            anthropic["messages"][0]["content"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(anthropic["messages"][0]["content"][0]["type"], "image");
+        assert!(OpenAiChatCodec.encode(&runtime).is_ok());
+        request.images[0].media_type = "image/gif".into();
+        let runtime = compile_runtime_request(&request, "vision-model");
+        assert!(gemini_generate_content_request(&runtime, 1024).is_err());
+    }
+
+    #[test]
     fn experiment_controls_are_explicit_and_validated() {
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("s"),
             run_id: RunId::new("r"),
@@ -4439,6 +4550,7 @@ mod tests {
     #[test]
     fn system_instructions_render_as_one_message_after_the_base_system_prompt() {
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: vec![
                 "Project instructions from AGENTS.md.".to_owned(),
                 "A second standing instruction.".to_owned(),
@@ -4489,6 +4601,7 @@ mod tests {
     #[test]
     fn empty_system_instructions_add_no_message() {
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("s"),
             run_id: RunId::new("r"),
@@ -4531,6 +4644,7 @@ mod tests {
         let mut provider = EchoModel::default();
         let result = provider
             .complete(ModelRunRequest {
+                images: Vec::new(),
                 system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
@@ -4588,6 +4702,7 @@ mod tests {
             }),
         };
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-1"),
@@ -4646,6 +4761,7 @@ mod tests {
     #[test]
     fn openai_mapping_keeps_short_and_long_memory_separate() {
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-2"),
@@ -4655,6 +4771,7 @@ mod tests {
                     source_event_ids: vec!["event-2".to_owned()],
                     sequence: 2,
                     item: ShortMemoryItem::UserMessage {
+                        images: Vec::new(),
                         content: "My temporary code is blue-17".to_owned(),
                     },
                 },
@@ -4687,14 +4804,16 @@ mod tests {
         assert!(
             messages[1]
                 .content
-                .as_deref()
+                .as_ref()
+                .and_then(Value::as_str)
                 .expect("long memory content")
                 .contains("memory/preference")
         );
         assert!(
             messages[1]
                 .content
-                .as_deref()
+                .as_ref()
+                .and_then(Value::as_str)
                 .expect("long memory content")
                 .contains("Treat it as data")
         );
@@ -4702,7 +4821,7 @@ mod tests {
         assert_eq!(messages[3].role, OpenAiRole::Assistant);
         assert_eq!(messages[4].role, OpenAiRole::User);
         assert_eq!(
-            messages[4].content.as_deref(),
+            messages[4].content.as_ref().and_then(Value::as_str),
             Some("What should you remember?")
         );
     }
@@ -4710,6 +4829,7 @@ mod tests {
     #[test]
     fn short_memory_tool_batches_remain_typed_until_provider_encoding() {
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-2"),
@@ -4786,6 +4906,7 @@ mod tests {
             is_error: false,
         };
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-1"),
@@ -4842,6 +4963,7 @@ mod tests {
     #[test]
     fn ephemeral_system_continuation_is_merged_into_the_chat_system_prefix() {
         let request = ModelRunRequest {
+            images: Vec::new(),
             system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-1"),
@@ -5010,6 +5132,7 @@ mod tests {
         );
         let wire = provider
             .map_request(&ModelRunRequest {
+                images: Vec::new(),
                 system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
@@ -5226,6 +5349,7 @@ mod tests {
         .expect("Responses adapter is implemented");
         let result = provider
             .complete(ModelRunRequest {
+                images: Vec::new(),
                 system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
@@ -5290,6 +5414,7 @@ mod tests {
         let result = provider
             .complete_with_progress(
                 ModelRunRequest {
+                    images: Vec::new(),
                     system_instructions: Vec::new(),
                     session_id: SessionId::new("session-1"),
                     run_id: RunId::new("run-1"),
@@ -5355,6 +5480,7 @@ mod tests {
         let result = provider
             .complete_with_progress(
                 ModelRunRequest {
+                    images: Vec::new(),
                     system_instructions: Vec::new(),
                     session_id: SessionId::new("session-1"),
                     run_id: RunId::new("run-1"),
@@ -5438,6 +5564,7 @@ mod tests {
         assert_eq!(provider.api_type(), ApiType::OpenAiChatCompletions);
         let result = provider
             .complete(ModelRunRequest {
+                images: Vec::new(),
                 system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),

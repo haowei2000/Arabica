@@ -77,6 +77,7 @@ final class DesktopModel: ObservableObject {
     @Published var draft = ""
     @Published private(set) var composerFocusRequest = UUID()
     @Published var attachedFiles: [URL] = []
+    private var supportsImageInput = false
     @Published private var activeRuns: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
     @Published private var stoppingRuns: [String: UUID] = [:]
     @Published private var pendingSessionControls: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
@@ -513,6 +514,7 @@ final class DesktopModel: ObservableObject {
         usage = [:]
         availableCommands = []
         currentModeID = nil
+        supportsImageInput = false
         items = []
         sessionWorkspaces = [:]
         closingSessionIDs = []
@@ -524,6 +526,9 @@ final class DesktopModel: ObservableObject {
             let initialized = try await client.initialize()
             guard connectionGeneration == connection else { return }
             configureSessionCapabilities(initialized)
+            let capabilities = initialized["agentCapabilities"] as? [String: Any]
+            let promptCapabilities = capabilities?["promptCapabilities"] as? [String: Any]
+            supportsImageInput = promptCapabilities?["image"] as? Bool ?? false
             evaluation.connect(supported: EvaluationCapability.supported(by: initialized)) {
                 [weak self] method, params in
                 guard let self else { throw ACPError.disconnected }
@@ -822,6 +827,13 @@ final class DesktopModel: ObservableObject {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSendMessage, let id = selectedSessionID else { return }
         let files = attachedFiles
+        let attachments: [[String: Any]]
+        do {
+            attachments = try PromptAttachments.blocks(for: files, supportsImages: supportsImageInput)
+        } catch {
+            errorText = error.localizedDescription
+            return
+        }
         draft = ""
         attachedFiles = []
         errorText = nil
@@ -840,13 +852,7 @@ final class DesktopModel: ObservableObject {
         do {
             var blocks: [[String: Any]] = []
             if !content.isEmpty { blocks.append(["type": "text", "text": content]) }
-            blocks.append(
-                contentsOf: files.map {
-                    [
-                        "type": "resource_link", "name": $0.lastPathComponent,
-                        "uri": $0.absoluteString,
-                    ]
-                })
+            blocks.append(contentsOf: attachments)
             let result = try await sessionRequest(
                 "session/prompt",
                 [

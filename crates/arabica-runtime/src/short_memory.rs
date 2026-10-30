@@ -922,8 +922,9 @@ fn event_to_short_memory_entries(envelope: &EventEnvelope) -> Vec<ShortMemoryEnt
 
 fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
     let item = match &envelope.event {
-        Event::MessageAccepted { content } => ShortMemoryItem::UserMessage {
+        Event::MessageAccepted { content, images } => ShortMemoryItem::UserMessage {
             content: content.clone(),
+            images: images.clone(),
         },
         Event::RunCompleted {
             output: Some(content),
@@ -1363,7 +1364,7 @@ fn build_key_content(batch: &EventBatch, content_budget_bytes: usize) -> String 
 
 fn event_semantic_key(event: &Event) -> Option<String> {
     match event {
-        Event::MessageAccepted { content } => Some(compact_user_message(content)),
+        Event::MessageAccepted { content, .. } => Some(compact_user_message(content)),
         Event::ModelRouteSelected { .. }
         | Event::ModelRouteExplained { .. }
         | Event::ToolExecutionObserved { .. }
@@ -1796,6 +1797,7 @@ mod tests {
     fn detailed_protocol_events_map_to_retention_classes() {
         assert_eq!(
             ShortMemoryProjector::classify_event(&Event::MessageAccepted {
+                images: Vec::new(),
                 content: "remember this".to_owned(),
             })
             .class,
@@ -2378,6 +2380,7 @@ mod tests {
                 1,
                 "old",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "old question ".repeat(200),
                 },
             ),
@@ -2392,6 +2395,7 @@ mod tests {
                 3,
                 "recent",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "recent question".to_owned(),
                 },
             ),
@@ -2472,6 +2476,7 @@ mod tests {
                 "parent",
                 "parent-run",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "parent fact".to_owned(),
                 },
             ),
@@ -2480,6 +2485,7 @@ mod tests {
                 "child",
                 "child-run",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "child fact".to_owned(),
                 },
             ),
@@ -2506,6 +2512,7 @@ mod tests {
             envelope(
                 2,
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "question".to_owned(),
                 },
             ),
@@ -2536,6 +2543,7 @@ mod tests {
                 1,
                 "old",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "old question ".repeat(200),
                 },
             ),
@@ -2550,6 +2558,7 @@ mod tests {
                 3,
                 "new",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "new question ".repeat(200),
                 },
             ),
@@ -2594,6 +2603,7 @@ mod tests {
         let events = vec![envelope(
             1,
             Event::MessageAccepted {
+                images: Vec::new(),
                 content: "required anchor ".repeat(200),
             },
         )];
@@ -2675,6 +2685,7 @@ mod tests {
         let events = vec![envelope(
             1,
             Event::MessageAccepted {
+                images: Vec::new(),
                 content: evidence.to_owned(),
             },
         )];
@@ -2824,6 +2835,7 @@ mod tests {
                 1,
                 "run-1",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "please summarize".to_owned(),
                 },
             ),
@@ -2878,6 +2890,7 @@ mod tests {
                 1,
                 "run-1",
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "ping".to_owned(),
                 },
             ),

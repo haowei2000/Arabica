@@ -1361,6 +1361,7 @@ async fn run_structure_trial(
             CommandId::new("cli-comparison-task"),
             Some(session_id),
             RuntimeCommand::MessageSend {
+                images: Vec::new(),
                 content: prompt.to_owned(),
             },
         ))

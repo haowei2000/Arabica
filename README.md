@@ -363,3 +363,18 @@ unspecified tasks remain unverified. The desktop evaluation panel displays these
 results. Use `arabica evaluations runs`, `score`, and `compare`, or run isolated
 real policy trials with the existing benchmark's `policy_campaign` binary.
 See [run evaluation](docs/run-evaluation.md) for formats and examples.
+
+### Image input
+
+The macOS client's paperclip accepts PNG, JPEG, WebP, and GIF images (up to four
+per message, 5 MiB each). Choose a vision-capable model. ACP advertises the image
+prompt capability and forwards image bytes through the canonical message and
+session history to OpenAI Chat Completions, OpenAI Responses, Anthropic Messages,
+or Gemini Generate Content. Ordinary file attachments remain resource links.
+Image generation and editing are not built-in tools.
+
+The `message.send` payload and `message.accepted` event accept an optional
+`images` array of `{ "media_type": "image/png", "data_base64": "..." }` objects.
+Omitting it retains the existing text-only wire format. Image bytes are persisted
+with the session and sent to the configured provider; older images follow the
+session's memory compaction policy.

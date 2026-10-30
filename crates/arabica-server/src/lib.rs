@@ -724,6 +724,7 @@ mod tests {
                 CommandId::new("message"),
                 Some(session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "Persistent title".to_owned(),
                 },
             )),

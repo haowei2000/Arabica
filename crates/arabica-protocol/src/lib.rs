@@ -99,7 +99,11 @@ pub enum Command {
     #[serde(rename = "session.close")]
     SessionClose,
     #[serde(rename = "message.send")]
-    MessageSend { content: String },
+    MessageSend {
+        content: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<arabica_model::ImageInput>,
+    },
     #[serde(rename = "run.cancel")]
     RunCancel { run_id: RunId },
     #[serde(rename = "context.read")]
@@ -320,7 +324,11 @@ pub enum Event {
     #[serde(rename = "run.started")]
     RunStarted,
     #[serde(rename = "message.accepted")]
-    MessageAccepted { content: String },
+    MessageAccepted {
+        content: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<arabica_model::ImageInput>,
+    },
     /// Model selected for one call, recorded before provider invocation.
     /// Contains only a public model identifier and bounded routing metadata.
     #[serde(rename = "model.route.selected")]
@@ -663,6 +671,7 @@ mod tests {
             CommandId::new("command-1"),
             Some(SessionId::new("session-1")),
             Command::MessageSend {
+                images: Vec::new(),
                 content: "hello".to_owned(),
             },
         );
