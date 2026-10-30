@@ -135,7 +135,9 @@ scrollback -- normal scrolling, selection, and search keep working -- while a
 small input box pinned to the bottom owns the editor and status line.
 Tool calls render folded: one summary line per call, a status line for the
 result, and a colored diff for file edits; Ctrl+O toggles verbose printing
-for later events. When stdin or stdout is redirected, the simple line-based
+and Ctrl+T shows or hides thinking for later events. A permission prompt
+ignores decision keys for half a second after it opens, so keystrokes typed
+for a queued message cannot answer it by accident. When stdin or stdout is redirected, the simple line-based
 interface remains available. `--plain`
 selects that interface explicitly. Each prompt uses the same session and event
 log; `/exit` or `/quit` ends the terminal process. `--continue` restores the most
@@ -145,7 +147,9 @@ chat, `/sessions` lists this workspace's stored sessions and `/resume <id>`
 switches to one in place: the new session opens first (an unknown id leaves
 the current session untouched), the previous one is suspended, and the next
 message continues the resumed session's history. `/resume` without an id
-lists resumable sessions; type a line number or an id prefix to pick one.
+lists resumable sessions; type a line number or an id prefix to pick one, or
+press Esc to cancel. A command or a message that matches no session cancels
+the pick and is handled normally.
 
 CLI and ACP sessions use the runtime's file-backed context projection. Older
 eligible evidence may be archived under

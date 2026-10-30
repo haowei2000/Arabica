@@ -87,6 +87,7 @@ final class DesktopModel: ObservableObject {
     @Published var selectedSessionID: String? {
         didSet {
             guard selectedSessionID != oldValue else { return }
+            queuedSendSessionID = nil
             let previous = ComposerDraft(text: draft, files: attachedFiles)
             if let oldValue { sessionDrafts[oldValue] = previous } else { unassignedDraft = previous }
             let next =
@@ -97,7 +98,18 @@ final class DesktopModel: ObservableObject {
         }
     }
     @Published var items: [ChatItem] = []
-    @Published var draft = ""
+    @Published var draft = "" {
+        didSet {
+            if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachedFiles.isEmpty {
+                queuedSendSessionID = nil
+            }
+        }
+    }
+    /// The conversation whose draft sends as soon as its current run
+    /// completes. Cleared by switching conversations, emptying the draft,
+    /// or a run that fails or is stopped.
+    @Published private(set) var queuedSendSessionID: String?
+    var isSendQueued: Bool { queuedSendSessionID != nil && queuedSendSessionID == selectedSessionID }
     @Published private(set) var composerFocusRequest = UUID()
     @Published var attachedFiles: [URL] = []
     @Published private var activeRuns: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
@@ -841,6 +853,27 @@ final class DesktopModel: ObservableObject {
         }
     }
 
+    /// Return in the composer: sends when possible, creates the first
+    /// conversation for a draft written before one existed, and queues the
+    /// draft while the agent is still working.
+    func submitDraft() async {
+        let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
+        guard hasDraft else { return }
+        if selectedSessionID == nil {
+            guard isConnected, !isConnecting, !isCreatingSession, workspace != nil else { return }
+            await newSession()
+            await send()
+            return
+        }
+        if isRunning, !isStopping, let id = selectedSessionID {
+            queuedSendSessionID = id
+            return
+        }
+        await send()
+    }
+
+    func cancelQueuedSend() { queuedSendSessionID = nil }
+
     func send() async {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSendMessage, let id = selectedSessionID else { return }
@@ -907,6 +940,12 @@ final class DesktopModel: ObservableObject {
         if selectedSessionID != sessionID { unreadSessionIDs.insert(sessionID) } else if let error { errorText = error }
         touchSession(sessionID)
         if selectedSessionID == sessionID { itemCache[sessionID] = items }
+        if queuedSendSessionID == sessionID {
+            queuedSendSessionID = nil
+            if outcome == .completed, selectedSessionID == sessionID, error == nil {
+                Task { await send() }
+            }
+        }
     }
 
     func cancel() {

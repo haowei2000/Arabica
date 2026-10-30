@@ -32,6 +32,7 @@ struct ArabicaDesktopApp: App {
     @FocusedBinding(\.projectSidebarVisible) private var sidebarVisible
     @FocusedValue(\.searchConversations) private var searchConversations
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("showEvaluationInspector") private var showEvaluation = false
 
     init() {
         let windows = DesktopWindowRegistry()
@@ -71,6 +72,10 @@ struct ArabicaDesktopApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(sidebarVisible == nil)
+                // Registered here rather than on the toolbar menu item, whose
+                // shortcut only fires while that menu is open.
+                Toggle("Show Blend Inspector", isOn: $showEvaluation)
+                    .keyboardShortcut("i", modifiers: [.command, .option])
             }
             CommandGroup(after: .textEditing) {
                 Button("Search Conversations") { searchConversations?() }
@@ -212,11 +217,6 @@ struct DesktopView: View {
                     conversationSearch
                 }
 
-                Button(action: model.chooseWorkspace) {
-                    Label("Open Workspace", systemImage: "folder.badge.plus")
-                }
-                .help("Open Workspace (Cmd+O)")
-
                 workspaceChooser
 
                 Image(
@@ -226,6 +226,7 @@ struct DesktopView: View {
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(model.isConnected ? Color.green : (model.errorText != nil ? Color.red : Color.orange))
+                .symbolEffect(.pulse, isActive: model.isConnecting)
                 .help(connectionStatus)
                 .accessibilityLabel(connectionStatus)
             }
@@ -428,11 +429,13 @@ struct DesktopView: View {
                 ))
                 Divider()
                 Toggle("Show Blend Inspector", isOn: $showEvaluation)
-                    .keyboardShortcut("i", modifiers: [.command, .option])
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { theme.cycleMode() }
-                } label: {
-                    Label("Change Appearance (\(theme.mode.rawValue))", systemImage: theme.mode.icon)
+                Picker("Appearance", selection: Binding(
+                    get: { theme.mode },
+                    set: { mode in withAnimation(.easeInOut(duration: 0.18)) { theme.mode = mode } }
+                )) {
+                    ForEach(ThemeMode.allCases) { mode in
+                        Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                    }
                 }
             } label: {
                 Label {
@@ -587,7 +590,8 @@ private struct ConversationFeedView: View {
                             ChatGroupRow(group: group, isRunning: model.isRunning && group.id == feed.last?.id)
                                 .id(group.id)
                         }
-                        if model.isRunning {
+                        // A streaming thought already says "Thinking…".
+                        if model.isRunning, !(feed.last?.isThought ?? false) || model.isWaitingForPermission {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
                                 Text(model.isWaitingForPermission ? "Waiting for permission…" : "Working…")
@@ -601,7 +605,7 @@ private struct ConversationFeedView: View {
                         .id(endID)
                         .background(ConversationScrollObserver { followsLatest = $0 })
                 }
-                .frame(maxWidth: 760)
+                .frame(maxWidth: 772)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
@@ -912,6 +916,11 @@ enum ChatFeedItem: Identifiable {
     case thought(ChatItem)
     case toolGroup(id: UUID, tools: [ChatItem])
 
+    var isThought: Bool {
+        if case .thought = self { return true }
+        return false
+    }
+
     var id: UUID {
         switch self {
         case .user(let item): return item.id
@@ -970,12 +979,46 @@ private struct ChatGroupRow: View {
     }
 }
 
-private struct UserMessageView: View {
-    let item: ChatItem
+/// Hover-revealed button that copies a whole message.
+private struct MessageCopyButton: View {
+    let text: String
+    let isVisible: Bool
+    @State private var copied = false
 
     var body: some View {
-        HStack {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
+            }
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(AppFont.sans(10.5))
+                .foregroundStyle(Palette.muted)
+                .padding(.horizontal, 6)
+                .frame(height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Copy message")
+        .accessibilityLabel(copied ? "Copied" : "Copy message")
+        // Kept in the layout so revealing it never shifts the feed, and
+        // left reachable for VoiceOver and keyboard users while hidden.
+        .opacity(isVisible || copied ? 1 : 0)
+    }
+}
+
+private struct UserMessageView: View {
+    let item: ChatItem
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 4) {
             Spacer(minLength: 64)
+            MessageCopyButton(text: item.text, isVisible: isHovering)
             Text(item.text)
                 .font(AppFont.message(13.5))
                 .lineSpacing(3.5)
@@ -987,11 +1030,13 @@ private struct UserMessageView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.rule, lineWidth: 1))
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .onHover { isHovering = $0 }
     }
 }
 
 private struct AssistantMessageView: View {
     let item: ChatItem
+    @State private var isHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -999,8 +1044,11 @@ private struct AssistantMessageView: View {
                 .font(AppFont.body(13.5))
                 .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            MessageCopyButton(text: item.text, isVisible: isHovering)
+                .padding(.leading, -6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -1571,6 +1619,11 @@ private struct PlanProgressView: View {
 private struct PermissionView: View {
     let prompt: PermissionPrompt
     let resolve: (String?) -> Void
+    /// Allow buttons stay disabled briefly after the sheet opens, so a
+    /// Return typed for the composer cannot approve a call that appeared
+    /// mid-keystroke. Declining is always available.
+    @State private var isArmed = false
+    static let armDelay: Duration = .milliseconds(500)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1615,6 +1668,7 @@ private struct PermissionView: View {
                     Button("Allow") { resolve("allow_once") }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
+                        .disabled(!isArmed)
                 } else {
                     ForEach(prompt.orderedOptions, id: \.id) { option in
                         optionButton(option)
@@ -1625,6 +1679,11 @@ private struct PermissionView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: prompt.id) {
+            isArmed = false
+            try? await Task.sleep(for: Self.armDelay)
+            isArmed = true
+        }
     }
 
     @ViewBuilder
@@ -1634,10 +1693,15 @@ private struct PermissionView: View {
             Button(option.name) { resolve(option.id) }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .disabled(!isArmed)
         case "reject_once":
             Button(option.name) { resolve(option.id) }
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.cancelAction)
+        case "allow_always":
+            Button(option.name) { resolve(option.id) }
+                .buttonStyle(.bordered)
+                .disabled(!isArmed)
         default:
             Button(option.name) { resolve(option.id) }
                 .buttonStyle(.bordered)

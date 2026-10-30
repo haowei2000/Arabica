@@ -653,11 +653,6 @@ fn print_tool(transcript: &mut Transcript, text: &str) {
     print_block(transcript, text, theme::tool())
 }
 
-/// A finished tool status line (green ✓).
-fn print_tool_ok(transcript: &mut Transcript, text: &str) {
-    print_block(transcript, text, theme::tool_ok())
-}
-
 /// Results and products: completions, file summaries, command output.
 fn print_artifact(transcript: &mut Transcript, text: &str) {
     print_block(transcript, text, theme::artifact())
@@ -695,8 +690,25 @@ fn print_user(transcript: &mut Transcript, text: &str) {
 // Folded tool rendering (pure, unit-testable)
 // ---------------------------------------------------------------------------
 
+/// Tools whose arguments `tool_summary` names explicitly; any other tool
+/// falls back to a truncated JSON preview.
+pub(crate) fn summarizes_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "write_file"
+            | "read_file"
+            | "delete_file"
+            | "list_dir"
+            | "edit_files"
+            | "grep"
+            | "find_files"
+            | "shell"
+            | "memory_search"
+    )
+}
+
 /// One-line summary of a tool call: what it acts on, not the full JSON.
-fn tool_summary(name: &str, arguments: &serde_json::Value) -> String {
+pub(crate) fn tool_summary(name: &str, arguments: &serde_json::Value) -> String {
     let path = || {
         arguments
             .get("path")
@@ -863,6 +875,69 @@ struct CompletionView {
     replace_end: usize,
     candidates: Vec<String>,
     selected: usize,
+}
+
+impl CompletionView {
+    /// True when the token under completion is already one of the
+    /// candidates (`/session` while `/sessions` is also offered): Enter then
+    /// submits it instead of accepting the highlighted candidate.
+    fn token_is_complete(&self, input: &str) -> bool {
+        let end = self.replace_end.min(input.len()).max(self.replace_start);
+        let token = &input[self.replace_start..end];
+        self.candidates.iter().any(|candidate| candidate == token)
+    }
+}
+
+/// The candidates that fit in `width` columns, scrolled so the selected one
+/// stays visible, with `…` marking candidates cut off on either side.
+fn completion_spans(completion: &CompletionView, width: usize) -> Vec<Span<'static>> {
+    let label = |index: usize| {
+        if index == completion.selected {
+            format!(" [{}] ", completion.candidates[index])
+        } else {
+            format!(" {} ", completion.candidates[index])
+        }
+    };
+    let widths: Vec<usize> = (0..completion.candidates.len())
+        .map(|index| UnicodeWidthStr::width(label(index).as_str()))
+        .collect();
+    // Grow a window around the selection, reserving room for both markers.
+    let budget = width.saturating_sub(2);
+    let selected = completion.selected.min(widths.len().saturating_sub(1));
+    let (mut start, mut end) = (selected, selected + 1);
+    let mut used = widths.get(selected).copied().unwrap_or(0);
+    loop {
+        let mut grew = false;
+        if end < widths.len() && used + widths[end] <= budget {
+            used += widths[end];
+            end += 1;
+            grew = true;
+        }
+        if start > 0 && used + widths[start - 1] <= budget {
+            start -= 1;
+            used += widths[start];
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+    let mut spans = Vec::new();
+    if start > 0 {
+        spans.push(Span::styled("…".to_owned(), theme::muted()));
+    }
+    for index in start..end {
+        let style = if index == completion.selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            theme::muted()
+        };
+        spans.push(Span::styled(label(index), style));
+    }
+    if end < widths.len() {
+        spans.push(Span::styled("…".to_owned(), theme::muted()));
+    }
+    spans
 }
 
 /// An active case-insensitive substring search over the transcript.
@@ -1168,7 +1243,14 @@ struct App {
     /// (kitty keyboard protocol); otherwise only Ctrl+J/Alt+Enter insert a
     /// newline and the hint says so.
     keyboard_enhanced: bool,
+    /// When the pending permission chooser appeared. Decision keys are
+    /// ignored until `PERMISSION_ARM_DELAY` has passed, so keystrokes typed
+    /// for the queued draft cannot answer a prompt that opened mid-word.
+    permission_shown_at: Option<std::time::Instant>,
 }
+
+/// How long the permission chooser ignores decision keys after it opens.
+const PERMISSION_ARM_DELAY: Duration = Duration::from_millis(500);
 
 /// The permission chooser's options, in navigation order.
 const PERMISSION_OPTIONS: [&str; 4] = [
@@ -1208,6 +1290,7 @@ impl Default for App {
             permission_prompt: None,
             running_tool: None,
             keyboard_enhanced: false,
+            permission_shown_at: None,
         }
     }
 }
@@ -1820,7 +1903,6 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
             let hit_ranges: Vec<(usize, usize)> = search
                 .map(|search| display_hit_ranges(transcript, display_row, &search.query))
                 .unwrap_or_default();
-            let hit_style = Style::default().fg(Color::Black).bg(Color::Yellow);
             if !hit_ranges.is_empty() {
                 // Rebuild spans, splitting any span text at match boundaries
                 // so the hit substring gets the highlight style.
@@ -1847,9 +1929,11 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
                 push_plain_spans(&mut spans, &plain[consumed..], line);
                 let mut rebuilt = Line::from(spans);
                 rebuilt.style = line.style;
+                if highlighted {
+                    rebuilt.style = rebuilt.style.add_modifier(Modifier::REVERSED);
+                }
                 return rebuilt;
             }
-            let _ = hit_style;
             let mut row = paint_row(line);
             if highlighted {
                 row.style = row.style.add_modifier(Modifier::REVERSED);
@@ -1881,24 +1965,7 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     } else if let Some(tail_index) = tail_index
         && let Some(completion) = &app.completion
     {
-        let candidates = completion
-            .candidates
-            .iter()
-            .enumerate()
-            .map(|(index, candidate)| {
-                let label = if index == completion.selected {
-                    format!(" [{candidate}] ")
-                } else {
-                    format!(" {candidate} ")
-                };
-                let style = if index == completion.selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    theme::muted()
-                };
-                Span::styled(label, style)
-            })
-            .collect::<Vec<_>>();
+        let candidates = completion_spans(completion, sections[tail_index].width as usize);
         frame.render_widget(Paragraph::new(Line::from(candidates)), sections[tail_index]);
     } else if let Some(tail_index) = tail_index
         && app.busy
@@ -1987,7 +2054,7 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     frame.render_widget(Paragraph::new(editor_lines), input_area);
     let cursor_x = (input_area.x as usize + editor.cursor_column)
         .min(area.width.saturating_sub(1) as usize) as u16;
-    if input_area.height > 0 && !app.busy && app.permission_prompt.is_none() {
+    if input_area.height > 0 && app.permission_prompt.is_none() {
         let cursor_y = input_area.y + (editor.cursor_row - editor_start) as u16;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
@@ -1996,13 +2063,15 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
     if let Some(hints_index) = hints_index {
         let width = sections[hints_index].width;
         let hints = if app.permission_prompt.is_some() {
-            if width < 60 {
+            if width < 100 {
                 " ↑↓ choose · Enter confirm · Esc deny · Ctrl+C cancel"
             } else {
                 " ↑↓ choose · Enter confirm · y once · a session · n deny · v deny session · Esc deny · Ctrl+C cancel"
             }
         } else if app.completion.is_some() {
             " ↑↓ choose · Tab/Enter accept · Esc close"
+        } else if app.resume_pick {
+            " Enter a number or id prefix to resume · Esc cancel"
         } else if app.search.is_some() {
             " F3 next · Shift+F3 previous · Esc close"
         } else if app.highlighted.is_some() && !app.busy {
@@ -2040,15 +2109,17 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
         let search_status = app
             .search
             .as_ref()
-            .and_then(|search| {
+            .map(|search| {
                 let hits = search_hits(transcript, &search.query);
-                (!hits.is_empty()).then(|| {
+                if hits.is_empty() {
+                    " · no matches".to_owned()
+                } else {
                     format!(
                         " · {}/{}",
                         search.current.min(hits.len().saturating_sub(1)) + 1,
                         hits.len()
                     )
-                })
+                }
             })
             .unwrap_or_default();
         let queued_status = if app.queued.is_empty() {
@@ -2056,7 +2127,16 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
         } else {
             format!(" · {} queued", app.queued.len())
         };
-        let status = format!(" {}{search_status}{queued_status}{new_output}", app.status);
+        let verbose_status = if app.verbose { " · verbose" } else { "" };
+        let thinking_status = if app.show_thinking {
+            ""
+        } else {
+            " · thinking hidden"
+        };
+        let status = format!(
+            " {}{search_status}{queued_status}{verbose_status}{thinking_status}{new_output}",
+            app.status
+        );
         frame.render_widget(
             Paragraph::new(Line::styled(status, theme::muted())),
             sections[status_index],
@@ -2325,6 +2405,7 @@ async fn run_turn(
                 app.status = "Waiting for permission".to_owned();
                 app.permission_choice = 0;
                 app.permission_prompt = Some(format!("Permission for {}", request.call.name));
+                app.permission_shown_at = Some(std::time::Instant::now());
                 pending = Some(request);
                 draw(terminal, app, transcript)?;
             }
@@ -2332,6 +2413,9 @@ async fn run_turn(
                 let key = key?;
                 if pending.is_some() {
                     if let InputEvent::Key(key) = key && key.kind == KeyEventKind::Press {
+                        let armed = app
+                            .permission_shown_at
+                            .is_none_or(|shown| shown.elapsed() >= PERMISSION_ARM_DELAY);
                         let decision = match key.code {
                             KeyCode::PageUp | KeyCode::PageDown => {
                                 let pane_rows = LAST_PANE_ROWS
@@ -2363,6 +2447,7 @@ async fn run_turn(
                                     (app.permission_choice + 1) % PERMISSION_OPTIONS.len();
                                 None
                             }
+                            KeyCode::Enter if !armed => None,
                             KeyCode::Enter => Some(match app.permission_choice {
                                 1 => PermissionDecision::allow_for_session(),
                                 2 => PermissionDecision::deny_once(),
@@ -2373,17 +2458,24 @@ async fn run_turn(
                                 },
                                 _ => PermissionDecision::allow_once(),
                             }),
+                            // Esc only denies, so it stays live while unarmed.
+                            KeyCode::Esc => permission_decision(key),
+                            _ if !armed => None,
                             _ => permission_decision(key),
                         };
                         if let Some(decision) = decision {
                             let _ = pending.take().expect("permission pending").reply.send(decision);
                             app.permission_prompt = None;
+                            app.permission_shown_at = None;
                             app.permission_choice = 0;
                             app.status = "Working".to_owned();
                         } else if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                             let _ = pending.take().expect("permission pending").reply.send(PermissionDecision::deny_once());
                             app.permission_prompt = None;
+                            app.permission_shown_at = None;
+                            app.permission_choice = 0;
                             cancellation.cancel();
+                            app.status = "Cancelling".to_owned();
                         }
                     } else if let InputEvent::Mouse(mouse) = key {
                         use crossterm::event::MouseEventKind;
@@ -2420,9 +2512,6 @@ async fn run_turn(
                     {
                         cancellation.cancel();
                         app.status = "Cancelling".to_owned();
-                    } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL {
-                        app.verbose = !app.verbose;
-                        app.status = if app.verbose { "Verbose".to_owned() } else { "Working".to_owned() };
                     } else if key.kind == KeyEventKind::Press && app.completion.is_none()
                         && (matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
                             || (matches!(key.code, KeyCode::Up | KeyCode::Down)
@@ -2462,7 +2551,6 @@ async fn run_turn(
                                 app.scroll_anchor = None;
                                 app.new_output_baseline = None;
                                 app.highlighted = None;
-                                app.status = "Queued".to_owned();
                             }
                             EditorAction::None => {}
                             EditorAction::Exit => {}
@@ -2544,6 +2632,27 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
             EditorAction::None
         }
         InputEvent::Key(key) if key.kind == KeyEventKind::Press => match key {
+            // View toggles work both idle and mid-run; they apply to output
+            // printed after the toggle.
+            KeyEvent {
+                code: KeyCode::Char('o'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
+                app.verbose = !app.verbose;
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char('t'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
+                app.show_thinking = !app.show_thinking;
+                if !app.show_thinking {
+                    app.live_reasoning.clear();
+                }
+                EditorAction::None
+            }
             KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers,
@@ -2703,11 +2812,12 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 EditorAction::None
             }
             KeyEvent {
-                code: KeyCode::Enter | KeyCode::Tab,
+                code: code @ (KeyCode::Enter | KeyCode::Tab),
                 modifiers,
                 ..
-            } if app.completion.is_some()
-                && !modifiers.contains(KeyModifiers::SHIFT)
+            } if app.completion.as_ref().is_some_and(|completion| {
+                code == KeyCode::Tab || !completion.token_is_complete(&app.input)
+            }) && !modifiers.contains(KeyModifiers::SHIFT)
                 && !modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 app.apply_completion();
@@ -2738,6 +2848,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 ..
             } => {
                 let text = app.take_input();
+                app.completion = None;
                 EditorAction::Submit(text)
             }
             KeyEvent {
@@ -2836,6 +2947,11 @@ fn dismiss_temporary_state(app: &mut App) -> bool {
     if app.completion.take().is_some() {
         return true;
     }
+    if app.resume_pick {
+        app.resume_pick = false;
+        app.pick_entries = None;
+        return true;
+    }
     if app.search.take().is_some() {
         return true;
     }
@@ -2880,7 +2996,7 @@ fn command(
         "/help" => {
             print_dim(
                 transcript,
-                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /diff  /undo  /model [alias]  /policy [name]  /thinking [level]\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+End latest · Ctrl+O verbose · Ctrl+T thinking · @path mentions files\nHistory: PageUp/PageDown or mouse wheel scroll · click a block then Enter/c copies it · sending or queueing returns to latest\nPermission: Enter allows once by default · ↑↓ select · y/a allow once/session · n/v deny once/session · Esc denies once · Ctrl+C cancels the run",
+                "/help  /exit  /session  /sessions  /resume [id]  /find <text>  /context  /diff  /undo  /model [alias]  /policy [name]  /thinking [level]\nF3/Shift+F3 next/previous search result · Esc closes completion, search, then history selection · Ctrl+C clears the draft or exits when empty · Ctrl+D deletes forward or exits when empty · Ctrl+A/E line start/end · Ctrl+U/K delete to line edge · Ctrl+End latest · Ctrl+O verbose output · Ctrl+T show/hide thinking · @path mentions files\nHistory: PageUp/PageDown or mouse wheel scroll · click a block then Enter/c copies it · sending or queueing returns to latest\nPermission: Enter allows once by default · ↑↓ select · y/a allow once/session · n/v deny once/session · Esc denies once · Ctrl+C cancels the run · keys are ignored for a moment after a prompt opens",
             );
         }
         "/session" => {
@@ -2941,7 +3057,7 @@ fn command(
                         .join("\n");
                     print_dim(
                         transcript,
-                        &format!("{listing}\nresume: type a number or id prefix"),
+                        &format!("{listing}\nresume: type a number or id prefix (Esc cancels)"),
                     );
                     app.resume_pick = true;
                     app.pick_entries = Some(entries.into_iter().map(|entry| entry.id).collect());
@@ -2992,6 +3108,64 @@ fn command(
     false
 }
 
+/// How a line typed after a `/resume` listing resolves.
+#[derive(Debug, PartialEq, Eq)]
+enum ResumePick {
+    Found(String),
+    Ambiguous(String),
+    OutOfRange(usize),
+    /// Not a number and not an id prefix: ordinary input.
+    NotAPick,
+}
+
+fn resolve_resume_pick(ids: &[String], text: &str) -> ResumePick {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.starts_with('/') {
+        return ResumePick::NotAPick;
+    }
+    // A listed number wins; anything else is an id prefix first, since
+    // time-ordered ids start with digits ("0190…").
+    let number = trimmed.parse::<usize>().ok();
+    if let Some(id) = number
+        .and_then(|number| number.checked_sub(1))
+        .and_then(|index| ids.get(index))
+    {
+        return ResumePick::Found(id.clone());
+    }
+    let mut matches = ids.iter().filter(|id| id.starts_with(trimmed));
+    match (matches.next(), matches.next(), number) {
+        (Some(id), None, _) => ResumePick::Found(id.clone()),
+        (Some(_), Some(_), _) => ResumePick::Ambiguous(trimmed.to_owned()),
+        (None, _, Some(number)) => ResumePick::OutOfRange(number),
+        (None, _, None) => ResumePick::NotAPick,
+    }
+}
+
+/// Replaces the session with `id`, keeping the terminal capabilities and
+/// view toggles of the current app state.
+async fn switch_session(
+    session: &mut InteractiveSession,
+    app: &mut App,
+    transcript: &mut Transcript,
+    id: &str,
+) {
+    match session.switch_to(id).await {
+        Ok(next_session) => {
+            *session = next_session;
+            let mut next = App::new(session);
+            next.keyboard_enhanced = app.keyboard_enhanced;
+            next.verbose = app.verbose;
+            next.show_thinking = app.show_thinking;
+            next.file_index = Some(workspace_files(&session.runner_root));
+            *app = next;
+            transcript.clear();
+            print_tool(transcript, &format!("session: {}", session.session_id));
+            print_history(transcript, session);
+        }
+        Err(error) => print_error(transcript, &error.to_string()),
+    }
+}
+
 fn is_find_command(text: &str) -> bool {
     let Some(suffix) = text.strip_prefix("/find") else {
         return false;
@@ -3016,6 +3190,9 @@ fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
     let mut pending_text = String::new();
     let mut pending_reasoning_words = 0usize;
     let mut pending_reasoning = false;
+    // Running ⏺ lines by call id, flipped to ✓/✗ in place on completion
+    // exactly as the live view does.
+    let mut tool_blocks: BTreeMap<String, usize> = BTreeMap::new();
     for envelope in stored.events {
         match envelope.event {
             Event::MessageAccepted { content } => {
@@ -3052,7 +3229,10 @@ fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
                 pending_reasoning = true;
             }
             Event::ToolCallRequested {
-                name, arguments, ..
+                call_id,
+                name,
+                arguments,
+                ..
             } => {
                 if !pending_text.is_empty() {
                     let text = std::mem::take(&mut pending_text);
@@ -3070,12 +3250,24 @@ fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
                     transcript,
                     &format!("\u{23fa} {name} \u{b7} {}", tool_summary(&name, &arguments)),
                 );
+                tool_blocks.insert(call_id, transcript.blocks.len() - 1);
             }
-            Event::ToolCallCompleted { name, is_error, .. } => {
-                if is_error {
-                    print_error(transcript, &format!("\u{2717} {name}"));
+            Event::ToolCallCompleted {
+                call_id,
+                name,
+                is_error,
+                ..
+            } => {
+                let status_line = if is_error {
+                    Line::styled(format!("\u{2717} {name}"), theme::removed())
                 } else {
-                    print_tool_ok(transcript, &format!("\u{2713} {name}"));
+                    Line::styled(format!("\u{2713} {name}"), theme::tool_ok())
+                };
+                let flipped = tool_blocks
+                    .remove(&call_id)
+                    .is_some_and(|block| flip_tool_line(transcript, block, status_line.clone()));
+                if !flipped {
+                    transcript.push_block(vec![status_line]);
                 }
             }
             Event::ModelResponseCompleted { .. } => {
@@ -3338,34 +3530,67 @@ async fn run_inner_with_model_configs(
         };
         if let Some(text) = next {
             if app.resume_pick {
-                // Resolve the pending /resume selection.
-                app.resume_pick = false;
-                let ids = app.pick_entries.take().unwrap_or_default();
-                let trimmed = text.trim();
-                let id = if let Ok(number) = trimmed.parse::<usize>() {
-                    ids.get(number.saturating_sub(1)).cloned()
-                } else {
-                    ids.iter().find(|id| id.starts_with(trimmed)).cloned()
-                };
-                match id {
-                    Some(id) => match session.switch_to(&id).await {
-                        Ok(next_session) => {
-                            session = next_session;
-                            app = App::new(&session);
-                            transcript.clear();
-                            print_tool(
-                                &mut transcript,
-                                &format!("session: {}", session.session_id),
-                            );
-                            print_history(&mut transcript, &session);
-                        }
-                        Err(error) => {
-                            print_error(&mut transcript, &error.to_string());
-                        }
-                    },
-                    None => {
-                        print_error(&mut transcript, &format!("no session matches '{trimmed}'"));
+                // Resolve the pending /resume selection. Input that cannot
+                // be a pick (a command, or prose matching no session)
+                // cancels the pick and is handled as usual, so it is never
+                // swallowed.
+                let ids = app.pick_entries.clone().unwrap_or_default();
+                match resolve_resume_pick(&ids, &text) {
+                    ResumePick::Found(id) => {
+                        app.resume_pick = false;
+                        app.pick_entries = None;
+                        switch_session(&mut session, &mut app, &mut transcript, &id).await;
+                        draw(&mut terminal, &app, &transcript)?;
+                        continue;
                     }
+                    ResumePick::Ambiguous(prefix) => {
+                        print_error(
+                            &mut transcript,
+                            &format!(
+                                "'{prefix}' matches more than one session; type more of the id"
+                            ),
+                        );
+                        draw(&mut terminal, &app, &transcript)?;
+                        continue;
+                    }
+                    ResumePick::OutOfRange(number) => {
+                        print_error(
+                            &mut transcript,
+                            &format!("no session numbered {number}; pick 1-{}", ids.len()),
+                        );
+                        draw(&mut terminal, &app, &transcript)?;
+                        continue;
+                    }
+                    ResumePick::NotAPick => {
+                        app.resume_pick = false;
+                        app.pick_entries = None;
+                        print_dim(&mut transcript, "resume cancelled");
+                    }
+                }
+            }
+            if let Some(target) = text.strip_prefix("/resume ").map(str::trim)
+                && !target.is_empty()
+            {
+                match session.session_list_entries() {
+                    Ok(entries) => {
+                        let ids: Vec<String> = entries.into_iter().map(|entry| entry.id).collect();
+                        match resolve_resume_pick(&ids, target) {
+                            ResumePick::Found(id) => {
+                                switch_session(&mut session, &mut app, &mut transcript, &id).await;
+                            }
+                            ResumePick::Ambiguous(prefix) => print_error(
+                                &mut transcript,
+                                &format!(
+                                    "'{prefix}' matches more than one session; type more of the id"
+                                ),
+                            ),
+                            ResumePick::OutOfRange(_) | ResumePick::NotAPick => print_error(
+                                &mut transcript,
+                                &format!("no session matches '{target}' (see /sessions)"),
+                            ),
+                        }
+                    }
+                    Err(error) => print_error(&mut transcript, &error.to_string()),
                 }
                 draw(&mut terminal, &app, &transcript)?;
                 continue;
@@ -4182,5 +4407,123 @@ mod tests {
         app.step_search(&transcript, true);
         assert_eq!(app.scroll_offset_rows, 99);
         assert!(app.search.as_ref().is_some_and(|search| search.pinned));
+    }
+
+    #[test]
+    fn enter_submits_a_command_that_is_already_complete() {
+        let enter = || InputEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let tab = || InputEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let mut app = App::default();
+        app.insert("/session");
+        assert!(app.completion.is_some(), "/sessions is still offered");
+        assert!(matches!(
+            handle_editor(&mut app, enter()),
+            EditorAction::Submit(text) if text == "/session"
+        ));
+        assert!(app.completion.is_none());
+
+        // A partial token still completes on Enter, and Tab always does.
+        app.insert("/ses");
+        assert!(matches!(
+            handle_editor(&mut app, enter()),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "/session");
+        app.insert("s");
+        app.input = "/sessio".to_owned();
+        app.cursor = app.input.len();
+        app.refresh_completion();
+        assert!(matches!(handle_editor(&mut app, tab()), EditorAction::None));
+        assert!(app.input.starts_with("/session"));
+    }
+
+    #[test]
+    fn completion_row_keeps_the_selection_visible() {
+        let completion = CompletionView {
+            replace_start: 0,
+            replace_end: 1,
+            candidates: (0..30).map(|index| format!("@file{index:02}.rs")).collect(),
+            selected: 25,
+        };
+        let spans = completion_spans(&completion, 40);
+        let text: String = spans.iter().map(|span| span.content.as_ref()).collect();
+        assert!(text.contains("[@file25.rs]"), "{text}");
+        assert!(text.starts_with('…') && text.ends_with('…'), "{text}");
+        assert!(UnicodeWidthStr::width(text.as_str()) <= 40, "{text}");
+
+        let first = CompletionView {
+            selected: 0,
+            ..completion
+        };
+        let text: String = completion_spans(&first, 40)
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(text.starts_with(" [@file00.rs]"), "{text}");
+    }
+
+    #[test]
+    fn resume_pick_resolves_numbers_prefixes_and_ordinary_input() {
+        let ids = vec![
+            "0190aaaa".to_owned(),
+            "0190aabb".to_owned(),
+            "0191cccc".to_owned(),
+        ];
+        assert_eq!(
+            resolve_resume_pick(&ids, "2"),
+            ResumePick::Found("0190aabb".to_owned())
+        );
+        assert_eq!(resolve_resume_pick(&ids, "9"), ResumePick::OutOfRange(9));
+        // "0" is no listed number but prefixes every time-ordered id.
+        assert_eq!(
+            resolve_resume_pick(&ids, "0"),
+            ResumePick::Ambiguous("0".to_owned())
+        );
+        assert_eq!(
+            resolve_resume_pick(&ids, "0191"),
+            ResumePick::Found("0191cccc".to_owned())
+        );
+        assert_eq!(
+            resolve_resume_pick(&ids, "0190aa"),
+            ResumePick::Ambiguous("0190aa".to_owned())
+        );
+        assert_eq!(
+            resolve_resume_pick(&ids, "fix the tests"),
+            ResumePick::NotAPick
+        );
+        assert_eq!(resolve_resume_pick(&ids, "/help"), ResumePick::NotAPick);
+        assert_eq!(resolve_resume_pick(&ids, "  "), ResumePick::NotAPick);
+    }
+
+    #[test]
+    fn escape_cancels_a_pending_resume_pick() {
+        let mut app = App {
+            resume_pick: true,
+            pick_entries: Some(vec!["0190aaaa".to_owned()]),
+            ..Default::default()
+        };
+        assert!(dismiss_temporary_state(&mut app));
+        assert!(!app.resume_pick);
+        assert!(app.pick_entries.is_none());
+    }
+
+    #[test]
+    fn view_toggles_work_from_the_editor() {
+        let key = |ch| InputEvent::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL));
+        let mut app = App {
+            live_reasoning: "partial thought".to_owned(),
+            ..Default::default()
+        };
+        handle_editor(&mut app, key('o'));
+        assert!(app.verbose);
+        handle_editor(&mut app, key('t'));
+        assert!(!app.show_thinking);
+        assert!(
+            app.live_reasoning.is_empty(),
+            "hidden thinking stops streaming"
+        );
+        assert!(app.input.is_empty(), "toggles never type into the draft");
+        handle_editor(&mut app, key('t'));
+        assert!(app.show_thinking);
     }
 }
