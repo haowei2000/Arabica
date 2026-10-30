@@ -190,7 +190,7 @@ jobs:
       - name: Resolve Sparkle signing tools
         working-directory: apps/arabica-desktop
         run: swift package resolve
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: structure-*
           merge-multiple: true
@@ -258,7 +258,7 @@ jobs:
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
