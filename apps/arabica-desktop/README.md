@@ -55,8 +55,10 @@ WebP). Other files are sent as ACP resource links; the agent
 reads those through its workspace tools. Unsupported image formats and agents
 without image capability produce an error before the draft is cleared.
 Image bytes are retained in the local session history and sent to the configured
-provider with the conversation. Older conversation images follow the configured
-memory compaction policy.
+provider for the turn they were attached to, including its tool follow-ups.
+Later turns send a short note in their place instead of the bytes, so request
+size stays bounded; attach an image again to show it to the model in a later
+turn.
 
 Drag the sidebar divider to resize it, or double-click to reset its width.
 The sidebar uses a native `NSOutlineView`: workspace folders contain conversation

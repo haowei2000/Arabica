@@ -350,23 +350,44 @@ async fn run_two_prompt_turns(with_image: bool) {
     );
 
     if with_image {
-        // The image must appear exactly once on the initial call, tool follow-up,
-        // and next turn, even though the current input also has a canonical event.
+        // The image appears exactly once on its own turn's initial call and
+        // tool follow-up, even though the current input also has a canonical
+        // event. The next turn sends a note in its place, not the bytes.
         let requests = state.requests.lock().unwrap();
-        for request in requests.iter() {
-            let image_urls: Vec<_> = request["messages"]
+        let image_urls = |request: &serde_json::Value| -> Vec<serde_json::Value> {
+            request["messages"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .flat_map(|message| message["content"].as_array().into_iter().flatten())
                 .filter(|part| part["type"] == "image_url")
-                .collect();
-            assert_eq!(image_urls.len(), 1);
+                .cloned()
+                .collect()
+        };
+        for request in &requests[..2] {
+            let urls = image_urls(request);
+            assert_eq!(urls.len(), 1);
             assert_eq!(
-                image_urls[0]["image_url"]["url"],
+                urls[0]["image_url"]["url"],
                 format!("data:image/png;base64,{PNG}")
             );
         }
+        let next_turn = &requests[2];
+        assert!(
+            image_urls(next_turn).is_empty(),
+            "earlier images are not resent"
+        );
+        assert!(
+            next_turn["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| message["role"] == "user"
+                    && message["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("1 image attached here earlier"))),
+            "the earlier turn keeps a note that an image was attached"
+        );
         assert!(stored.events.iter().any(|envelope| matches!(
             &envelope.event, arabica_protocol::Event::MessageAccepted { images, .. }
                 if images.len() == 1 && images[0].data_base64 == PNG

@@ -4006,12 +4006,21 @@ pub fn compile_runtime_request(request: &ModelRunRequest, model: &str) -> Runtim
             ),
         )));
     }
+    // Earlier turns keep only a note in place of their images: resending
+    // every image on every turn grows each request without bound, and a
+    // few full-size images would push later requests past provider size
+    // limits for the rest of the session.
     items.extend(
         request
             .short_memory
             .iter()
             .filter(|entry| !matches!(&entry.item, ShortMemoryItem::MemoryPointer(_)))
-            .filter_map(|entry| memory_item_to_runtime_item(&entry.item)),
+            .filter_map(|entry| match &entry.item {
+                ShortMemoryItem::UserMessage { content, images } if !images.is_empty() => Some(
+                    RuntimeItem::Message(earlier_image_message(content, images.len())),
+                ),
+                item => memory_item_to_runtime_item(item),
+            }),
     );
     items.push(RuntimeItem::Message(user_input_message(
         &request.input,
@@ -4083,6 +4092,20 @@ fn user_input_message(content: &str, images: &[arabica_model::ImageInput]) -> Me
         .content
         .extend(images.iter().map(arabica_model::ImageInput::content_block));
     message
+}
+
+/// A user message from an earlier turn whose images are no longer sent.
+fn earlier_image_message(content: &str, image_count: usize) -> MessageItem {
+    let note = format!(
+        "[{image_count} image{} attached here earlier; not resent. Ask the user to attach it again if you need to see it.]",
+        if image_count == 1 { "" } else { "s" }
+    );
+    let text = if content.is_empty() {
+        note
+    } else {
+        format!("{content}\n\n{note}")
+    };
+    MessageItem::text(RuntimeRole::User, text)
 }
 
 fn memory_item_to_runtime_item(item: &ShortMemoryItem) -> Option<RuntimeItem> {
@@ -4448,6 +4471,53 @@ mod tests {
             disclosure: DisclosureLevel::Detail,
         }
     }
+    #[test]
+    fn earlier_turn_images_become_a_note_and_the_current_turn_keeps_its_own() {
+        let image = arabica_model::ImageInput {
+            media_type: "image/png".to_owned(),
+            data_base64: "aGVsbG8=".to_owned(),
+        };
+        let mut request = sample_request();
+        request.short_memory = vec![ShortMemoryEntry {
+            source_event_ids: vec!["event-1".to_owned()],
+            sequence: 1,
+            item: ShortMemoryItem::UserMessage {
+                content: "what is in this picture?".to_owned(),
+                images: vec![image.clone(), image.clone()],
+            },
+        }];
+        request.images = vec![image];
+        let compiled = compile_runtime_request(&request, "model");
+        let inline_images = |message: &MessageItem| {
+            message
+                .content
+                .iter()
+                .filter(|block| matches!(block, ContentBlock::InlineData { .. }))
+                .count()
+        };
+        let user_messages: Vec<&MessageItem> = compiled
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                RuntimeItem::Message(message) if message.role == RuntimeRole::User => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(user_messages.len(), 2);
+        assert_eq!(inline_images(user_messages[0]), 0);
+        assert!(matches!(
+            &user_messages[0].content[..],
+            [ContentBlock::Text { text }]
+                if text.starts_with("what is in this picture?")
+                    && text.contains("2 images attached here earlier")
+        ));
+        assert_eq!(
+            inline_images(user_messages[1]),
+            1,
+            "the current turn's image is sent"
+        );
+    }
+
     #[test]
     fn image_messages_encode_for_all_supported_provider_apis() {
         let mut request = sample_request();

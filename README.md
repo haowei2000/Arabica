@@ -376,5 +376,5 @@ Image generation and editing are not built-in tools.
 The `message.send` payload and `message.accepted` event accept an optional
 `images` array of `{ "media_type": "image/png", "data_base64": "..." }` objects.
 Omitting it retains the existing text-only wire format. Image bytes are persisted
-with the session and sent to the configured provider; older images follow the
-session's memory compaction policy.
+with the session and sent to the configured provider for their own turn only;
+later requests replace them with a short note so request size stays bounded.
