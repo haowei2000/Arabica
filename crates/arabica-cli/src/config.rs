@@ -57,7 +57,42 @@ struct UserConfig {
     evaluation: Option<toml::Value>,
     #[serde(default)]
     permissions: Option<UserPermissions>,
+    #[serde(default)]
+    runners: BTreeMap<String, UserRunner>,
 }
+
+/// A remote runner reached over the Loop–Runner Protocol, selected with
+/// `--runner <name>`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserRunner {
+    url: String,
+    workspace: String,
+    ca_cert: PathBuf,
+    client_cert: PathBuf,
+    client_key: PathBuf,
+    server_name: Option<String>,
+    runner_id: Option<String>,
+    call_timeout_secs: Option<u64>,
+}
+
+/// A configured remote runner, with certificate paths resolved against
+/// ARABICA_HOME.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteRunnerSettings {
+    pub url: url::Url,
+    pub workspace: String,
+    pub ca_cert: PathBuf,
+    pub client_cert: PathBuf,
+    pub client_key: PathBuf,
+    pub server_name: Option<String>,
+    pub runner_id: Option<String>,
+    pub call_timeout_secs: u64,
+}
+
+/// Default per-call deadline for a remote runner: longer than the local
+/// shell timeout so the runner's own limit reports first.
+pub const DEFAULT_REMOTE_CALL_TIMEOUT_SECS: u64 = 900;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -879,6 +914,56 @@ pub fn user_config_blend_policies(
         crate::host::process_environment,
     )?;
     Ok(resolved.blend_policies)
+}
+
+/// The remote runner named `name` in the user config file.
+pub fn user_config_runner(
+    home: &Path,
+    name: &str,
+) -> Result<RemoteRunnerSettings, Box<dyn std::error::Error>> {
+    let mut config = read_user_config(home)?;
+    let Some(runner) = config.runners.remove(name) else {
+        let known: Vec<&str> = config.runners.keys().map(String::as_str).collect();
+        return Err(if known.is_empty() {
+            format!(
+                "no [runners.{name}] table in {}",
+                user_config_path(home).display()
+            )
+            .into()
+        } else {
+            format!("unknown runner {name:?}; configured: {}", known.join(", ")).into()
+        });
+    };
+    let url = url::Url::parse(&runner.url)
+        .map_err(|_| format!("runners.{name}.url is not a valid URL"))?;
+    if url.scheme() != "wss" {
+        return Err(format!("runners.{name}.url must use wss://").into());
+    }
+    if runner.workspace.trim().is_empty() {
+        return Err(format!("runners.{name}.workspace must not be empty").into());
+    }
+    if runner.call_timeout_secs == Some(0) {
+        return Err(format!("runners.{name}.call_timeout_secs must be positive").into());
+    }
+    let resolve = |path: PathBuf| {
+        if path.is_absolute() {
+            path
+        } else {
+            home.join(path)
+        }
+    };
+    Ok(RemoteRunnerSettings {
+        url,
+        workspace: runner.workspace,
+        ca_cert: resolve(runner.ca_cert),
+        client_cert: resolve(runner.client_cert),
+        client_key: resolve(runner.client_key),
+        server_name: runner.server_name,
+        runner_id: runner.runner_id,
+        call_timeout_secs: runner
+            .call_timeout_secs
+            .unwrap_or(DEFAULT_REMOTE_CALL_TIMEOUT_SECS),
+    })
 }
 
 /// Relative skill roots resolve against ARABICA_HOME, never the model's input.

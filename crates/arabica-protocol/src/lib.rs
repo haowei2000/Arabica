@@ -10,6 +10,8 @@ pub use trace::*;
 mod context;
 pub use context::*;
 
+pub mod lrp;
+
 use arabica_model::{
     FinishReason, ProviderResponseState, ProviderState, RuntimeItem, RuntimeRequest, RuntimeUsage,
 };

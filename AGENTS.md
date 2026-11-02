@@ -22,6 +22,7 @@ single experiment package; do not reintroduce a parallel implementation.
 - `crates/arabica-protocol`: canonical commands, events, IDs, and schema
 - `crates/arabica-provider`: model-provider boundary
 - `crates/arabica-runner`: tool execution boundary
+- `crates/arabica-runner-remote`: Loop–Runner Protocol transport (`RemoteRunner`, `RunnerHost`)
 - `crates/arabica-runtime`: orchestration and memory policies
 - `crates/arabica-session`: session lifecycle, history, sequencing, and persistence ports
 - `crates/arabica-adapters`: persistence adapters implementing the session ports (SQLite session store with legacy JSONL import)

@@ -284,11 +284,22 @@ fn message_chunks(content: &[arabica_model::ContentBlock]) -> Vec<ContentBlock> 
         .collect()
 }
 
-/// `pub(super)`: `mod.rs`'s `session/load` handler reuses this to turn a
-/// restored session's stored history into the same `session/update`
-/// notifications a live `session/prompt` would have produced, so a client
-/// sees identical updates whether it watched a turn happen or loaded it
-/// after the fact.
+/// Replay includes user messages that clients already display locally during
+/// live prompts. Keep those echoes out of the live observer's update stream.
+pub(super) fn replay_updates_for(
+    event: &Event,
+    run_id: &Option<arabica_protocol::RunId>,
+    workspace_root: &Path,
+) -> Vec<SessionUpdate> {
+    if let Event::MessageAccepted { content } = event {
+        return vec![SessionUpdate::UserMessageChunk(ContentChunk::new(
+            ContentBlock::from(content.as_str()),
+        ))];
+    }
+    updates_for(event, run_id, workspace_root)
+}
+
+/// Map runtime events to live `session/update` notifications.
 pub(super) fn updates_for(
     event: &Event,
     run_id: &Option<arabica_protocol::RunId>,
@@ -489,6 +500,24 @@ fn in_progress(run_id: &Option<arabica_protocol::RunId>, call_id: &str) -> Sessi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_messages_are_replayed_without_echoing_live_prompts() {
+        let content = "First line\n\nSecond line: café ☕";
+        let event = Event::MessageAccepted {
+            content: content.to_owned(),
+        };
+        let updates = replay_updates_for(&event, &None, Path::new("/workspace"));
+        assert_eq!(updates.len(), 1);
+        let SessionUpdate::UserMessageChunk(chunk) = &updates[0] else {
+            panic!("expected a user message chunk");
+        };
+        let ContentBlock::Text(text) = &chunk.content else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.text, content);
+        assert!(updates_for(&event, &None, Path::new("/workspace")).is_empty());
+    }
 
     #[test]
     fn calls_left_open_when_a_run_ends_are_reported_failed() {
