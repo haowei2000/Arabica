@@ -776,7 +776,10 @@ impl InteractiveSession {
         let envelope = CommandEnvelope::new(
             CommandId::new(uuid::Uuid::now_v7().to_string()),
             Some(self.session_id.clone()),
-            Command::MessageSend { content: text },
+            Command::MessageSend {
+                images: Vec::new(),
+                content: text,
+            },
         );
         let dispatch = self.manager.dispatch(envelope, control);
         tokio::pin!(dispatch);

@@ -1695,14 +1695,14 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
     ) -> Result<(), RuntimeError> {
         self.session_ref(session_id)?;
         match command {
-            Command::MessageSend { content } => {
+            Command::MessageSend { content, images } => {
                 let run_id = run_id.ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorKind::MissingRunId,
                         "message.send requires a scheduled run identifier",
                     )
                 })?;
-                if content.trim().is_empty() {
+                if content.trim().is_empty() && images.is_empty() {
                     return Err(RuntimeError::new(
                         RuntimeErrorKind::InvalidInput,
                         "message.send content must not be empty",
@@ -1716,12 +1716,24 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         "HistoryProjection::ExactTranscript cannot be combined with a compaction strategy other than Disabled",
                     ));
                 }
+                if images.len() > arabica_model::ImageInput::MAX_IMAGES {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidInput,
+                        "At most 4 images are allowed per message",
+                    ));
+                }
+                for image in images {
+                    image.validate().map_err(|message| {
+                        RuntimeError::new(RuntimeErrorKind::InvalidInput, message)
+                    })?;
+                }
                 let (workspace_id, disclosure) = {
                     let session = self.session_ref(session_id)?;
                     (session.workspace_id.clone(), session.disclosure)
                 };
                 event_log.append(Event::RunStarted);
                 event_log.append(Event::MessageAccepted {
+                    images: images.clone(),
                     content: content.clone(),
                 });
                 // A run keeps one immutable routing recipe even if the host
@@ -1953,6 +1965,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         completion_required,
                     );
                     let request = ModelRunRequest {
+                        images: images.clone(),
                         session_id: session_id.clone(),
                         run_id: run_id.clone(),
                         input: content.clone(),
@@ -5418,6 +5431,7 @@ mod tests {
     ) -> Vec<Event> {
         let mut event_log = TestEventLog::new(&[], session_id, Some(run_id));
         let command = Command::MessageSend {
+            images: Vec::new(),
             content: "do the task".to_owned(),
         };
         let run = RuntimeEngine::handle_with_control(
@@ -5756,6 +5770,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "do the task".to_owned(),
             },
         )
@@ -6175,6 +6190,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "do the task".to_owned(),
             },
         )
@@ -6479,6 +6495,7 @@ mod tests {
             Some(&RunId::new("context-run")),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "hello".into(),
             },
         )
@@ -6602,6 +6619,7 @@ mod tests {
             Some(&RunId::new("run-1")),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "review".into(),
             },
         )
@@ -6740,6 +6758,7 @@ mod tests {
                 Some(&RunId::new(run)),
                 &[],
                 &Command::MessageSend {
+                    images: Vec::new(),
                     content: "review".into(),
                 },
             )
@@ -6793,6 +6812,7 @@ mod tests {
             Some(&RunId::new("run-1")),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "first".into(),
             },
         )
@@ -6815,6 +6835,7 @@ mod tests {
             Some(&RunId::new("run-2")),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "second".into(),
             },
         )
@@ -6935,6 +6956,7 @@ mod tests {
             Some(&RunId::new("run-1")),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "hello".into(),
             },
         )
@@ -6983,6 +7005,7 @@ mod tests {
             Some(&RunId::new("context-run")),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "hello".into(),
             },
         )
@@ -7007,6 +7030,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "hello".to_owned(),
             },
         )
@@ -7057,6 +7081,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "complete the task".to_owned(),
             },
         )
@@ -7107,6 +7132,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "validate and finish".to_owned(),
             },
         )
@@ -7175,6 +7201,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "validate and finish".to_owned(),
             },
         )
@@ -7247,6 +7274,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "validate and finish".to_owned(),
             },
         )
@@ -7308,6 +7336,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "validate and finish".to_owned(),
             },
         )
@@ -7365,6 +7394,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "validate and finish".to_owned(),
             },
         )
@@ -7413,6 +7443,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "validate and finish".to_owned(),
             },
         )
@@ -7461,6 +7492,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "finish without validation".to_owned(),
             },
         )
@@ -7536,6 +7568,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "run".to_owned(),
             },
         )
@@ -7680,6 +7713,7 @@ mod tests {
         let history = vec![history_event(
             1,
             Event::MessageAccepted {
+                images: Vec::new(),
                 content: "earlier".to_owned(),
             },
         )];
@@ -7689,6 +7723,7 @@ mod tests {
             Some(&run_id),
             &history,
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "continue".to_owned(),
             },
         )
@@ -7714,6 +7749,7 @@ mod tests {
                 source_event_ids: vec!["event-1".to_owned()],
                 sequence: 1,
                 item: ShortMemoryItem::UserMessage {
+                    images: Vec::new(),
                     content: "earlier".to_owned(),
                 },
             }]
@@ -7805,6 +7841,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "run".to_owned(),
             },
         )
@@ -7938,6 +7975,7 @@ mod tests {
                 Some(&run_id),
                 &[],
                 &Command::MessageSend {
+                    images: Vec::new(),
                     content: "run validation".to_owned(),
                 },
             )
@@ -8051,6 +8089,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "inspect forever".to_owned(),
             },
         )
@@ -8222,6 +8261,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "recover validation and finish".to_owned(),
             },
         )
@@ -8421,6 +8461,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "complete the task".to_owned(),
             },
         )
@@ -8599,6 +8640,7 @@ mod tests {
             &run_1,
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "write note.txt".to_owned(),
             },
         )
@@ -8609,6 +8651,7 @@ mod tests {
             &run_2,
             &first,
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "what changed?".to_owned(),
             },
         )
@@ -8726,6 +8769,7 @@ mod tests {
             &run_1,
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "please update note.txt".to_owned(),
             },
         )
@@ -8737,6 +8781,7 @@ mod tests {
             &run_2,
             &turn_one_history,
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "thanks, what did you change".to_owned(),
             },
         )
@@ -8792,6 +8837,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "do the task".to_owned(),
             },
         )
@@ -9314,6 +9360,7 @@ mod tests {
                 Some(&RunId::new("run-1")),
                 &[],
                 &Command::MessageSend {
+                    images: Vec::new(),
                     content: "hello".to_owned(),
                 },
             ),
@@ -9405,6 +9452,7 @@ mod tests {
             Some(&RunId::new("run-1")),
             &mut first,
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "first".to_owned(),
             },
         )
@@ -9443,6 +9491,7 @@ mod tests {
             Some(&RunId::new("run-2")),
             &mut second,
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "second".to_owned(),
             },
         )
@@ -10384,6 +10433,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "recover the evidence".to_owned(),
             },
         )
@@ -10464,6 +10514,7 @@ mod tests {
             Some(&run_id),
             &[],
             &Command::MessageSend {
+                images: Vec::new(),
                 content: "run".to_owned(),
             },
         )

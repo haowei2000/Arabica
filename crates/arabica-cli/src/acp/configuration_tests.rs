@@ -204,6 +204,7 @@ async fn soe_prompt_with_tools_reaches_only_the_selected_model() {
                 CommandId::new(uuid::Uuid::now_v7().to_string()),
                 Some(entry.arabica_session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "Answer briefly.".to_owned(),
                 },
             ),

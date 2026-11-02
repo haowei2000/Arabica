@@ -16,6 +16,45 @@ pub enum RuntimeRole {
     Assistant,
 }
 
+/// An image supplied by the user, retained with its canonical message.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct ImageInput {
+    pub media_type: String,
+    pub data_base64: String,
+}
+
+impl ImageInput {
+    pub const MAX_BYTES: usize = 5 * 1024 * 1024;
+    pub const MAX_IMAGES: usize = 4;
+
+    pub fn validate(&self) -> Result<(), String> {
+        use base64::Engine;
+        if !matches!(
+            self.media_type.as_str(),
+            "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+        ) {
+            return Err("Images must be PNG, JPEG, WebP, or GIF".to_owned());
+        }
+        if self.data_base64.len() > Self::MAX_BYTES.div_ceil(3) * 4 {
+            return Err("Each image must be at most 5 MiB".to_owned());
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&self.data_base64)
+            .map_err(|_| "Image data must be valid base64".to_owned())?;
+        if bytes.is_empty() || bytes.len() > Self::MAX_BYTES {
+            return Err("Images must contain between 1 byte and 5 MiB".to_owned());
+        }
+        Ok(())
+    }
+
+    pub fn content_block(&self) -> ContentBlock {
+        ContentBlock::InlineData {
+            media_type: self.media_type.clone(),
+            data_base64: self.data_base64.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ContentBlock {
@@ -179,6 +218,8 @@ pub struct MemoryPointer {
 pub enum ShortMemoryItem {
     UserMessage {
         content: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageInput>,
     },
     AssistantMessage {
         content: String,
@@ -359,5 +400,33 @@ mod tests {
 
         assert_eq!(request.items.len(), 1);
         assert_eq!(request.tools[0].name, "write_file");
+    }
+}
+
+#[cfg(test)]
+mod image_input_tests {
+    use super::ImageInput;
+    use base64::Engine;
+
+    #[test]
+    fn image_input_enforces_decoded_size_and_media_type() {
+        let image = |bytes: &[u8]| ImageInput {
+            media_type: "image/png".into(),
+            data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        };
+        assert!(image(&[1]).validate().is_ok());
+        assert!(image(&[]).validate().is_err());
+        assert!(image(&vec![0; ImageInput::MAX_BYTES]).validate().is_ok());
+        assert!(
+            image(&vec![0; ImageInput::MAX_BYTES + 1])
+                .validate()
+                .is_err()
+        );
+        let mut invalid = image(&[1]);
+        invalid.media_type = "image/svg+xml".into();
+        assert!(invalid.validate().is_err());
+        invalid.media_type = "image/png".into();
+        invalid.data_base64 = "bad!".into();
+        assert!(invalid.validate().is_err());
     }
 }

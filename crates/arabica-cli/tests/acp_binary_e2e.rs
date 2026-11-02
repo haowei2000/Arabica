@@ -163,6 +163,16 @@ fn temp_dir(label: &str) -> PathBuf {
 
 #[tokio::test]
 async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_real() {
+    run_two_prompt_turns(false).await;
+}
+
+#[tokio::test]
+async fn image_input_survives_tool_continuation_next_turn_and_persistence() {
+    run_two_prompt_turns(true).await;
+}
+
+async fn run_two_prompt_turns(with_image: bool) {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
     let state = MockState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -241,19 +251,25 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async move |cx| {
-            cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
+            let initialized = cx
+                .send_request(InitializeRequest::new(ProtocolVersion::V1))
                 .block_task()
                 .await?;
+            assert!(initialized.agent_capabilities.prompt_capabilities.image);
             let session = cx
                 .send_request(NewSessionRequest::new(workspace_for_client))
                 .block_task()
                 .await?;
             let session_id = session.session_id.to_string();
+            let mut prompt = vec![ContentBlock::from("create note.txt with some content")];
+            if with_image {
+                prompt.clear();
+                prompt.push(ContentBlock::Image(
+                    agent_client_protocol::schema::v1::ImageContent::new(PNG, "image/png"),
+                ));
+            }
             let first = cx
-                .send_request(PromptRequest::new(
-                    session.session_id.clone(),
-                    vec![ContentBlock::from("create note.txt with some content")],
-                ))
+                .send_request(PromptRequest::new(session.session_id.clone(), prompt))
                 .block_task()
                 .await?;
             let second = cx
@@ -332,6 +348,51 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
         "two prompt turns, one with a tool call, must persist more than a handful of events, got {}",
         stored.events.len()
     );
+
+    if with_image {
+        // The image appears exactly once on its own turn's initial call and
+        // tool follow-up, even though the current input also has a canonical
+        // event. The next turn sends a note in its place, not the bytes.
+        let requests = state.requests.lock().unwrap();
+        let image_urls = |request: &serde_json::Value| -> Vec<serde_json::Value> {
+            request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|message| message["content"].as_array().into_iter().flatten())
+                .filter(|part| part["type"] == "image_url")
+                .cloned()
+                .collect()
+        };
+        for request in &requests[..2] {
+            let urls = image_urls(request);
+            assert_eq!(urls.len(), 1);
+            assert_eq!(
+                urls[0]["image_url"]["url"],
+                format!("data:image/png;base64,{PNG}")
+            );
+        }
+        let next_turn = &requests[2];
+        assert!(
+            image_urls(next_turn).is_empty(),
+            "earlier images are not resent"
+        );
+        assert!(
+            next_turn["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| message["role"] == "user"
+                    && message["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("1 image attached here earlier"))),
+            "the earlier turn keeps a note that an image was attached"
+        );
+        assert!(stored.events.iter().any(|envelope| matches!(
+            &envelope.event, arabica_protocol::Event::MessageAccepted { images, .. }
+                if images.len() == 1 && images[0].data_base64 == PNG
+        )));
+    }
 
     std::fs::remove_dir_all(&workspace_root).ok();
     std::fs::remove_dir_all(&arabica_home).ok();

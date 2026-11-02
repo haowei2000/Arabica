@@ -95,7 +95,7 @@ fn connect(home: &Path) -> Result<Connection, StoreError> {
 
 fn title_for(event: &Event) -> Option<String> {
     match event {
-        Event::MessageAccepted { content } => {
+        Event::MessageAccepted { content, .. } => {
             let title = content
                 .split_whitespace()
                 .collect::<Vec<_>>()
@@ -582,6 +582,7 @@ mod tests {
         let second = event(
             2,
             Event::MessageAccepted {
+                images: Vec::new(),
                 content: "  hello\nworld  ".to_owned(),
             },
         );
@@ -603,6 +604,7 @@ mod tests {
                 &event(
                     3,
                     Event::MessageAccepted {
+                        images: Vec::new(),
                         content: "later message".to_owned(),
                     },
                 ),
@@ -635,6 +637,7 @@ mod tests {
             &event(
                 2,
                 Event::MessageAccepted {
+                    images: Vec::new(),
                     content: "Legacy title".to_owned(),
                 },
             ),
@@ -687,6 +690,7 @@ mod tests {
                     &event(
                         1,
                         Event::MessageAccepted {
+                            images: Vec::new(),
                             content: "Should roll back".to_owned()
                         }
                     ),

@@ -591,7 +591,7 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     observer,
                 ))
             }
-            Command::MessageSend { content } => {
+            Command::MessageSend { content, images } => {
                 let session_id = self.require_session_id(envelope.session_id.as_ref())?;
                 self.require_active(&session_id)?;
                 let run_id = self.allocate_run_id();
@@ -614,7 +614,7 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .runs
                     .insert(run_id.clone(), RunStatus::Running);
 
-                let runtime_command = Command::MessageSend { content };
+                let runtime_command = Command::MessageSend { content, images };
                 let runtime = &mut self.runtime;
                 let session = self
                     .sessions
@@ -1152,6 +1152,7 @@ mod tests {
                 "command-2",
                 Some(session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "hello".to_owned(),
                 },
             ))
@@ -1197,6 +1198,7 @@ mod tests {
                 "command-2",
                 Some(session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "hello".to_owned(),
                 },
             ))
@@ -1309,6 +1311,7 @@ mod tests {
                 "first-message",
                 Some(source_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "first".to_owned(),
                 },
             ))
@@ -1331,6 +1334,7 @@ mod tests {
                 "second-message",
                 Some(target_id),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "second".to_owned(),
                 },
             ))
@@ -1345,11 +1349,11 @@ mod tests {
             .expect("runner request exists");
         assert!(request.short_memory.iter().any(|entry| matches!(
             &entry.item,
-            ShortMemoryItem::UserMessage { content } if content == "first"
+            ShortMemoryItem::UserMessage { content, .. } if content == "first"
         )));
         assert!(!request.short_memory.iter().any(|entry| matches!(
             &entry.item,
-            ShortMemoryItem::UserMessage { content } if content == "second"
+            ShortMemoryItem::UserMessage { content, .. } if content == "second"
         )));
     }
 
@@ -1393,6 +1397,7 @@ mod tests {
                 "message",
                 Some(session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "done".to_owned(),
                 },
             ))
@@ -1519,6 +1524,7 @@ mod tests {
                 "message-after-close",
                 Some(session_id),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "blocked".to_owned(),
                 },
             ))
@@ -1605,6 +1611,7 @@ mod tests {
                 "message",
                 Some(session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "hello".to_owned(),
                 },
             ))
@@ -1632,6 +1639,7 @@ mod tests {
                     "message",
                     Some(session_id),
                     Command::MessageSend {
+                        images: Vec::new(),
                         content: "hello".to_owned(),
                     },
                 ),
@@ -1683,6 +1691,7 @@ mod tests {
                     "message",
                     Some(session_id),
                     Command::MessageSend {
+                        images: Vec::new(),
                         content: "hi".to_owned(),
                     },
                 ),
@@ -1787,6 +1796,7 @@ mod tests {
                 "message",
                 Some(session_id),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: "hang".to_owned(),
                 },
             ),
@@ -1923,6 +1933,7 @@ mod tests {
                     "message",
                     Some(session_id),
                     Command::MessageSend {
+                        images: Vec::new(),
                         content: "run shell".to_owned(),
                     },
                 ),

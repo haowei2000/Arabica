@@ -33,11 +33,11 @@ use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
     Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
     ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, ResumeSessionRequest,
-    ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
-    SessionConfigOptionCategory, SessionConfigSelectOption, SessionId as AcpSessionId, SessionInfo,
-    SessionListCapabilities, SessionNotification, SessionResumeCapabilities,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+    NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
+    ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
+    SessionId as AcpSessionId, SessionInfo, SessionListCapabilities, SessionNotification,
+    SessionResumeCapabilities, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult,
@@ -639,7 +639,8 @@ impl AcpState {
             .iter()
             .chain(restore_report.repaired_events.iter())
         {
-            let mut updates = mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd);
+            let mut updates =
+                mapping::replay_updates_for(&envelope.event, &envelope.run_id, &request.cwd);
             updates.extend(open_calls.track(&envelope.event, &envelope.run_id));
             for update in updates {
                 if let Err(error) = connection
@@ -1127,6 +1128,7 @@ async fn serve(
                     InitializeResponse::new(ProtocolVersion::V1)
                         .agent_capabilities(
                             AgentCapabilities::new()
+                                .prompt_capabilities(PromptCapabilities::new().image(true))
                                 .load_session(true)
                                 .mcp_capabilities(McpCapabilities::new().http(true))
                                 .session_capabilities(
@@ -1416,11 +1418,17 @@ fn handle_prompt(
         );
     };
 
+    let images = match content::prompt_images(&request.prompt) {
+        Ok(images) => images,
+        Err(message) => {
+            return responder.respond_with_error(AcpError::invalid_params().data(message));
+        }
+    };
     let content = content::prompt_text(&request.prompt);
     let envelope = CommandEnvelope::new(
         CommandId::new(uuid::Uuid::now_v7().to_string()),
         Some(entry.arabica_session_id.clone()),
-        Command::MessageSend { content },
+        Command::MessageSend { content, images },
     );
     let cancellation = RunCancellation::new();
     *entry.current_run.lock().expect("current_run lock poisoned") = Some(cancellation.clone());
@@ -2957,6 +2965,28 @@ mod round_trip {
                     cx.send_request(AcpLoadSessionRequest::new(session_id.clone(), root))
                         .block_task()
                         .await?;
+                    {
+                        let seen = updates.lock().expect("updates lock poisoned");
+                        let messages: Vec<_> = seen
+                            .iter()
+                            .filter_map(|update| {
+                                let (role, chunk) = match update {
+                                    SessionUpdate::UserMessageChunk(chunk) => ("user", chunk),
+                                    SessionUpdate::AgentMessageChunk(chunk) => ("assistant", chunk),
+                                    _ => return None,
+                                };
+                                let AcpContentBlock::Text(text) = &chunk.content else {
+                                    return None;
+                                };
+                                Some((role, text.text.as_str()))
+                            })
+                            .collect();
+                        assert_eq!(
+                            messages,
+                            vec![("user", "say hello"), ("assistant", "hello from turn one")],
+                            "session/load must replay both sides in order before responding"
+                        );
+                    }
                     let prompt = cx
                         .send_request(AcpPromptRequest::new(
                             session_id,

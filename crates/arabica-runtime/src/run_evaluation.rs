@@ -183,7 +183,7 @@ pub fn run_evidence_snapshots(history: &[EventEnvelope]) -> Vec<RunEvidenceSnaps
             }
             for envelope in events {
                 match &envelope.event {
-                    Event::MessageAccepted { content } => {
+                    Event::MessageAccepted { content, .. } => {
                         messages.push(content);
                     }
                     Event::RunScheduled => {

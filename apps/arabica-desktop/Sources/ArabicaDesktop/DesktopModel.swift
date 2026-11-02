@@ -112,6 +112,7 @@ final class DesktopModel: ObservableObject {
     var isSendQueued: Bool { queuedSendSessionID != nil && queuedSendSessionID == selectedSessionID }
     @Published private(set) var composerFocusRequest = UUID()
     @Published var attachedFiles: [URL] = []
+    private var supportsImageInput = false
     @Published private var activeRuns: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
     @Published private var stoppingRuns: [String: UUID] = [:]
     @Published private var pendingSessionControls: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
@@ -550,6 +551,7 @@ final class DesktopModel: ObservableObject {
         usage = [:]
         availableCommands = []
         currentModeID = nil
+        supportsImageInput = false
         items = []
         sessionWorkspaces = [:]
         closingSessionIDs = []
@@ -561,6 +563,9 @@ final class DesktopModel: ObservableObject {
             let initialized = try await client.initialize()
             guard connectionGeneration == connection else { return }
             configureSessionCapabilities(initialized)
+            let capabilities = initialized["agentCapabilities"] as? [String: Any]
+            let promptCapabilities = capabilities?["promptCapabilities"] as? [String: Any]
+            supportsImageInput = promptCapabilities?["image"] as? Bool ?? false
             evaluation.connect(supported: EvaluationCapability.supported(by: initialized)) {
                 [weak self] method, params in
                 guard let self else { throw ACPError.disconnected }
@@ -887,7 +892,15 @@ final class DesktopModel: ObservableObject {
     /// Resends the last prompt of a failed run, leaving the composer draft alone.
     func retryLastPrompt() async {
         guard canRetryLastPrompt, let id = selectedSessionID, let prompt = lastPrompts[id] else { return }
-        await sendPrompt(content: prompt.text, files: prompt.files, in: id)
+        // Re-read attachments: an image may have changed or moved since.
+        let attachments: [[String: Any]]
+        do {
+            attachments = try PromptAttachments.blocks(for: prompt.files, supportsImages: supportsImageInput)
+        } catch {
+            errorText = error.localizedDescription
+            return
+        }
+        await sendPrompt(content: prompt.text, files: prompt.files, attachments: attachments, in: id)
     }
 
     /// Puts an earlier message back in the composer to revise and send as a
@@ -902,12 +915,19 @@ final class DesktopModel: ObservableObject {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSendMessage, let id = selectedSessionID else { return }
         let files = attachedFiles
+        let attachments: [[String: Any]]
+        do {
+            attachments = try PromptAttachments.blocks(for: files, supportsImages: supportsImageInput)
+        } catch {
+            errorText = error.localizedDescription
+            return
+        }
         draft = ""
         attachedFiles = []
-        await sendPrompt(content: content, files: files, in: id)
+        await sendPrompt(content: content, files: files, attachments: attachments, in: id)
     }
 
-    private func sendPrompt(content: String, files: [URL], in id: String) async {
+    private func sendPrompt(content: String, files: [URL], attachments: [[String: Any]], in id: String) async {
         lastPrompts[id] = ComposerDraft(text: content, files: files)
         errorText = nil
         sessionConfigurationFeedback.removeValue(forKey: id)
@@ -925,13 +945,7 @@ final class DesktopModel: ObservableObject {
         do {
             var blocks: [[String: Any]] = []
             if !content.isEmpty { blocks.append(["type": "text", "text": content]) }
-            blocks.append(
-                contentsOf: files.map {
-                    [
-                        "type": "resource_link", "name": $0.lastPathComponent,
-                        "uri": $0.absoluteString,
-                    ]
-                })
+            blocks.append(contentsOf: attachments)
             let result = try await sessionRequest(
                 "session/prompt",
                 [

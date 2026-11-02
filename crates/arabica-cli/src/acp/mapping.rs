@@ -14,9 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, Diff, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus,
-    SessionId as AcpSessionId, SessionNotification, SessionUpdate, ToolCall, ToolCallContent,
-    ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ContentBlock, ContentChunk, Diff, ImageContent, Plan, PlanEntry, PlanEntryPriority,
+    PlanEntryStatus, SessionId as AcpSessionId, SessionNotification, SessionUpdate, ToolCall,
+    ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use agent_client_protocol::{Client, ConnectionTo};
 use arabica_model::{RuntimeItem, RuntimeRole};
@@ -284,11 +285,33 @@ fn message_chunks(content: &[arabica_model::ContentBlock]) -> Vec<ContentBlock> 
         .collect()
 }
 
-/// `pub(super)`: `mod.rs`'s `session/load` handler reuses this to turn a
-/// restored session's stored history into the same `session/update`
-/// notifications a live `session/prompt` would have produced, so a client
-/// sees identical updates whether it watched a turn happen or loaded it
-/// after the fact.
+/// Replay includes user messages that clients already display locally during
+/// live prompts. Keep those echoes out of the live observer's update stream.
+pub(super) fn replay_updates_for(
+    event: &Event,
+    run_id: &Option<arabica_protocol::RunId>,
+    workspace_root: &Path,
+) -> Vec<SessionUpdate> {
+    if let Event::MessageAccepted { content, images } = event {
+        // Text first, then each image as its own chunk, matching the order
+        // the desktop composer sends them in.
+        let text = (!content.is_empty() || images.is_empty())
+            .then(|| ContentBlock::from(content.as_str()));
+        return text
+            .into_iter()
+            .chain(images.iter().map(|image| {
+                ContentBlock::Image(ImageContent::new(
+                    image.data_base64.clone(),
+                    image.media_type.clone(),
+                ))
+            }))
+            .map(|block| SessionUpdate::UserMessageChunk(ContentChunk::new(block)))
+            .collect();
+    }
+    updates_for(event, run_id, workspace_root)
+}
+
+/// Map runtime events to live `session/update` notifications.
 pub(super) fn updates_for(
     event: &Event,
     run_id: &Option<arabica_protocol::RunId>,
@@ -489,6 +512,58 @@ fn in_progress(run_id: &Option<arabica_protocol::RunId>, call_id: &str) -> Sessi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_images_are_replayed_after_their_text() {
+        let image = arabica_model::ImageInput {
+            media_type: "image/png".to_owned(),
+            data_base64: "aGVsbG8=".to_owned(),
+        };
+        let event = Event::MessageAccepted {
+            content: "describe".to_owned(),
+            images: vec![image.clone()],
+        };
+        let updates = replay_updates_for(&event, &None, Path::new("/workspace"));
+        let blocks: Vec<_> = updates
+            .iter()
+            .map(|update| match update {
+                SessionUpdate::UserMessageChunk(chunk) => &chunk.content,
+                other => panic!("expected user chunks, got {other:?}"),
+            })
+            .collect();
+        assert!(matches!(blocks[0], ContentBlock::Text(text) if text.text == "describe"));
+        assert!(matches!(
+            blocks[1],
+            ContentBlock::Image(img) if img.data == image.data_base64 && img.mime_type == image.media_type
+        ));
+
+        // An image-only prompt replays no empty text chunk.
+        let image_only = Event::MessageAccepted {
+            content: String::new(),
+            images: vec![image],
+        };
+        let updates = replay_updates_for(&image_only, &None, Path::new("/workspace"));
+        assert_eq!(updates.len(), 1);
+    }
+
+    #[test]
+    fn accepted_messages_are_replayed_without_echoing_live_prompts() {
+        let content = "First line\n\nSecond line: café ☕";
+        let event = Event::MessageAccepted {
+            content: content.to_owned(),
+            images: Vec::new(),
+        };
+        let updates = replay_updates_for(&event, &None, Path::new("/workspace"));
+        assert_eq!(updates.len(), 1);
+        let SessionUpdate::UserMessageChunk(chunk) = &updates[0] else {
+            panic!("expected a user message chunk");
+        };
+        let ContentBlock::Text(text) = &chunk.content else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.text, content);
+        assert!(updates_for(&event, &None, Path::new("/workspace")).is_empty());
+    }
 
     #[test]
     fn calls_left_open_when_a_run_ends_are_reported_failed() {
