@@ -322,6 +322,26 @@ final class ThemeManager: ObservableObject, @unchecked Sendable {
     @AppStorage("arabica.theme.font_message") var fontMessageRaw: String = "System"
     @AppStorage("arabica.theme.font_code") var fontCodeRaw: String = "System Monospaced"
 
+    private var appearanceObservation: NSKeyValueObservation?
+
+    init() {
+        // NSApp does not exist yet when the shared instance is first touched
+        // during App initialization.
+        DispatchQueue.main.async { [weak self] in self?.observeSystemAppearance() }
+    }
+
+    /// System mode derives its palette from the macOS appearance, so it must
+    /// re-render when that appearance changes (manually or at sunset).
+    private func observeSystemAppearance() {
+        guard appearanceObservation == nil, let app = NSApp else { return }
+        appearanceObservation = app.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                guard let self, self.mode == .system else { return }
+                self.objectWillChange.send()
+            }
+        }
+    }
+
     var fontNormal: String {
         get { fontNormalRaw }
         set {
@@ -390,7 +410,12 @@ final class ThemeManager: ObservableObject, @unchecked Sendable {
     }
 
     var activeTheme: ThemeDefinition {
-        if let found = allThemes.first(where: { $0.id == activeThemeID }) {
+        let found = allThemes.first(where: { $0.id == activeThemeID })
+        // System mode follows macOS with the built-in pair; any other theme
+        // the user picked stays as chosen.
+        let isDefaultPair = found == nil || found?.id == ThemeDefinition.defaultDark.id
+            || found?.id == ThemeDefinition.defaultLight.id
+        if let found, !(mode == .system && isDefaultPair) {
             return found
         }
         return isDark ? ThemeDefinition.defaultDark : ThemeDefinition.defaultLight

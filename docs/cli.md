@@ -129,13 +129,17 @@ completion and print the answer once it is complete.
 ## Interactive terminal
 
 Run `arabica` (or `arabica chat`) in a project directory to start a
-continuous conversation. In a terminal, the chat runs inline, Claude-Code
-style: the transcript is printed straight into the terminal's native
-scrollback -- normal scrolling, selection, and search keep working -- while a
-small input box pinned to the bottom owns the editor and status line.
+continuous conversation. In a terminal, the chat runs full screen (in the
+terminal's alternate screen): a scrolling history pane on top and an editor,
+key hints, and a status line pinned to the bottom. Scroll the history with the
+mouse wheel or PageUp/PageDown, search it with `/find <text>` (F3/Shift+F3 to
+step), and click a block or move to it with ↑/↓ then press Enter or `c` to
+copy it. Leaving the chat returns the terminal to its previous contents.
 Tool calls render folded: one summary line per call, a status line for the
 result, and a colored diff for file edits; Ctrl+O toggles verbose printing
-for later events. When stdin or stdout is redirected, the simple line-based
+and Ctrl+T shows or hides thinking for later events. A permission prompt
+ignores decision keys for half a second after it opens, so keystrokes typed
+for a queued message cannot answer it by accident. When stdin or stdout is redirected, the simple line-based
 interface remains available. `--plain`
 selects that interface explicitly. Each prompt uses the same session and event
 log; `/exit` or `/quit` ends the terminal process. `--continue` restores the most
@@ -145,7 +149,9 @@ chat, `/sessions` lists this workspace's stored sessions and `/resume <id>`
 switches to one in place: the new session opens first (an unknown id leaves
 the current session untouched), the previous one is suspended, and the next
 message continues the resumed session's history. `/resume` without an id
-lists resumable sessions; type a line number or an id prefix to pick one.
+lists resumable sessions; type a line number or an id prefix to pick one, or
+press Esc to cancel. A command or a message that matches no session cancels
+the pick and is handled normally.
 
 CLI and ACP sessions use the runtime's file-backed context projection. Older
 eligible evidence may be archived under
@@ -170,7 +176,8 @@ arabica --plain
 In the TUI, typing `/` completes commands, `/thinking `, `/model `, or `/policy ` offers
 configured choices, and `@` searches workspace file paths (respecting ignore
 rules). Use Up/Down to select a suggestion; Tab or Enter accepts it. Left/Right
-always move the editor cursor. Enter sends, Shift+Enter inserts a line. The
+always move the editor cursor. Enter sends; Ctrl+J or Alt+Enter inserts a line,
+as does Shift+Enter in terminals with the kitty keyboard protocol. The
 composer grows with a draft up to one third of the terminal height and eight
 rows, then scrolls internally. Up/Down move by visual row in multiline or
 wrapped drafts while keeping the target column; otherwise they navigate

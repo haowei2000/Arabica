@@ -142,7 +142,7 @@ enum ComposerPhase: Equatable {
         case .chooseWorkspace: return "Open a folder to connect the agent. Your draft stays here."
         case .connecting: return "Your draft is kept while the agent connects."
         case .disconnected: return "Reconnect before sending. Your draft is kept."
-        case .createConversation: return "Create a conversation to send this draft."
+        case .createConversation: return "Return creates a conversation and sends your message."
         case .creatingConversation: return "Your current draft is kept while the new conversation is created."
         case .loadingConversation: return "You can keep writing while conversation history loads."
         case .conversationUnavailable: return "Reload this conversation before sending."
@@ -151,7 +151,7 @@ enum ComposerPhase: Equatable {
         case .working: return "You can draft the next message while the agent works."
         case .stopping: return "Waiting for the current run to finish. Your next draft is kept."
         case .empty: return "Write a message or attach a file."
-        case .ready: return "Return to send. Shift-Return for a new line."
+        case .ready: return "Return to send. Option-Return for a new line."
         }
     }
 
