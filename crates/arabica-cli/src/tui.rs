@@ -2156,7 +2156,10 @@ async fn run_turn(
     let envelope = CommandEnvelope::new(
         CommandId::new(uuid::Uuid::now_v7().to_string()),
         Some(session.session_id.clone()),
-        Command::MessageSend { content: text },
+        Command::MessageSend {
+            images: Vec::new(),
+            content: text,
+        },
     );
     // Taken before dispatch's mutable borrow of the session: the loop
     // below reads write checkpoints while the run is in flight.
@@ -2974,7 +2977,7 @@ fn print_history(transcript: &mut Transcript, session: &InteractiveSession) {
     let mut pending_reasoning = false;
     for envelope in stored.events {
         match envelope.event {
-            Event::MessageAccepted { content } => {
+            Event::MessageAccepted { content, .. } => {
                 if !pending_text.is_empty() {
                     let text = std::mem::take(&mut pending_text);
                     print_text(transcript, text.trim());

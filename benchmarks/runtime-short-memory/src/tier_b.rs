@@ -574,6 +574,7 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
                     CommandId::new(format!("tier-b-setup-{index:04}-{setup_index:04}")),
                     Some(session_id.clone()),
                     Command::MessageSend {
+                        images: Vec::new(),
                         content: prompt.clone(),
                     },
                 ))
@@ -586,6 +587,7 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
                 CommandId::new(format!("tier-b-task-{index:04}")),
                 Some(session_id.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: task.prompt.clone(),
                 },
             ))
@@ -1104,7 +1106,7 @@ fn recall_file_payload(
         .iter()
         .rev()
         .filter_map(|entry| match &entry.item {
-            ShortMemoryItem::UserMessage { content } => {
+            ShortMemoryItem::UserMessage { content, .. } => {
                 tagged_payload(content, "memory_evidence_json").ok()
             }
             ShortMemoryItem::BatchKey(key) => {

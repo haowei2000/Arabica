@@ -454,6 +454,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 CommandId::new("harbor-task"),
                 Some(session_id),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: terminal_instruction(&instruction),
                 },
             ))

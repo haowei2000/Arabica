@@ -487,6 +487,7 @@ async fn execute_trial(params: TrialExecutionParams<'_>) -> Result<CampaignTrial
                 CommandId::new("task"),
                 Some(session.clone()),
                 Command::MessageSend {
+                    images: Vec::new(),
                     content: params.task.prompt.clone(),
                 },
             ),

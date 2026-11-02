@@ -99,6 +99,7 @@ impl SyntheticTraceGenerator {
                     command_id.clone(),
                     Some(&run_id),
                     Event::MessageAccepted {
+ images: Vec::new(),
                         content: if config.single_run {
                             "Inspect the requested workspace state across all tool batches and report the result."
                                 .to_owned()
