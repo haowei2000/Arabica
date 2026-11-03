@@ -37,6 +37,37 @@ runs are mechanism experiments, not independent end-to-end trials. Subsequent
 model outputs can still diverge. Failed arms retain their report and stop the
 campaign; no automatic network retries occur in controlled mode.
 
+### Isolated experiment connection configuration
+
+Tier-B reads only `STRUCTURE_EXPERIMENT_API_KEY`,
+`STRUCTURE_EXPERIMENT_BASE_URL`, and `STRUCTURE_EXPERIMENT_MODEL`.
+It no longer falls back to `OPENAI_*`, `OPENAI__*`, or `LONGCAT_API_KEY`.
+The endpoint is required explicitly; there is no default provider URL.
+Existing shell scripts must migrate these settings before starting a new campaign.
+
+Alternatively, copy `experiment.env.example` to `.env.experiment` and fill in the
+connection settings locally. From the repository root:
+
+```bash
+cp benchmarks/runtime-short-memory/experiment.env.example .env.experiment
+cargo run -p structure-short-memory-benchmark --bin tier_b -- \
+  --env-file .env.experiment \
+  --experiment-config benchmarks/runtime-short-memory/experiment.example.json \
+  --compare --strategies B0,FBGC --single-message-tools 12 --repetitions 1 \
+  --runner-root target/live-preflight-unique-id --fail-on-task
+```
+
+Use a fresh runner root for every campaign. `.env.experiment` is ignored by Git.
+The file accepts dotenv syntax (including quoted values and comments), with only
+the three connection names above. It is loaded only when `--env-file` is supplied
+and does not modify process environment variables. CLI model/endpoint options
+override file values; file values override the dedicated process variables.
+An empty file setting fails validation instead of falling back to the environment.
+Keep literal credential values single-quoted if they contain `$` characters.
+Sampling controls remain in the separate experiment JSON. Env file contents and
+API keys are not copied into the campaign manifest. This configuration change
+requires a new campaign freeze; do not mix it with previously frozen execution.
+
 ### Independent KV prefix accounting
 
 `prefix_cache TOKENIZED_INPUT.json NEW_REPORT.json` computes a cold, independent
@@ -219,7 +250,7 @@ cargo run -p structure-short-memory-benchmark --bin tier_b -- \
 ```
 
 Run against an OpenAI-compatible endpoint after injecting the credential into
-`OPENAI_API_KEY` or `OPENAI__API_KEY` through the process environment:
+`STRUCTURE_EXPERIMENT_API_KEY` through the process environment:
 
 ```bash
 cargo run -p structure-short-memory-benchmark --bin tier_b -- \

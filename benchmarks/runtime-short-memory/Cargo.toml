@@ -13,6 +13,7 @@ default-run = "structure-short-memory-benchmark"
 rustix = { workspace = true, features = ["fs"] }
 arabica-cli = { path = "../../crates/arabica-cli" }
 arabica-adapters = { path = "../../crates/arabica-adapters" }
+dotenvy = "0.15"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
