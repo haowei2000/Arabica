@@ -102,7 +102,7 @@ jobs:
           Compress-Archive -Path $dir -DestinationPath "${{ matrix.archive }}"
           $hash = (Get-FileHash "${{ matrix.archive }}" -Algorithm SHA256).Hash
           "$hash  ${{ matrix.archive }}" | Out-File "${{ matrix.archive }}.sha256" -Encoding ascii
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.archive }}
           path: |
@@ -168,7 +168,7 @@ jobs:
           ARABICA_UPDATE_PRIVATE_KEY: ${{ secrets.ARABICA_UPDATE_PRIVATE_KEY }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: bash scripts/generate-appcast.sh "${{ matrix.arch }}" "$RELEASE_TAG"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Arabica-macos-${{ matrix.arch }}
           path: |
@@ -200,7 +200,7 @@ jobs:
           ARABICA_UPDATE_PRIVATE_KEY: ${{ secrets.ARABICA_UPDATE_PRIVATE_KEY }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: node scripts/sign-cli-updates.mjs dist "$RELEASE_TAG" apps/arabica-desktop/.build/artifacts/sparkle/Sparkle/bin/sign_update
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-update-signatures
           path: |
