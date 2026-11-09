@@ -12,16 +12,17 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arabica_model::ContentBlock;
 use arabica_protocol::lrp::{
     CallCancel, CallCancelAck, CallCompleted, CallFailed, CallOutput, CallRef, CallStart, Capacity,
     FEATURE_TOOLS_CHANGED, Frame, Hello, LRP_SUBPROTOCOL, LRP_VERSION, LeaseMode, LeaseOpen,
-    LeaseOpened, LrpError, LrpErrorCode, Message, OutputStream, RemoteTool, SHELL_CLASSIFIER,
-    ToolClassification, ToolsChanged,
+    LeaseOpened, LrpError, LrpErrorCode, MAX_FRAME_BYTES, Message, OutputStream, RemoteTool,
+    SHELL_CLASSIFIER, ToolClassification, ToolsChanged,
 };
 use arabica_protocol::{RunId, ToolInteractionKind, WorkspaceId};
 use arabica_runner::{
     LocalRunner, LocalRunnerPolicy, LocalTool, RunnerEnvironment, RunnerError, RunnerOutput,
-    ToolExecutionRequest,
+    ToolExecutionRequest, truncate_output,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -32,7 +33,7 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
 use tokio_tungstenite::tungstenite::{self, Message as WsMessage};
 
-use crate::{HANDSHAKE_TIMEOUT, decode, encode, offers_subprotocol, ws_config};
+use crate::{HANDSHAKE_TIMEOUT, decode, encode, fits_frame, offers_subprotocol, ws_config};
 
 /// Longest deadline a loop may ask for one call.
 const MAX_CALL_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -678,18 +679,20 @@ async fn execute(
                         RunnerOutput::Stdout(text) => (OutputStream::Stdout, text),
                         RunnerOutput::Stderr(text) => (OutputStream::Stderr, text),
                     };
-                    Frame::notification(Message::CallOutput(CallOutput {
+                    Frame::notification(bounded(Message::CallOutput(CallOutput {
                         call_id: call_id.clone(),
                         chunk,
                         stream,
                         text,
-                    }))
+                    })))
                 })
                 .collect();
-            frames.push(Frame::notification(Message::CallCompleted(CallCompleted {
-                call_id,
-                result: executed.result,
-            })));
+            frames.push(Frame::notification(bounded(Message::CallCompleted(
+                CallCompleted {
+                    call_id,
+                    result: executed.result,
+                },
+            ))));
             frames
         }
         Ok(Err(error)) => vec![failed(call_id, LrpErrorCode::Internal, error.to_string())],
@@ -699,6 +702,37 @@ async fn execute(
             format!("call exceeded its {} ms deadline", deadline.as_millis()),
         )],
     }
+}
+
+/// Keep a call's output within one frame. Output that fits is sent whole;
+/// larger text is truncated, and a result still too large once its text is
+/// bounded becomes an error result.
+fn bounded(mut message: Message) -> Message {
+    if fits_frame(&message) {
+        return message;
+    }
+    match &mut message {
+        Message::CallOutput(output) => {
+            output.text = truncate_output(std::mem::take(&mut output.text));
+        }
+        Message::CallCompleted(completed) => {
+            for block in &mut completed.result.content {
+                if let ContentBlock::Text { text } = block {
+                    *text = truncate_output(std::mem::take(text));
+                }
+            }
+        }
+        _ => {}
+    }
+    if !fits_frame(&message)
+        && let Message::CallCompleted(completed) = &mut message
+    {
+        completed.result.content = vec![ContentBlock::text(format!(
+            "tool result exceeds the {MAX_FRAME_BYTES}-byte frame limit"
+        ))];
+        completed.result.is_error = true;
+    }
+    message
 }
 
 fn failed(call_id: String, code: LrpErrorCode, message: String) -> Frame {
@@ -768,4 +802,48 @@ fn kind(message: &Message) -> String {
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| "message".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arabica_model::ToolResultItem;
+
+    fn completed(content: Vec<ContentBlock>) -> Message {
+        Message::CallCompleted(CallCompleted {
+            call_id: "c-1".to_owned(),
+            result: ToolResultItem {
+                id: None,
+                call_id: "c-1".to_owned(),
+                name: Some("read_file".to_owned()),
+                content,
+                is_error: false,
+            },
+        })
+    }
+
+    #[test]
+    fn a_result_that_cannot_be_truncated_becomes_an_error_result() {
+        let inline = ContentBlock::InlineData {
+            media_type: "image/png".to_owned(),
+            data_base64: "A".repeat(MAX_FRAME_BYTES),
+        };
+        let message = bounded(completed(vec![inline]));
+        assert!(fits_frame(&message));
+        let Message::CallCompleted(completed) = message else {
+            panic!("expected call.completed");
+        };
+        assert!(completed.result.is_error);
+    }
+
+    #[test]
+    fn oversized_call_output_is_truncated() {
+        let message = bounded(Message::CallOutput(CallOutput {
+            call_id: "c-1".to_owned(),
+            chunk: 0,
+            stream: OutputStream::Stdout,
+            text: "z".repeat(MAX_FRAME_BYTES * 2),
+        }));
+        assert!(fits_frame(&message));
+    }
 }

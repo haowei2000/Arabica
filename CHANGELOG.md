@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add remote runners over the Loop–Runner Protocol (`lrp.v1`, WebSocket on mutually authenticated TLS 1.3). `arabica runner serve` exposes workspaces on another machine, and `arabica --runner <name>` runs built-in tools there, configured as `[runners.<name>]`. A lease never exceeds the runner's own policy or the loop's local `--read-only` / `--allow-shell` policy. Tool output too large for one 1 MiB frame is truncated, and oversized arguments are reported to the model as a tool error instead of dropping the connection. See `docs/loop-runner-protocol.md`; the new crate `arabica-runner-remote` is published with the release.
+- Support image prompts across the desktop app and providers. Each image is sent only with its own turn; earlier turns carry a short note instead of the bytes, so sessions with several large images no longer exceed provider request limits.
+- Replay user messages, including their images, when an ACP client loads a session with `session/load`.
+- Make permission prompts ignore decision keys for 500 ms after opening in the terminal UI, and arm the desktop permission sheet's Allow buttons after 500 ms, so keystrokes meant for a queued message cannot approve a tool call.
+- Improve the terminal UI: Ctrl+J inserts a newline everywhere and Shift+Enter works on terminals with the kitty keyboard protocol; `/resume <id>` works in the TUI and `/resume` picking handles Esc, commands, and ambiguous prefixes; Ctrl+T toggles thinking; `arabica chat` accepts `--allow-shell`, `--read-only`, `--plain`, `--continue`, and `--resume`.
+- Improve the desktop app: edit and resend a user message, retry a failed run, copy messages on hover, follow the system appearance live, send with Return (or queue while a run is active), and see why the composer cannot send. Pending tool calls no longer show a completed checkmark.
+- Upgrade `similar` to 3.2 and `globset` to 0.4.20.
+
 ## 0.12.0 — 2026-10-23
 
 - Add dynamic authentication for remote HTTP MCP servers in long-lived ACP sessions. Tokens are resolved per request, refreshed once on expiry or after a single 401, shared across concurrent requests, and never replaced by an unauthenticated request. Modes: `broker` (the ACP client answers `_arabica/mcp/credential`, advertised as `arabica.mcpAuth`), `oauth`, and `command`.

@@ -71,9 +71,12 @@ the TCP direction changes.
   loopback.
 - WebSocket subprotocol `arabica.lrp.v1` must be negotiated; a server that
   does not echo it closes the connection.
-- Maximum frame size 1 MiB, maximum message size 4 MiB. Larger tool output is
-  truncated by the Runner using the existing `MAX_TOOL_OUTPUT_CHARS` policy
-  before it is framed.
+- Maximum frame size 1 MiB, maximum message size 4 MiB. Messages are sent as
+  a single frame, so 1 MiB is the practical limit in both directions. Tool
+  output that would not fit is truncated by the Runner using the existing
+  `MAX_TOOL_OUTPUT_CHARS` policy before it is framed; output that fits is sent
+  whole. The Loop does not send a `call.start` that would not fit and reports
+  an error result to the model instead.
 
 ### 4.2 Identity
 

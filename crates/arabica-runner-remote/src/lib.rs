@@ -16,7 +16,7 @@ pub use tls::TlsIdentity;
 
 use std::time::Duration;
 
-use arabica_protocol::lrp::{Frame, LRP_SUBPROTOCOL, MAX_FRAME_BYTES, MAX_MESSAGE_BYTES};
+use arabica_protocol::lrp::{Frame, LRP_SUBPROTOCOL, MAX_FRAME_BYTES, MAX_MESSAGE_BYTES, Message};
 use arabica_runner::RunnerError;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::http::{HeaderMap, header};
@@ -24,6 +24,16 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 /// Bound on each handshake step: TLS, WebSocket upgrade, hello/welcome.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Room kept for what a frame adds around its message: version, id, seq.
+const FRAME_ENVELOPE_BYTES: usize = 128;
+
+/// Whether `message` fits in one WebSocket frame. Messages are never
+/// fragmented, and a peer closes the connection on a larger frame.
+pub(crate) fn fits_frame(message: &Message) -> bool {
+    serde_json::to_vec(message)
+        .is_ok_and(|json| json.len().saturating_add(FRAME_ENVELOPE_BYTES) <= MAX_FRAME_BYTES)
+}
 
 pub(crate) fn ws_config() -> WebSocketConfig {
     WebSocketConfig::default()
