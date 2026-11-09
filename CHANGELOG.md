@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.13.0 — 2026-11-09
+
+- Bind desktop draft submissions and queued sends to their originating conversation so navigation cannot submit an unrelated draft. Keep edits made during conversation creation unsent, and cancel queued sends when stopping or removing the last attachment.
+- Restore plans, context usage, and slash commands when returning to a conversation, including updates received while it runs in the background.
+- Add a visible **Queue Message** button and reveal message Copy/Edit actions on keyboard and accessibility focus.
 - Add remote runners over the Loop–Runner Protocol (`lrp.v1`, WebSocket on mutually authenticated TLS 1.3). `arabica runner serve` exposes workspaces on another machine, and `arabica --runner <name>` runs built-in tools there, configured as `[runners.<name>]`. A lease never exceeds the runner's own policy or the loop's local `--read-only` / `--allow-shell` policy. Tool output too large for one 1 MiB frame is truncated, and oversized arguments are reported to the model as a tool error instead of dropping the connection. See `docs/loop-runner-protocol.md`; the new crate `arabica-runner-remote` is published with the release.
 - Support image prompts across the desktop app and providers. Each image is sent only with its own turn; earlier turns carry a short note instead of the bytes, so sessions with several large images no longer exceed provider request limits.
 - Replay user messages, including their images, when an ACP client loads a session with `session/load`.

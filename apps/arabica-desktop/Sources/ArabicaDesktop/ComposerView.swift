@@ -58,7 +58,11 @@ struct ComposerView: View {
                 .padding(.top, 2)
                 .focused($isInputFocused)
                 .accessibilityLabel("Message")
-                .help("Return to send. Option-Return for a new line.")
+                .help(
+                    model.isRunning
+                        ? "Return to queue your next message. Option-Return for a new line."
+                        : "Return to send. Option-Return for a new line."
+                )
                 .onSubmit { Task { await model.submitDraft() } }
 
                 // Bottom toolbar inside composer card
@@ -174,11 +178,20 @@ struct ComposerView: View {
         } else if phase != .ready, phase != .empty {
             HStack(spacing: 6) {
                 Image(systemName: phase.symbol)
-                Text(phase.title).fontWeight(.medium)
-                Text(phase == .working ? "Return queues your next message." : phase.detail)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(phase.title).fontWeight(.medium)
+                    Text(phase == .working ? "Return queues your next message." : phase.detail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer(minLength: 0)
+                if model.isRunning, !model.isStopping {
+                    Button("Queue Message", action: model.queueDraft)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .fixedSize()
+                        .disabled(!model.canQueueMessage)
+                        .help("Send this draft when the current run finishes (Return)")
+                }
             }
             .composerStatusStyle()
             .help(phase.detail)
