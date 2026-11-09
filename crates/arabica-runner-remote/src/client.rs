@@ -13,8 +13,8 @@ use std::time::Duration;
 use arabica_model::{ContentBlock, ToolCallItem, ToolDefinition, ToolResultItem};
 use arabica_protocol::lrp::{
     CallCancel, CallStart, FEATURE_TOOLS_CHANGED, Frame, Hello, LRP_SUBPROTOCOL, LRP_VERSION,
-    LeaseMode, LeaseOpen, LrpError, LrpErrorCode, Message, OutputStream, RemoteTool,
-    SHELL_CLASSIFIER, ToolClassification, Welcome,
+    LeaseMode, LeaseOpen, LrpError, LrpErrorCode, MAX_FRAME_BYTES, Message, OutputStream,
+    RemoteTool, SHELL_CLASSIFIER, ToolClassification, Welcome,
 };
 use arabica_protocol::{RunId, SessionId, ToolInteractionKind, WorkspaceId};
 use arabica_runner::{
@@ -30,7 +30,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, header};
 use tokio_tungstenite::tungstenite::{self, Message as WsMessage};
 
-use crate::{HANDSHAKE_TIMEOUT, decode, encode, offers_subprotocol, ws_config};
+use crate::{HANDSHAKE_TIMEOUT, decode, encode, fits_frame, offers_subprotocol, ws_config};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
@@ -277,6 +277,21 @@ impl RunnerEnvironment for RemoteRunner {
         let name = call.name.clone();
         // Provider continuation state is the loop's business, not the runner's.
         call.provider_state = None;
+        let start = Message::CallStart(CallStart {
+            lease_id: self.lease_id.clone(),
+            run_id: run_id.clone(),
+            call,
+            deadline_ms: duration_ms(self.call_deadline),
+        });
+        // The runner would close the connection on a larger frame, so the
+        // model hears about it instead and can send smaller changes.
+        if !fits_frame(&start) {
+            let message = format!(
+                "{name} arguments exceed the {MAX_FRAME_BYTES}-byte frame limit; \
+                 send smaller changes"
+            );
+            return Ok(error_result(call_id, name, &message));
+        }
         let mut events = self.link.register_call(&call_id)?;
         let mut guard = CallGuard {
             link: Arc::clone(&self.link),
@@ -291,15 +306,7 @@ impl RunnerEnvironment for RemoteRunner {
         let queued_until = tokio::time::Instant::now() + self.call_deadline;
         let mut backoff = Duration::from_millis(25);
         let accepted = loop {
-            let accepted = self
-                .link
-                .request(Message::CallStart(CallStart {
-                    lease_id: self.lease_id.clone(),
-                    run_id: run_id.clone(),
-                    call: call.clone(),
-                    deadline_ms: duration_ms(self.call_deadline),
-                }))
-                .await;
+            let accepted = self.link.request(start.clone()).await;
             match accepted {
                 Err(RequestError::Rejected(error))
                     if error.code == LrpErrorCode::CapacityExhausted
@@ -390,20 +397,21 @@ fn tool_failure(
     match error.code {
         LrpErrorCode::DeadlineExceeded
         | LrpErrorCode::ToolUnavailable
-        | LrpErrorCode::CapacityExhausted => Ok(ToolExecutionResult {
-            result: ToolResultItem {
-                id: None,
-                call_id,
-                name: Some(name),
-                content: vec![ContentBlock::text(format!(
-                    "remote runner: {}",
-                    error.message
-                ))],
-                is_error: true,
-            },
-            output: Vec::new(),
-        }),
+        | LrpErrorCode::CapacityExhausted => Ok(error_result(call_id, name, &error.message)),
         _ => Err(RunnerError::new(format!("remote runner: {error}"))),
+    }
+}
+
+fn error_result(call_id: String, name: String, message: &str) -> ToolExecutionResult {
+    ToolExecutionResult {
+        result: ToolResultItem {
+            id: None,
+            call_id,
+            name: Some(name),
+            content: vec![ContentBlock::text(format!("remote runner: {message}"))],
+            is_error: true,
+        },
+        output: Vec::new(),
     }
 }
 

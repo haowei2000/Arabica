@@ -374,6 +374,81 @@ async fn cancel_reports_whether_anything_was_running() {
     assert!(!runner.cancel(&RunId::new("run-1")).await.unwrap());
 }
 
+#[tokio::test]
+async fn output_too_large_for_a_frame_is_truncated_and_the_connection_survives() {
+    let pki = Pki::new();
+    let root = workspace();
+    // Under the read limit on disk, over the frame limit once JSON-escaped.
+    let line = "{\"name\":\"value\",\"path\":\"a/b\"}\n";
+    let fixture = line.repeat(1_000_000 / line.len());
+    std::fs::write(root.join("fixture.json"), &fixture).unwrap();
+    let address = start_runner(&pki, root, shell_policy(), 4).await;
+    let mut runner = RemoteRunner::connect(loop_config(&pki, address))
+        .await
+        .expect("loop connects");
+
+    let read = call("c-1", "read_file", json!({ "path": "fixture.json" }));
+    let result = runner.execute(read).await.expect("read executes");
+    assert!(!result.result.is_error);
+    assert!(text(&result.result).contains("...[truncated"));
+
+    let next = call("c-2", "read_file", json!({ "path": "hello.txt" }));
+    let result = runner.execute(next).await.expect("the connection survives");
+    assert!(text(&result.result).contains("hello from the runner"));
+}
+
+#[tokio::test]
+async fn output_that_fits_in_a_frame_is_sent_whole() {
+    let pki = Pki::new();
+    let root = workspace();
+    let body = "x".repeat(900_000);
+    std::fs::write(root.join("plain.txt"), &body).unwrap();
+    let address = start_runner(&pki, root, shell_policy(), 4).await;
+    let mut runner = RemoteRunner::connect(loop_config(&pki, address))
+        .await
+        .expect("loop connects");
+
+    let read = call("c-1", "read_file", json!({ "path": "plain.txt" }));
+    let result = runner.execute(read).await.expect("read executes");
+    assert!(text(&result.result).contains(&body));
+}
+
+#[tokio::test]
+async fn arguments_too_large_for_a_frame_are_a_tool_error_and_are_not_sent() {
+    let pki = Pki::new();
+    let root = workspace();
+    let address = start_runner(&pki, root.clone(), shell_policy(), 4).await;
+    let mut runner = RemoteRunner::connect(loop_config(&pki, address))
+        .await
+        .expect("loop connects");
+
+    let write = call(
+        "c-1",
+        "write_file",
+        json!({ "path": "big.txt", "content": "y".repeat(2_000_000) }),
+    );
+    let result = runner
+        .execute(write)
+        .await
+        .expect("oversized arguments are a tool error, not a run failure");
+    assert!(result.result.is_error);
+    assert!(text(&result.result).contains("frame limit"));
+    assert!(!root.join("big.txt").exists());
+
+    // The same call_id stays usable: nothing was registered or sent.
+    let retry = call(
+        "c-1",
+        "write_file",
+        json!({ "path": "small.txt", "content": "ok\n" }),
+    );
+    let result = runner
+        .execute(retry)
+        .await
+        .expect("the connection survives");
+    assert!(!result.result.is_error);
+    assert!(root.join("small.txt").exists());
+}
+
 fn names_of(tools: &[arabica_model::ToolDefinition]) -> Vec<String> {
     tools.iter().map(|tool| tool.name.clone()).collect()
 }
