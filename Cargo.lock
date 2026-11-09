@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-adapters"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "arabica-protocol",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "agent-client-protocol",
  "arabica-adapters",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-model"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.22.1",
  "schemars 1.2.2",
@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-protocol"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "schemars 1.2.2",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-provider"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "arabica-protocol",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-runner"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "arabica-protocol",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-runner-remote"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "arabica-protocol",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-runtime"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "arabica-protocol",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-server"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-adapters",
  "arabica-protocol",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "arabica-session"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-model",
  "arabica-protocol",
@@ -3921,7 +3921,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "structure-short-memory-benchmark"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arabica-adapters",
  "arabica-cli",
