@@ -13,7 +13,7 @@
 - Make permission prompts ignore decision keys for 500 ms after opening in the terminal UI, and arm the desktop permission sheet's Allow buttons after 500 ms, so keystrokes meant for a queued message cannot approve a tool call.
 - Improve the terminal UI: Ctrl+J inserts a newline everywhere and Shift+Enter works on terminals with the kitty keyboard protocol; `/resume <id>` works in the TUI and `/resume` picking handles Esc, commands, and ambiguous prefixes; Ctrl+T toggles thinking; `arabica chat` accepts `--allow-shell`, `--read-only`, `--plain`, `--continue`, and `--resume`.
 - Improve the desktop app: edit and resend a user message, retry a failed run, copy messages on hover, follow the system appearance live, send with Return (or queue while a run is active), and see why the composer cannot send. Pending tool calls no longer show a completed checkmark.
-- Upgrade `similar` to 3.2 and `globset` to 0.4.20.
+- Upgrade `similar` to 3.2, `globset` to 0.4.21, `tokio` to 1.54.1, and `serde_json` to 1.0.154.
 
 ## 0.12.0 — 2026-10-23
 
