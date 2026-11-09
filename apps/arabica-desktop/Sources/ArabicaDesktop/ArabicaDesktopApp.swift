@@ -993,6 +993,8 @@ private struct MessageCopyButton: View {
     let text: String
     let isVisible: Bool
     @State private var copied = false
+    @FocusState private var hasFocus: Bool
+    @AccessibilityFocusState private var hasAccessibilityFocus: Bool
 
     var body: some View {
         Button {
@@ -1014,9 +1016,16 @@ private struct MessageCopyButton: View {
         .buttonStyle(.plain)
         .help("Copy message")
         .accessibilityLabel(copied ? "Copied" : "Copy message")
+        .focused($hasFocus)
+        .accessibilityFocused($hasAccessibilityFocus)
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Palette.accent, lineWidth: 2)
+                .opacity(hasFocus ? 1 : 0)
+        }
         // Kept in the layout so revealing it never shifts the feed, and
         // left reachable for VoiceOver and keyboard users while hidden.
-        .opacity(isVisible || copied ? 1 : 0)
+        .opacity(isVisible || copied || hasFocus || hasAccessibilityFocus ? 1 : 0)
     }
 }
 
@@ -1024,6 +1033,8 @@ private struct UserMessageView: View {
     let item: ChatItem
     let onEdit: (String) -> Void
     @State private var isHovering = false
+    @FocusState private var editHasFocus: Bool
+    @AccessibilityFocusState private var editHasAccessibilityFocus: Bool
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 4) {
@@ -1041,7 +1052,14 @@ private struct UserMessageView: View {
             .buttonStyle(.plain)
             .help("Edit as a new message")
             .accessibilityLabel("Edit as a new message")
-            .opacity(isHovering ? 1 : 0)
+            .focused($editHasFocus)
+            .accessibilityFocused($editHasAccessibilityFocus)
+            .overlay {
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Palette.accent, lineWidth: 2)
+                    .opacity(editHasFocus ? 1 : 0)
+            }
+            .opacity(isHovering || editHasFocus || editHasAccessibilityFocus ? 1 : 0)
             MessageCopyButton(text: item.text, isVisible: isHovering)
             Text(item.text)
                 .font(AppFont.message(13.5))

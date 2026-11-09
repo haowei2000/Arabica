@@ -67,9 +67,22 @@ private struct SessionControlState {
     var currentModeID: String?
 }
 
-private struct ComposerDraft {
+private struct SessionPresentationState {
+    var plan: [[String: Any]] = []
+    var usage: [String: Any] = [:]
+    var commands: [[String: Any]] = []
+}
+
+private struct ComposerDraft: Equatable {
     var text = ""
     var files: [URL] = []
+}
+
+private struct QueuedSendRequest {
+    let id = UUID()
+    let sessionID: String
+    let connection: UUID
+    let navigation: UUID
 }
 
 @MainActor
@@ -87,7 +100,7 @@ final class DesktopModel: ObservableObject {
     @Published var selectedSessionID: String? {
         didSet {
             guard selectedSessionID != oldValue else { return }
-            queuedSendSessionID = nil
+            queuedSendRequest = nil
             let previous = ComposerDraft(text: draft, files: attachedFiles)
             if let oldValue { sessionDrafts[oldValue] = previous } else { unassignedDraft = previous }
             let next =
@@ -101,17 +114,28 @@ final class DesktopModel: ObservableObject {
     @Published var draft = "" {
         didSet {
             if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachedFiles.isEmpty {
-                queuedSendSessionID = nil
+                queuedSendRequest = nil
             }
         }
     }
     /// The conversation whose draft sends as soon as its current run
     /// completes. Cleared by switching conversations, emptying the draft,
     /// or a run that fails or is stopped.
-    @Published private(set) var queuedSendSessionID: String?
+    @Published private var queuedSendRequest: QueuedSendRequest?
+    var queuedSendSessionID: String? { queuedSendRequest?.sessionID }
     var isSendQueued: Bool { queuedSendSessionID != nil && queuedSendSessionID == selectedSessionID }
+    var canQueueMessage: Bool {
+        isRunning && !isStopping && !isSendQueued
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty)
+    }
     @Published private(set) var composerFocusRequest = UUID()
-    @Published var attachedFiles: [URL] = []
+    @Published var attachedFiles: [URL] = [] {
+        didSet {
+            if attachedFiles.isEmpty, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                queuedSendRequest = nil
+            }
+        }
+    }
     private var supportsImageInput = false
     @Published private var activeRuns: [String: UUID] = [:] { didSet { syncSidebarActivity() } }
     @Published private var stoppingRuns: [String: UUID] = [:]
@@ -179,6 +203,7 @@ final class DesktopModel: ObservableObject {
     @Published private var openSessionIDs = Set<String>()
     private var itemCache: [String: [ChatItem]] = [:]
     private var sessionControlCache: [String: SessionControlState] = [:]
+    private var sessionPresentationCache: [String: SessionPresentationState] = [:]
     @Published private var permissionQueue: [PermissionPrompt] = [] { didSet { syncSidebarActivity() } }
     private var sessionDrafts: [String: ComposerDraft] = [:]
     /// The last prompt sent in each conversation, for retrying a failed run.
@@ -273,6 +298,7 @@ final class DesktopModel: ObservableObject {
 
     func closeWindow() {
         isClosed = true
+        queuedSendRequest = nil
         connectionGeneration = UUID()
         navigationGeneration = UUID()
         isConnected = false
@@ -357,9 +383,7 @@ final class DesktopModel: ObservableObject {
         configOptions = []
         availableSessionModes = []
         currentModeID = nil
-        plan = []
-        usage = [:]
-        availableCommands = []
+        restoreSessionPresentation(for: nil)
         errorText = nil
         evaluation.select(nil)
     }
@@ -489,6 +513,7 @@ final class DesktopModel: ObservableObject {
     }
 
     private func recordInterruptedRuns() {
+        queuedSendRequest = nil
         for id in activeRuns.keys {
             sessionOutcomes[id] = .failed
             sessionErrors[id] = "The agent disconnected before this task finished. Reconnect to continue."
@@ -543,6 +568,8 @@ final class DesktopModel: ObservableObject {
         sessionLoadGenerations = [:]
         itemCache = [:]
         sessionControlCache = [:]
+        sessionPresentationCache = [:]
+        queuedSendRequest = nil
         permissionQueue = []
         permission = nil
         configOptions = []
@@ -676,13 +703,14 @@ final class DesktopModel: ObservableObject {
         }
     }
 
-    func newSession(in cwd: String? = nil) async {
+    @discardableResult
+    func newSession(in cwd: String? = nil) async -> String? {
         let targetCwd = cwd ?? workspace?.path
         guard let targetCwd else {
             chooseWorkspace()
-            return
+            return nil
         }
-        guard canCreateSession else { return }
+        guard canCreateSession else { return nil }
         let connection = connectionGeneration
         let navigation = UUID()
         navigationGeneration = navigation
@@ -704,7 +732,7 @@ final class DesktopModel: ObservableObject {
                 [
                     "cwd": targetCwd, "mcpServers": [],
                 ])
-            guard connectionGeneration == connection else { return }
+            guard connectionGeneration == connection else { return nil }
             guard let id = result["sessionId"] as? String else { throw ACPError.invalidResponse }
             cacheSessionControls(from: result, for: id)
             openSessionIDs.insert(id)
@@ -713,7 +741,7 @@ final class DesktopModel: ObservableObject {
             let newSession = DesktopSession(
                 id: id, cwd: targetCwd, title: "New conversation", updatedAt: Self.activityTimestamp())
             if !sessions.contains(where: { $0.id == id }) { sessions.insert(newSession, at: 0) }
-            guard navigationGeneration == navigation else { return }
+            guard navigationGeneration == navigation else { return nil }
             restoreSessionControls(for: id)
             if workspace?.path != targetCwd {
                 workspace = URL(fileURLWithPath: targetCwd)
@@ -729,18 +757,18 @@ final class DesktopModel: ObservableObject {
                 attachedFiles = pendingDraft.files
                 unassignedDraft = ComposerDraft()
             }
-            plan = []
-            usage = [:]
-            availableCommands = []
+            restoreSessionPresentation(for: id)
             loadedSessionID = id
             items = []
             composerFocusRequest = UUID()
             if selectedSessionID == id { evaluation.select(id) }
+            return id
         } catch {
             if connectionGeneration == connection, navigationGeneration == navigation {
                 errorText = error.localizedDescription
             }
         }
+        return nil
     }
 
     func selectSession(_ id: String) async {
@@ -761,9 +789,7 @@ final class DesktopModel: ObservableObject {
         selectedSessionID = id
         unreadSessionIDs.remove(id)
         loadedSessionID = nil
-        plan = []
-        usage = [:]
-        availableCommands = []
+        restoreSessionPresentation(for: id)
         items = itemCache[id] ?? []
         errorText = sessionErrors[id]
         sidebarLibrary.addProject(session.cwd)
@@ -832,6 +858,7 @@ final class DesktopModel: ObservableObject {
             openSessionIDs.remove(id)
             sessionLoadGenerations.removeValue(forKey: id)
             sessionControlCache.removeValue(forKey: id)
+            sessionPresentationCache.removeValue(forKey: id)
             pendingSessionControls.removeValue(forKey: id)
             sessionConfigurationFeedback.removeValue(forKey: id)
             services.release(sessionID: id)
@@ -851,6 +878,7 @@ final class DesktopModel: ObservableObject {
                 configOptions = []
                 availableSessionModes = []
                 currentModeID = nil
+                restoreSessionPresentation(for: nil)
                 errorText = nil
             }
         } catch {
@@ -868,18 +896,28 @@ final class DesktopModel: ObservableObject {
         guard hasDraft else { return }
         if selectedSessionID == nil {
             guard isConnected, !isConnecting, !isCreatingSession, workspace != nil else { return }
-            await newSession()
+            let connection = connectionGeneration
+            let submittedDraft = ComposerDraft(text: draft, files: attachedFiles)
+            guard let id = await newSession(), connectionGeneration == connection,
+                selectedSessionID == id, ComposerDraft(text: draft, files: attachedFiles) == submittedDraft
+            else { return }
             await send()
             return
         }
-        if isRunning, !isStopping, let id = selectedSessionID {
-            queuedSendSessionID = id
+        if isRunning, !isStopping {
+            queueDraft()
             return
         }
         await send()
     }
 
-    func cancelQueuedSend() { queuedSendSessionID = nil }
+    func queueDraft() {
+        guard canQueueMessage, let id = selectedSessionID else { return }
+        queuedSendRequest = QueuedSendRequest(
+            sessionID: id, connection: connectionGeneration, navigation: navigationGeneration)
+    }
+
+    func cancelQueuedSend() { queuedSendRequest = nil }
 
     /// The selected conversation's last run failed and its prompt can be
     /// sent again as-is.
@@ -983,10 +1021,20 @@ final class DesktopModel: ObservableObject {
         if selectedSessionID != sessionID { unreadSessionIDs.insert(sessionID) } else if let error { errorText = error }
         touchSession(sessionID)
         if selectedSessionID == sessionID { itemCache[sessionID] = items }
-        if queuedSendSessionID == sessionID {
-            queuedSendSessionID = nil
+        if let request = queuedSendRequest, request.sessionID == sessionID {
             if outcome == .completed, selectedSessionID == sessionID, error == nil {
-                Task { await send() }
+                // Keep the request cancellable until dispatch, and recheck its
+                // scope after yielding to navigation or another composer action.
+                Task {
+                    guard queuedSendRequest?.id == request.id else { return }
+                    queuedSendRequest = nil
+                    guard connectionGeneration == request.connection,
+                        navigationGeneration == request.navigation, selectedSessionID == request.sessionID
+                    else { return }
+                    await send()
+                }
+            } else {
+                queuedSendRequest = nil
             }
         }
     }
@@ -995,6 +1043,7 @@ final class DesktopModel: ObservableObject {
         guard let id = selectedSessionID, let run = activeRuns[id], !isStopping else { return }
         do {
             try sessionNotification("session/cancel", ["sessionId": id])
+            if queuedSendSessionID == id { queuedSendRequest = nil }
             stoppingRuns[id] = run
             if permission?.params["sessionId"] as? String == id { resolvePermission(nil) }
         } catch { errorText = error.localizedDescription }
@@ -1108,6 +1157,13 @@ final class DesktopModel: ObservableObject {
         configOptions = controls.configOptions
         availableSessionModes = controls.modes
         currentModeID = controls.currentModeID
+    }
+
+    private func restoreSessionPresentation(for sessionID: String?) {
+        let state = sessionID.flatMap { sessionPresentationCache[$0] } ?? SessionPresentationState()
+        plan = state.plan
+        usage = state.usage
+        availableCommands = state.commands
     }
 
     var isWaitingForPermission: Bool {
@@ -1256,6 +1312,17 @@ final class DesktopModel: ObservableObject {
             if isSelected { currentModeID = modeID }
             return
         }
+        if ["plan", "usage_update", "available_commands_update"].contains(kind) {
+            var state = sessionPresentationCache[sessionID] ?? SessionPresentationState()
+            switch kind {
+            case "plan": state.plan = update["entries"] as? [[String: Any]] ?? []
+            case "usage_update": state.usage = update
+            default: state.commands = update["availableCommands"] as? [[String: Any]] ?? []
+            }
+            sessionPresentationCache[sessionID] = state
+            if isSelected { restoreSessionPresentation(for: sessionID) }
+            return
+        }
         if !isSelected,
             ![
                 "user_message_chunk", "agent_message_chunk", "agent_thought_chunk",
@@ -1306,17 +1373,12 @@ final class DesktopModel: ObservableObject {
                         path: path
                     ))
             }
-        case "plan":
-            plan = update["entries"] as? [[String: Any]] ?? []
-        case "available_commands_update":
-            availableCommands = update["availableCommands"] as? [[String: Any]] ?? []
         case "session_info_update":
             if let title = update["title"] as? String,
                 let index = sessions.firstIndex(where: { $0.id == sessionID })
             {
                 sessions[index].title = title
             }
-        case "usage_update": usage = update
         default: break
         }
         itemCache[sessionID] = items

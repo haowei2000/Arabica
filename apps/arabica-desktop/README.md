@@ -95,6 +95,13 @@ the composer exposes neither per-model nor thinking overrides for them. Changing
 policies preserves SOE's per-model preferences for the next switch back. Sending
 waits for confirmation of a policy change, and stopping remains pending until the
 run finishes. You can keep writing the next draft while a run is active.
+Choose **Queue Message** below the composer, or press Return, to send that draft
+when the current run finishes. The queued draft stays editable; **Don't Send**,
+switching conversations, stopping the run, or a run failure cancels the queue
+and keeps the draft. Creating a conversation sends only an unchanged submitted
+draft; edits made while creation is pending remain in the composer for review.
+Plans, context usage, and slash commands remain attached to their conversation
+when you switch workspaces or return from another conversation.
 
 Shift-Command-N opens an independent conversation window with its own ACP
 connection, selected conversation, and drafts. Menu commands target the focused
