@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Upgrade `globset` to 0.4.21, `tokio` to 1.54.1, and `serde_json` to 1.0.154.
+- Upgrade the release workflow to `actions/upload-artifact` v7, `actions/download-artifact` v8, and `softprops/action-gh-release` v3 (Node 24); artifact downloads now fail on a digest mismatch.
+
 ## 0.13.0 — 2026-11-09
 
 - Bind desktop draft submissions and queued sends to their originating conversation so navigation cannot submit an unrelated draft. Keep edits made during conversation creation unsent, and cancel queued sends when stopping or removing the last attachment.
@@ -13,7 +16,7 @@
 - Make permission prompts ignore decision keys for 500 ms after opening in the terminal UI, and arm the desktop permission sheet's Allow buttons after 500 ms, so keystrokes meant for a queued message cannot approve a tool call.
 - Improve the terminal UI: Ctrl+J inserts a newline everywhere and Shift+Enter works on terminals with the kitty keyboard protocol; `/resume <id>` works in the TUI and `/resume` picking handles Esc, commands, and ambiguous prefixes; Ctrl+T toggles thinking; `arabica chat` accepts `--allow-shell`, `--read-only`, `--plain`, `--continue`, and `--resume`.
 - Improve the desktop app: edit and resend a user message, retry a failed run, copy messages on hover, follow the system appearance live, send with Return (or queue while a run is active), and see why the composer cannot send. Pending tool calls no longer show a completed checkmark.
-- Upgrade `similar` to 3.2, `globset` to 0.4.21, `tokio` to 1.54.1, and `serde_json` to 1.0.154.
+- Upgrade `similar` to 3.2 and `globset` to 0.4.20.
 
 ## 0.12.0 — 2026-10-23
 
