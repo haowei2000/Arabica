@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.1 — 2026-11-12
+
 - Upgrade `globset` to 0.4.21, `tokio` to 1.54.1, `serde_json` to 1.0.154, and `serde-saphyr` (skill frontmatter parsing) to 1.1.0.
 - Upgrade the release workflow to `actions/upload-artifact` v7, `actions/download-artifact` v8, and `softprops/action-gh-release` v3 (Node 24); artifact downloads now fail on a digest mismatch.
 
