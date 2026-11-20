@@ -35,43 +35,57 @@ public enum AppFont {
         let totalSize = max(7, size + delta)
         let trimmed = family.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if trimmed.isEmpty || trimmed.caseInsensitiveCompare("System") == .orderedSame || trimmed.caseInsensitiveCompare("Default") == .orderedSame {
+        if trimmed.isEmpty
+            || trimmed.caseInsensitiveCompare("System") == .orderedSame
+            || trimmed.caseInsensitiveCompare("Default") == .orderedSame
+            || trimmed.caseInsensitiveCompare("SF Pro") == .orderedSame
+            || trimmed.caseInsensitiveCompare("System (SF Pro)") == .orderedSame
+        {
             return .system(size: totalSize, weight: weight, design: fallback)
         }
-        if trimmed.caseInsensitiveCompare("System Monospaced") == .orderedSame || trimmed.caseInsensitiveCompare("Monospaced") == .orderedSame {
+        if trimmed.caseInsensitiveCompare("System Monospaced") == .orderedSame
+            || trimmed.caseInsensitiveCompare("Monospaced") == .orderedSame
+        {
             return .system(size: totalSize, weight: weight, design: .monospaced)
         }
-        if trimmed.caseInsensitiveCompare("System Serif") == .orderedSame || trimmed.caseInsensitiveCompare("Serif") == .orderedSame {
+        if trimmed.caseInsensitiveCompare("System Serif") == .orderedSame
+            || trimmed.caseInsensitiveCompare("Serif") == .orderedSame
+            || trimmed.caseInsensitiveCompare("New York") == .orderedSame
+            || trimmed.caseInsensitiveCompare("New York (Serif)") == .orderedSame
+            || trimmed.caseInsensitiveCompare("Serif (New York)") == .orderedSame
+        {
             return .system(size: totalSize, weight: weight, design: .serif)
         }
-        if trimmed.caseInsensitiveCompare("System Rounded") == .orderedSame || trimmed.caseInsensitiveCompare("Rounded") == .orderedSame {
+        if trimmed.caseInsensitiveCompare("System Rounded") == .orderedSame
+            || trimmed.caseInsensitiveCompare("Rounded") == .orderedSame
+        {
             return .system(size: totalSize, weight: weight, design: .rounded)
         }
 
         return .custom(trimmed, size: totalSize).weight(weight)
     }
 
-    /// 1. Normal: 界面基础字体 (侧栏、导航、按钮、标签、弹窗等 UI Chrome)
+    /// 1. Normal: base UI chrome font (sidebar, navigation, buttons, labels, sheets).
     public static func normal(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         resolve(family: ThemeManager.shared.fontNormal, size: size, weight: weight, fallback: .default)
     }
 
-    /// 2. Event: 事件与工具过程字体 (工具调用卡片、执行状态、思考过程标题、Plan 进度等)
+    /// 2. Event: tool execution and progress font (tool cards, status, thought headers, plan progress).
     public static func event(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         resolve(family: ThemeManager.shared.fontEvent, size: size, weight: weight, fallback: .default)
     }
 
-    /// 3. Message: 消息内容字体 (输入框草稿、用户发言气泡、Agent 回复 Markdown 正文)
+    /// 3. Message: conversation content font (composer draft, user bubbles, assistant Markdown body).
     public static func message(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         resolve(family: ThemeManager.shared.fontMessage, size: size, weight: weight, fallback: .default)
     }
 
-    /// 4. Code: 代码与技术数据字体 (代码块、文件路径、终端输出、Diff 块、配置 Key)
+    /// 4. Code: code and technical data font (code blocks, file paths, terminal output, diffs, config keys).
     public static func code(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         resolve(family: ThemeManager.shared.fontCode, size: size, weight: weight, fallback: .monospaced)
     }
 
-    // 快捷兼容别名
+    // Compatibility aliases
     public static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         normal(size, weight: weight)
     }
@@ -187,7 +201,7 @@ struct ThemeDefinition: Identifiable, Codable, Equatable {
         userBubbleHex: "#2B2D36",
         inkHex: "#ECEBE8",
         mutedHex: "#9C9CA2",
-        subtleHex: "#6E6E76",
+        subtleHex: "#8A8A94",
         accentHex: "#5887EB",
         codeBgHex: "#141518",
         iconStyle: ToolIconStyle.oli.rawValue,
@@ -207,7 +221,7 @@ struct ThemeDefinition: Identifiable, Codable, Equatable {
         userBubbleHex: "#E6EDF8",
         inkHex: "#141518",
         mutedHex: "#5F6470",
-        subtleHex: "#9196A2",
+        subtleHex: "#6E7482",
         accentHex: "#2369E1",
         codeBgHex: "#F3F5F9",
         iconStyle: ToolIconStyle.oli.rawValue,
@@ -378,11 +392,16 @@ final class ThemeManager: ObservableObject, @unchecked Sendable {
         get { ThemeMode(rawValue: modeRaw) ?? .dark }
         set {
             modeRaw = newValue.rawValue
-            // When mode is explicitly switched, update active theme ID accordingly if using defaults
-            if newValue == .dark && activeThemeID == ThemeDefinition.defaultLight.id {
+            // Keep active theme polarity aligned when explicitly switching appearance mode.
+            if newValue == .dark, let current = allThemes.first(where: { $0.id == activeThemeID }), !current.isDark {
                 activeThemeID = ThemeDefinition.defaultDark.id
-            } else if newValue == .light && activeThemeID == ThemeDefinition.defaultDark.id {
+            } else if newValue == .light, let current = allThemes.first(where: { $0.id == activeThemeID }), current.isDark {
                 activeThemeID = ThemeDefinition.defaultLight.id
+            } else if newValue == .system,
+                let current = allThemes.first(where: { $0.id == activeThemeID }),
+                current.isDark != isDark
+            {
+                activeThemeID = isDark ? ThemeDefinition.defaultDark.id : ThemeDefinition.defaultLight.id
             }
             objectWillChange.send()
         }
@@ -462,10 +481,9 @@ final class ThemeManager: ObservableObject, @unchecked Sendable {
 
     func selectTheme(_ theme: ThemeDefinition) {
         activeThemeID = theme.id
-        if theme.isDark && mode == .light {
-            mode = .dark
-        } else if !theme.isDark && mode == .dark {
-            mode = .light
+        let targetMode: ThemeMode = theme.isDark ? .dark : .light
+        if mode != targetMode {
+            modeRaw = targetMode.rawValue
         }
         objectWillChange.send()
     }
