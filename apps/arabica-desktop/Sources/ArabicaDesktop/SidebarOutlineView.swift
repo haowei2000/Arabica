@@ -607,9 +607,9 @@ private func sidebarTreeFont() -> NSFont {
     let size = max(7, 13.5 + ThemeManager.shared.fontSizeDelta)
     let family = ThemeManager.shared.fontNormal.trimmingCharacters(in: .whitespacesAndNewlines)
     switch family.lowercased() {
-    case "", "system", "default": return .systemFont(ofSize: size)
+    case "", "system", "default", "sf pro", "system (sf pro)": return .systemFont(ofSize: size)
     case "system monospaced", "monospaced": return .monospacedSystemFont(ofSize: size, weight: .regular)
-    case "system serif", "serif":
+    case "system serif", "serif", "new york", "new york (serif)", "serif (new york)":
         return NSFont.systemFont(ofSize: size).fontDescriptor.withDesign(.serif).flatMap {
             NSFont(descriptor: $0, size: size)
         } ?? .systemFont(ofSize: size)

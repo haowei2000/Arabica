@@ -24,7 +24,7 @@ struct AppearancePageView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 10)], spacing: 10) {
                         ForEach(theme.allThemes) { item in
-                            let isSelected = theme.activeThemeID == item.id
+                            let isSelected = theme.activeTheme.id == item.id
                             Button {
                                 theme.selectTheme(item)
                             } label: {
@@ -93,11 +93,13 @@ struct AppearancePageView: View {
 
                         Picker("Mode", selection: $theme.mode) {
                             ForEach(ThemeMode.allCases) { mode in
-                                Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                                Text(mode.rawValue).tag(mode)
                             }
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 220)
+                        .labelsHidden()
+                        .frame(width: 210)
+                        .accessibilityLabel("Appearance Mode")
                     }
                     .padding(.top, 4)
                 }
@@ -120,21 +122,21 @@ struct AppearancePageView: View {
                     title: "Normal Font",
                     subtitle: "Sidebar, navigation, buttons, titles & UI chrome",
                     fontName: $theme.fontNormal,
-                    presets: ["System", "SF Pro", "Inter", "Helvetica Neue", "System Rounded"]
+                    presets: ["System", "System Rounded", "Inter", "Helvetica Neue"]
                 )
 
                 fontFamilyRow(
                     title: "Event Font",
                     subtitle: "Tool executions, process events, thought & plan status",
                     fontName: $theme.fontEvent,
-                    presets: ["System", "JetBrains Mono", "Fira Code", "SF Pro", "Menlo"]
+                    presets: ["System", "System Monospaced", "JetBrains Mono", "Fira Code", "Menlo"]
                 )
 
                 fontFamilyRow(
                     title: "Message Font",
                     subtitle: "Composer input draft & conversation markdown dialog",
                     fontName: $theme.fontMessage,
-                    presets: ["System", "Inter", "Georgia", "New York (Serif)", "SF Pro"]
+                    presets: ["System", "System Serif", "Inter", "Georgia"]
                 )
 
                 fontFamilyRow(
@@ -294,10 +296,18 @@ struct AppearancePageView: View {
 
             Picker("Appearance Base", selection: Binding(
                 get: { theme.activeTheme.isDark },
-                set: {
+                set: { newIsDark in
                     var t = theme.activeTheme
-                    t.isDark = $0
+                    guard t.isDark != newIsDark else { return }
+                    let oldBase = t.isDark ? ThemeDefinition.defaultDark : ThemeDefinition.defaultLight
+                    let newBase = newIsDark ? ThemeDefinition.defaultDark : ThemeDefinition.defaultLight
+                    t.isDark = newIsDark
+                    if t.raisedHex == oldBase.raisedHex { t.raisedHex = newBase.raisedHex }
+                    if t.mutedHex == oldBase.mutedHex { t.mutedHex = newBase.mutedHex }
+                    if t.subtleHex == oldBase.subtleHex { t.subtleHex = newBase.subtleHex }
+                    if t.codeBgHex == oldBase.codeBgHex { t.codeBgHex = newBase.codeBgHex }
                     theme.updateCustomTheme(t)
+                    theme.mode = newIsDark ? .dark : .light
                 }
             )) {
                 Text("Dark").tag(true)
@@ -338,6 +348,24 @@ struct AppearancePageView: View {
                 set: {
                     var t = theme.activeTheme
                     t.inkHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("Muted Text", selection: Binding(
+                get: { Color(hex: theme.activeTheme.mutedHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.mutedHex = $0.toHex()
+                    theme.updateCustomTheme(t)
+                }
+            ), supportsOpacity: false)
+
+            ColorPicker("Code Background", selection: Binding(
+                get: { Color(hex: theme.activeTheme.codeBgHex) },
+                set: {
+                    var t = theme.activeTheme
+                    t.codeBgHex = $0.toHex()
                     theme.updateCustomTheme(t)
                 }
             ), supportsOpacity: false)

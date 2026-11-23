@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Global typography system with 3 unified font styles:
-/// 1. Serif (衬线体) - Dedicated to body text (正文: chat message text, thoughts, composer draft)
 // MARK: - Design System Tokens & Palette (Theme Aware)
 
 enum Palette {
@@ -251,7 +249,7 @@ struct DesktopView: View {
         }
         .inspector(isPresented: $showEvaluation) {
             EvaluationPanel(model: model.evaluation, isVisible: showEvaluation)
-                .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
+                .inspectorColumnWidth(min: 300, ideal: 350, max: 460)
         }
     }
 
@@ -423,9 +421,11 @@ struct DesktopView: View {
 
             Menu {
                 if let used = model.usage["used"] as? Int,
-                    let size = model.usage["size"] as? Int
+                    let size = model.usage["size"] as? Int,
+                    size > 0
                 {
-                    Text("Context usage: \(used) of \(size) tokens")
+                    let percent = min(100, Int((Double(used) / Double(size) * 100).rounded()))
+                    Text("Context usage: \(used.formatted()) / \(size.formatted()) tokens (\(percent)%)")
                     Divider()
                 }
                 Toggle("Show Archived Conversations", isOn: Binding(
@@ -434,13 +434,21 @@ struct DesktopView: View {
                 ))
                 Divider()
                 Toggle("Show Blend Inspector", isOn: $showEvaluation)
-                Picker("Appearance", selection: Binding(
-                    get: { theme.mode },
-                    set: { mode in withAnimation(.easeInOut(duration: 0.18)) { theme.mode = mode } }
-                )) {
-                    ForEach(ThemeMode.allCases) { mode in
-                        Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                Menu("Appearance") {
+                    Picker("Appearance", selection: Binding(
+                        get: { theme.mode },
+                        set: { mode in withAnimation(.easeInOut(duration: 0.18)) { theme.mode = mode } }
+                    )) {
+                        ForEach(ThemeMode.allCases) { mode in
+                            Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                        }
                     }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+                Divider()
+                SettingsLink {
+                    Label("Settings…", systemImage: "gearshape")
                 }
             } label: {
                 Label {
@@ -1437,6 +1445,7 @@ private struct ToolItemDetailView: View {
     let isSingle: Bool
     @State private var showDetail: Bool
     @State private var isHovered: Bool = false
+    @State private var copied: Bool = false
 
     init(item: ChatItem, isSingle: Bool = false) {
         self.item = item
@@ -1506,20 +1515,26 @@ private struct ToolItemDetailView: View {
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(detailText, forType: .string)
+                            copied = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(1.5))
+                                copied = false
+                            }
                         } label: {
                             HStack(spacing: 3) {
-                                Image(systemName: "doc.on.doc")
+                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
                                     .font(AppFont.sans(9))
-                                Text("Copy")
+                                Text(copied ? "Copied" : "Copy")
                                     .font(AppFont.sans(10))
                             }
-                            .foregroundStyle(Palette.muted)
+                            .foregroundStyle(copied ? Color.green : Palette.muted)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Palette.raised.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
                         .help("Copy tool output to clipboard")
+                        .accessibilityLabel(copied ? "Tool output copied" : "Copy tool output")
                     }
 
                     ScrollView([.horizontal, .vertical]) {

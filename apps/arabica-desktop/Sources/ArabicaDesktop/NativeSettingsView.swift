@@ -130,21 +130,17 @@ struct NativeSettingsView: View {
         .accessibilityLabel("Settings categories")
     }
 
-    @ViewBuilder private var settingsNavigation: some View {
-        if current.hasItems {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                navigationSidebar
-            } content: {
-                itemList
-                    .navigationTitle(current.rawValue)
-                    .navigationSplitViewColumnWidth(min: 160, ideal: 190, max: 220)
-            } detail: {
-                settingsDetail
-            }
-        } else {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                navigationSidebar
-            } detail: {
+    private var settingsNavigation: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            navigationSidebar
+        } detail: {
+            if current.hasItems {
+                HSplitView {
+                    itemList
+                        .frame(minWidth: 160, idealWidth: 190, maxWidth: 240, maxHeight: .infinity)
+                    settingsDetail
+                }
+            } else {
                 settingsDetail
             }
         }
@@ -184,7 +180,11 @@ struct NativeSettingsView: View {
             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(detailTitle)
             .navigationSubtitle(current.hasItems ? current.rawValue : "Arabica Settings")
-            .safeAreaInset(edge: .bottom, spacing: 0) { saveStatus }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if current.hasItems {
+                    saveStatus
+                }
+            }
     }
 
     @ViewBuilder private var detailContent: some View {

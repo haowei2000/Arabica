@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Composer View
 
@@ -7,6 +8,7 @@ struct ComposerView: View {
     @ObservedObject var model: DesktopModel
     @ObservedObject private var themeManager = ThemeManager.shared
     @FocusState private var isInputFocused: Bool
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -146,8 +148,14 @@ struct ComposerView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(Palette.composerBg, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.rule, lineWidth: 1))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(isDropTargeted ? Palette.accent : Palette.rule, lineWidth: isDropTargeted ? 2 : 1)
+            )
             .shadow(color: themeManager.isDark ? Color.clear : Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
+            .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                handleFileDrop(providers)
+            }
 
             composerStatus
         }
@@ -276,6 +284,32 @@ struct ComposerView: View {
         case .send:
             Task { await model.send() }
         }
+    }
+
+    private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        let matching = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !matching.isEmpty else { return false }
+        for provider in matching {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url: URL?
+                if let data = item as? Data {
+                    url = URL(dataRepresentation: data, relativeTo: nil)
+                } else if let droppedURL = item as? URL {
+                    url = droppedURL
+                } else {
+                    url = nil
+                }
+                guard let url, url.isFileURL else { return }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                    !isDirectory.boolValue
+                else { return }
+                Task { @MainActor in
+                    model.attachFiles([url])
+                }
+            }
+        }
+        return true
     }
 }
 

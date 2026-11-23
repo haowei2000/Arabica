@@ -235,4 +235,26 @@ final class EvaluationModelTests: XCTestCase {
         XCTAssertEqual(dispatchedParams.last?["action"] as? String, "activate")
         XCTAssertEqual(model.message, "Policy default v3 activated for new sessions.")
     }
+
+    func testRunSelectionClearActuallyDeselectsAllRuns() {
+        var selection: EvaluationRunSelection = .all
+        XCTAssertTrue(selection.isSelected("run-1"))
+        XCTAssertTrue(selection.isSelected("run-2"))
+
+        selection.clear()
+        XCTAssertFalse(selection.isSelected("run-1"))
+        XCTAssertFalse(selection.isSelected("run-2"))
+
+        selection.toggle("run-1", among: ["run-1", "run-2"])
+        XCTAssertTrue(selection.isSelected("run-1"))
+        XCTAssertFalse(selection.isSelected("run-2"))
+
+        selection.selectAll()
+        XCTAssertTrue(selection.isSelected("run-1"))
+        XCTAssertTrue(selection.isSelected("run-2"))
+
+        selection.toggle("run-1", among: ["run-1", "run-2"])
+        XCTAssertFalse(selection.isSelected("run-1"))
+        XCTAssertTrue(selection.isSelected("run-2"))
+    }
 }
